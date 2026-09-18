@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scene",
+  "description": "A declarative scene description: what a `.json` scene file deserializes into.",
+  "type": "object",
+  "properties": {
+    "background": {
+      "description": "Background color, `#RRGGBB` or `#RRGGBBAA`.",
+      "type": "string",
+      "default": "#000000"
+    },
+    "layers": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Layer"
+      }
+    },
+    "name": {
+      "type": "string"
+    },
+    "size": {
+      "description": "Logical canvas size in pixels `[width, height]`. Hosts scale the\nrendered texture; content is authored against this space.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      },
+      "maxItems": 2,
+      "minItems": 2
+    },
+    "variables": {
+      "description": "Declared variables and their initial values.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      },
+      "default": {}
+    }
+  },
+  "required": [
+    "name",
+    "size"
+  ],
+  "$defs": {
+    "Binding": {
+      "description": "A permanent wiring of a property to a variable, evaluated every frame.",
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "property": {
+          "$ref": "#/$defs/Property"
+        },
+        "scale": {
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "property",
+        "variable"
+      ]
+    },
+    "Easing": {
+      "description": "Easing applied to the segment that ends at the keyframe carrying it.",
+      "type": "string",
+      "enum": [
+        "linear",
+        "quad_in",
+        "quad_out",
+        "quad_in_out",
+        "cubic_in",
+        "cubic_out",
+        "cubic_in_out",
+        "step"
+      ]
+    },
+    "Key": {
+      "description": "A keyframe: at time `t` (seconds) the property reaches value `v`,\napproached with `ease` from the previous key.",
+      "type": "object",
+      "properties": {
+        "ease": {
+          "$ref": "#/$defs/Easing",
+          "default": "linear"
+        },
+        "t": {
+          "type": "number",
+          "format": "double"
+        },
+        "v": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "t",
+        "v"
+      ]
+    },
+    "Layer": {
+      "description": "One node in the scene tree.",
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "description": "Live property bindings: `property = variable * scale + offset`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Binding"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "opacity": {
+          "description": "Opacity in [0, 1], multiplied down the tree.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "scale": {
+          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). Not inherited\nby group children yet.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "timelines": {
+          "description": "Keyframed animations on this layer's properties.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Timeline"
+          }
+        },
+        "visible": {
+          "type": "boolean",
+          "default": true
+        },
+        "x": {
+          "description": "Translation applied to this layer (and its subtree, for groups).",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "y": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Layer"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "group"
+            }
+          },
+          "required": [
+            "type",
+            "children"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fill": {
+              "type": "string"
+            },
+            "shape": {
+              "$ref": "#/$defs/Shape"
+            },
+            "type": {
+              "type": "string",
+              "const": "shape"
+            }
+          },
+          "required": [
+            "type",
+            "shape",
+            "fill"
+          ]
+        },
+        {
+          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn at the layer's\nx/y; not yet registered images are skipped.",
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "size": {
+              "description": "Destination size `[width, height]`; the image's natural size\nwhen omitted.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "image"
+            }
+          },
+          "required": [
+            "type",
+            "image"
+          ]
+        }
+      ],
+      "required": [
+        "name"
+      ]
+    },
+    "Property": {
+      "description": "An animatable layer property.",
+      "type": "string",
+      "enum": [
+        "x",
+        "y",
+        "opacity",
+        "scale"
+      ]
+    },
+    "Shape": {
+      "description": "Vector shapes, in the layer's local coordinate space.",
+      "oneOf": [
+        {
+          "description": "`[x, y, width, height]`",
+          "type": "object",
+          "properties": {
+            "rect": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 4,
+              "minItems": 4
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "rect"
+          ]
+        },
+        {
+          "description": "`[cx, cy, radius]`",
+          "type": "object",
+          "properties": {
+            "circle": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 3,
+              "minItems": 3
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "circle"
+          ]
+        }
+      ]
+    },
+    "Timeline": {
+      "description": "A keyframed animation over one or more properties of its layer.\n\nA timeline runs when it is `autoplay` and the scene loads, or when the\nhost fires its `trigger`. While running it owns the properties it\nanimates: timeline values override bindings, which override base values.",
+      "type": "object",
+      "properties": {
+        "autoplay": {
+          "type": "boolean",
+          "default": false
+        },
+        "loop": {
+          "type": "boolean",
+          "default": false
+        },
+        "name": {
+          "type": "string"
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Track"
+          }
+        },
+        "trigger": {
+          "description": "Trigger name that (re)starts this timeline.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "tracks"
+      ]
+    },
+    "Track": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "property": {
+          "$ref": "#/$defs/Property"
+        }
+      },
+      "required": [
+        "property",
+        "keys"
+      ]
+    },
+    "Value": {
+      "description": "A value a host can push into the engine, and the type scene variables hold.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

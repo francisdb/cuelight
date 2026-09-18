@@ -1,0 +1,3 @@
+# Keep LF line endings on all platforms: the schema drift test compares
+# checked-in files byte-for-byte against generated content.
+* text=auto eol=lf

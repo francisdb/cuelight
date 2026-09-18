@@ -1,0 +1,87 @@
+{
+  "$schema": "../../schemas/scene.schema.json",
+  "name": "slideshow",
+  "size": [480, 270],
+  "background": "#000000",
+  "layers": [
+    {
+      "name": "rainbow",
+      "type": "image",
+      "image": "rainbow",
+      "size": [480, 270],
+      "opacity": 1.0,
+      "timelines": [
+        {
+          "name": "cycle",
+          "autoplay": true,
+          "loop": true,
+          "tracks": [
+            {
+              "property": "opacity",
+              "keys": [
+                { "t": 0.0, "v": 1.0 },
+                { "t": 1.6, "v": 1.0 },
+                { "t": 2.0, "v": 0.0 },
+                { "t": 5.6, "v": 0.0 },
+                { "t": 6.0, "v": 1.0 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "noise",
+      "type": "image",
+      "image": "noise",
+      "size": [480, 270],
+      "opacity": 0.0,
+      "timelines": [
+        {
+          "name": "cycle",
+          "autoplay": true,
+          "loop": true,
+          "tracks": [
+            {
+              "property": "opacity",
+              "keys": [
+                { "t": 0.0, "v": 0.0 },
+                { "t": 1.6, "v": 0.0 },
+                { "t": 2.0, "v": 1.0 },
+                { "t": 3.6, "v": 1.0 },
+                { "t": 4.0, "v": 0.0 },
+                { "t": 6.0, "v": 0.0 }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sine",
+      "type": "image",
+      "image": "sine",
+      "size": [480, 270],
+      "opacity": 0.0,
+      "timelines": [
+        {
+          "name": "cycle",
+          "autoplay": true,
+          "loop": true,
+          "tracks": [
+            {
+              "property": "opacity",
+              "keys": [
+                { "t": 0.0, "v": 0.0 },
+                { "t": 3.6, "v": 0.0 },
+                { "t": 4.0, "v": 1.0 },
+                { "t": 5.6, "v": 1.0 },
+                { "t": 6.0, "v": 0.0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

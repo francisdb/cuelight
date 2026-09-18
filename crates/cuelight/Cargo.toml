@@ -1,0 +1,53 @@
+[package]
+name = "cuelight"
+description = "Embeddable multimedia engine: scenes, layers and timelines driven by triggers and variables"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "scene-graph", "animation", "compositor", "embeddable"]
+categories = ["multimedia", "rendering", "graphics"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+vello = { version = "0.10", optional = true }
+pollster = { version = "0.4", optional = true }
+png = { version = "0.18", optional = true }
+schemars = { version = "1", optional = true }
+
+[dev-dependencies]
+# examples only: windowed demos
+winit = "0.30"
+ctrlc = "3"
+cpal = "0.15"
+log = "0.4"
+env_logger = "0.11"
+
+[features]
+default = ["render"]
+render = ["dep:vello", "dep:pollster", "dep:png"]
+# JSON Schema generation for the scene format (see schemas/)
+schema = ["dep:schemars"]
+
+[[example]]
+name = "render_to_images"
+required-features = ["render"]
+
+[[example]]
+name = "render_to_window"
+required-features = ["render"]
+
+[[example]]
+name = "slideshow"
+required-features = ["render"]
+
+[[example]]
+name = "mic_pop"
+required-features = ["render"]
+
+[[example]]
+name = "player"
+required-features = ["render"]
