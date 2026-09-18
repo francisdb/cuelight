@@ -1,6 +1,6 @@
 [package]
 name = "cuelight"
-description = "Embeddable multimedia engine: scenes, layers and timelines driven by triggers and variables"
+description = "Embeddable multimedia engine: declarative shows of layers and timelines driven by triggers and variables"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -29,7 +29,7 @@ env_logger = "0.11"
 [features]
 default = ["render"]
 render = ["dep:vello", "dep:pollster", "dep:png"]
-# JSON Schema generation for the scene format (see schemas/)
+# JSON Schema generation for the show format (see schemas/)
 schema = ["dep:schemars"]
 
 [[example]]

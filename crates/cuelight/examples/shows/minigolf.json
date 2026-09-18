@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/scene.schema.json",
+  "$schema": "../../schemas/show.schema.json",
   "name": "minigolf",
   "size": [512, 128],
   "background": "#0B2410",

@@ -1,14 +1,14 @@
-//! Hello-world proof of concept: load a scene, fire a trigger, advance
+//! Hello-world proof of concept: load a show, fire a trigger, advance
 //! frames, render each step offscreen and dump PNGs.
 
 use cuelight::render::Renderer;
 use cuelight::Engine;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let json = include_str!("scenes/minigolf.json");
+    let json = include_str!("shows/minigolf.json");
 
     let mut engine = Engine::new();
-    engine.load_scene(json)?;
+    engine.load_show(json)?;
     engine.set_variable("score", 500.0);
     engine.trigger("go");
 

@@ -1,6 +1,6 @@
 # cuelight
 
-An embeddable multimedia engine: scenes, layers and timelines driven by
+An embeddable multimedia engine: shows, layers and timelines driven by
 triggers and variables. Written in Rust, rendering with
 [vello](https://github.com/linebender/vello) and
 [wgpu](https://github.com/gfx-rs/wgpu).
@@ -12,7 +12,7 @@ triggers and variables. Written in Rust, rendering with
 
 Think of it as an extended slide deck rather than a game engine:
 
-- **Scenes** are states: a tree of typed layers (groups, shapes, text, media)
+- **Shows** are states: a tree of typed layers (groups, shapes, text, media)
   composited by priority.
 - **Timelines** animate layer properties with keyframes and easing, and can be
   started on load or fired by triggers.
@@ -26,7 +26,7 @@ Think of it as an extended slide deck rather than a game engine:
 The core API is deliberately tiny:
 
 ```text
-load_scene      load a declarative scene description
+load_show      load a declarative show description
 set_variable    push a named value from the host
 trigger         fire a named event
 advance_frame   advance time by dt
@@ -43,14 +43,14 @@ of the core.
 cargo run --example render_to_images
 ```
 
-renders the example scene at `examples/scenes/minigolf.json` to a series of PNG
+renders the example show at `examples/shows/minigolf.json` to a series of PNG
 frames in `target/frames/`.
 
 ```sh
 cargo run --example render_to_window
 ```
 
-renders the same scene live into a window: the score variable pulses, the
+renders the same show live into a window: the score variable pulses, the
 `go` trigger re-fires every two seconds (or press space), escape quits.
 
 ```sh
@@ -71,10 +71,10 @@ ring pops outward on noise spikes/beats (a timeline fired by `trigger`).
 Space pops manually, useful without a microphone.
 
 ```sh
-cargo run --example player -- path/to/scene.json
+cargo run --example player -- path/to/show.json
 ```
 
-opens any scene file (the bundled minigolf scene when no path is given),
+opens any show file (the bundled minigolf show when no path is given),
 lists its actions (trigger names) and variables on the console, and lets
 you drive it: type an action number or name to fire it (digit keys in the
 window work too), `name=value` to set a variable, `q` to quit. Image
@@ -83,12 +83,12 @@ skipped.
 
 An optional second argument plays a driver file: a scripted sequence of
 the same commands with delays, standing in for a live host, optionally
-looping, conventionally `<scene>.driver.json` next to its scene:
+looping, conventionally `<show>.driver.json` next to its show:
 
 ```sh
 cargo run --example player -- \
-  crates/cuelight/examples/scenes/minigolf.json \
-  crates/cuelight/examples/scenes/minigolf.driver.json
+  crates/cuelight/examples/shows/minigolf.json \
+  crates/cuelight/examples/shows/minigolf.driver.json
 ```
 
 The windowed examples log startup info (render backend, windowing system,
@@ -101,12 +101,12 @@ cargo test
 exercises the data model, bindings, triggers and timelines with no GPU
 required.
 
-## Scene format
+## Show format
 
-Scenes are declarative JSON; see [docs/scene-format.md](docs/scene-format.md)
+Shows are declarative JSON; see [docs/show-format.md](docs/show-format.md)
 and the generated JSON Schema at
-`crates/cuelight/schemas/scene.schema.json` (kept in sync with the model
-types by a CI check; scene files can reference it via `$schema` for editor
+`crates/cuelight/schemas/show.schema.json` (kept in sync with the model
+types by a CI check; show files can reference it via `$schema` for editor
 autocomplete and validation).
 
 ## License

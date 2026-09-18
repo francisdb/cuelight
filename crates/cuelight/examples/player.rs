@@ -1,19 +1,19 @@
-//! Generic scene player: load any scene file, list what it can do, drive
+//! Generic show player: load any show file, list what it can do, drive
 //! it interactively or from a driver file.
 //!
 //! ```sh
-//! cargo run --example player -- path/to/scene.json [path/to/driver.json]
+//! cargo run --example player -- path/to/show.json [path/to/driver.json]
 //! ```
 //!
-//! With no arguments the bundled minigolf scene plays. The player inspects
+//! With no arguments the bundled minigolf show plays. The player inspects
 //! the model and prints its actions (trigger names) and variables to the
 //! console: type an action's number or name to fire it, `name=value` to
 //! set a variable, `q` to quit. Digit keys in the window fire actions too,
 //! escape quits.
 //!
 //! A driver file scripts the same commands with delays, standing in for a
-//! live host, conventionally named `<scene>.driver.json` next to its
-//! scene (see `examples/scenes/`):
+//! live host, conventionally named `<show>.driver.json` next to its
+//! show (see `examples/shows/`):
 //!
 //! ```json
 //! {
@@ -28,7 +28,7 @@
 //!
 //! Console and keyboard input keep working while a driver runs.
 //!
-//! The player registers no images, so scenes referencing host-provided
+//! The player registers no images, so shows referencing host-provided
 //! images (like the slideshow's) render without them; each missing image
 //! is logged as a warning at load.
 
@@ -137,10 +137,10 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
 }
 
 fn print_menu(engine: &Engine, actions: &[String]) {
-    let scene = engine.scene().expect("scene loaded");
+    let show = engine.show().expect("show loaded");
     println!(
         "\nplaying {:?} ({}x{})",
-        scene.name, scene.size[0], scene.size[1]
+        show.name, show.size[0], show.size[1]
     );
     if actions.is_empty() {
         println!("actions: none declared");
@@ -150,9 +150,9 @@ fn print_menu(engine: &Engine, actions: &[String]) {
             println!("  {}) {action}", i + 1);
         }
     }
-    if !scene.variables.is_empty() {
+    if !show.variables.is_empty() {
         println!("variables:");
-        for (name, value) in &scene.variables {
+        for (name, value) in &show.variables {
             println!("  {name} = {}", fmt_value(value));
         }
     }
@@ -289,13 +289,13 @@ impl App {
         let Some(state) = &self.state else { return };
         self.engine.advance_frame(dt);
 
-        // Fit the scene into the window: uniform scale, centered.
-        let [scene_w, scene_h] = self.engine.scene().expect("scene loaded").size;
+        // Fit the show into the window: uniform scale, centered.
+        let [show_w, show_h] = self.engine.show().expect("show loaded").size;
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let scale = (f64::from(sw) / f64::from(scene_w)).min(f64::from(sh) / f64::from(scene_h));
-        let tx = (f64::from(sw) - f64::from(scene_w) * scale) / 2.0;
-        let ty = (f64::from(sh) - f64::from(scene_h) * scale) / 2.0;
+        let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
+        let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
+        let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
         let mut frame = vello::Scene::new();
         frame.append(
             &build_vello_scene(&self.engine, &mut self.images).expect("build vello scene"),
@@ -367,7 +367,7 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        let [w, h] = self.engine.scene().expect("scene loaded").size;
+        let [w, h] = self.engine.show().expect("show loaded").size;
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -479,16 +479,16 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/scenes/minigolf.json").to_owned()
+        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/shows/minigolf.json").to_owned()
     });
-    log::info!("starting player with scene {path:?}");
+    log::info!("starting player with show {path:?}");
     let json =
-        std::fs::read_to_string(&path).map_err(|e| format!("cannot read scene {path:?}: {e}"))?;
+        std::fs::read_to_string(&path).map_err(|e| format!("cannot read show {path:?}: {e}"))?;
 
     let mut engine = Engine::new();
     engine
-        .load_scene(&json)
-        .map_err(|e| format!("cannot load scene {path:?}: {e}"))?;
+        .load_show(&json)
+        .map_err(|e| format!("cannot load show {path:?}: {e}"))?;
 
     let driver = match std::env::args().nth(2) {
         Some(driver_path) => {
@@ -507,9 +507,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut actions = BTreeSet::new();
-    let scene_layers = engine.scene().expect("scene loaded").layers.clone();
-    collect_actions(&scene_layers, &mut actions);
-    warn_missing_images(&engine, &scene_layers);
+    let show_layers = engine.show().expect("show loaded").layers.clone();
+    collect_actions(&show_layers, &mut actions);
+    warn_missing_images(&engine, &show_layers);
     let actions: Vec<String> = actions.into_iter().collect();
     print_menu(&engine, &actions);
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Scene",
-  "description": "A declarative scene description: what a `.json` scene file deserializes into.",
+  "title": "Show",
+  "description": "A declarative show description: what a `.json` show file deserializes into.",
   "type": "object",
   "properties": {
     "background": {
@@ -107,7 +107,7 @@
       ]
     },
     "Layer": {
-      "description": "One node in the scene tree.",
+      "description": "One node in the show tree.",
       "type": "object",
       "properties": {
         "bindings": {
@@ -287,7 +287,7 @@
       ]
     },
     "Timeline": {
-      "description": "A keyframed animation over one or more properties of its layer.\n\nA timeline runs when it is `autoplay` and the scene loads, or when the\nhost fires its `trigger`. While running it owns the properties it\nanimates: timeline values override bindings, which override base values.",
+      "description": "A keyframed animation over one or more properties of its layer.\n\nA timeline runs when it is `autoplay` and the show loads, or when the\nhost fires its `trigger`. While running it owns the properties it\nanimates: timeline values override bindings, which override base values.",
       "type": "object",
       "properties": {
         "autoplay": {
@@ -340,7 +340,7 @@
       ]
     },
     "Value": {
-      "description": "A value a host can push into the engine, and the type scene variables hold.",
+      "description": "A value a host can push into the engine, and the type show variables hold.",
       "anyOf": [
         {
           "type": "boolean"

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// A value a host can push into the engine, and the type scene variables hold.
+/// A value a host can push into the engine, and the type show variables hold.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

@@ -3,10 +3,10 @@ use crate::value::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// A declarative scene description: what a `.json` scene file deserializes into.
+/// A declarative show description: what a `.json` show file deserializes into.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct Scene {
+pub struct Show {
     pub name: String,
     /// Logical canvas size in pixels `[width, height]`. Hosts scale the
     /// rendered texture; content is authored against this space.
@@ -25,7 +25,7 @@ fn default_background() -> String {
     "#000000".to_owned()
 }
 
-/// One node in the scene tree.
+/// One node in the show tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Layer {
@@ -126,7 +126,7 @@ fn default_scale() -> f64 {
 
 /// A keyframed animation over one or more properties of its layer.
 ///
-/// A timeline runs when it is `autoplay` and the scene loads, or when the
+/// A timeline runs when it is `autoplay` and the show loads, or when the
 /// host fires its `trigger`. While running it owns the properties it
 /// animates: timeline values override bindings, which override base values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
