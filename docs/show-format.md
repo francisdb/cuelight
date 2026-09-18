@@ -19,6 +19,30 @@ Naming note: the word **scene** is deliberately reserved. A show is the
 whole loaded document; when switchable views / overlay queues land in the
 model (FlexDMD-style), those inner units will be called scenes.
 
+## On disk
+
+A show exists in two forms:
+
+- A **loose file**: one `.json` document, self-sufficient as long as the
+  show needs no images. A driver script for it is conventionally named
+  `<show>.test-driver.json` next to it.
+- A **show folder**: the self-contained unit for anything with assets.
+  The folder is the show; its contents follow fixed names:
+
+  ```text
+  myshow/
+    show.json           the show document (required)
+    test-driver.json    optional driver script, hosts may pick it up
+    assets/             images, registered by filename stem (PNG)
+  ```
+
+Either way the engine only ever receives the single JSON document through
+`load_show` plus `set_image` calls; it does no file I/O itself. Resolving
+a folder (reading the manifest, decoding and registering `assets/`,
+picking up the driver) is host-side convention, implemented today by the
+`player` example. A zipped folder is the natural future single-file
+distribution form.
+
 ## Top level
 
 ```json
