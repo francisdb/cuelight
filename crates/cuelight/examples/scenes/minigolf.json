@@ -1,0 +1,112 @@
+{
+  "$schema": "../../schemas/scene.schema.json",
+  "name": "minigolf",
+  "size": [512, 128],
+  "background": "#0B2410",
+  "variables": { "score": 0 },
+  "layers": [
+    {
+      "name": "court",
+      "type": "shape",
+      "shape": { "rect": [8, 8, 496, 112] },
+      "fill": "#2E8B3D"
+    },
+    {
+      "name": "court_right",
+      "type": "shape",
+      "shape": { "rect": [256, 8, 248, 112] },
+      "fill": "#1DA53E"
+    },
+    {
+      "name": "hole",
+      "type": "shape",
+      "shape": { "circle": [440, 64, 16] },
+      "fill": "#06290F"
+    },
+    {
+      "name": "score_bar",
+      "type": "shape",
+      "shape": { "rect": [16, 100, 200, 12] },
+      "fill": "#E5D48F",
+      "bindings": [
+        { "property": "opacity", "variable": "score", "scale": 0.001, "offset": 0.2 }
+      ]
+    },
+    {
+      "name": "golf_ball",
+      "type": "group",
+      "x": 64,
+      "y": 64,
+      "children": [
+        {
+          "name": "ball",
+          "type": "shape",
+          "shape": { "circle": [0, 0, 11] },
+          "fill": "#F6F4EC",
+          "timelines": [
+            {
+              "name": "sink",
+              "trigger": "go",
+              "tracks": [
+                {
+                  "property": "scale",
+                  "keys": [
+                    { "t": 0.0, "v": 1.0 },
+                    { "t": 0.7, "v": 1.0 },
+                    { "t": 1.0, "v": 0.72 }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ball_shadow",
+          "type": "shape",
+          "shape": { "circle": [0, 0, 11] },
+          "fill": "#0E2F16",
+          "opacity": 0.0,
+          "timelines": [
+            {
+              "name": "darken",
+              "trigger": "go",
+              "tracks": [
+                {
+                  "property": "scale",
+                  "keys": [
+                    { "t": 0.0, "v": 1.0 },
+                    { "t": 0.7, "v": 1.0 },
+                    { "t": 1.0, "v": 0.72 }
+                  ]
+                },
+                {
+                  "property": "opacity",
+                  "keys": [
+                    { "t": 0.0, "v": 0.0 },
+                    { "t": 0.7, "v": 0.0 },
+                    { "t": 1.0, "v": 0.55 }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "timelines": [
+        {
+          "name": "roll",
+          "trigger": "go",
+          "tracks": [
+            {
+              "property": "x",
+              "keys": [
+                { "t": 0.0, "v": 64 },
+                { "t": 1.0, "v": 440, "ease": "cubic_out" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

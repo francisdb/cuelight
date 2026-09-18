@@ -1,0 +1,52 @@
+{
+  "$schema": "../../schemas/scene.schema.json",
+  "name": "mic_pop",
+  "size": [480, 480],
+  "background": "#101018",
+  "variables": { "level": 0 },
+  "layers": [
+    {
+      "name": "pop",
+      "type": "shape",
+      "shape": { "circle": [0, 0, 60] },
+      "fill": "#FFA028",
+      "x": 240,
+      "y": 240,
+      "opacity": 0.0,
+      "timelines": [
+        {
+          "name": "pop",
+          "trigger": "pop",
+          "tracks": [
+            {
+              "property": "scale",
+              "keys": [
+                { "t": 0.0, "v": 0.4 },
+                { "t": 0.6, "v": 3.2, "ease": "cubic_out" }
+              ]
+            },
+            {
+              "property": "opacity",
+              "keys": [
+                { "t": 0.0, "v": 0.9 },
+                { "t": 0.6, "v": 0.0, "ease": "quad_out" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "halo",
+      "type": "shape",
+      "shape": { "circle": [0, 0, 60] },
+      "fill": "#4A90D9",
+      "x": 240,
+      "y": 240,
+      "opacity": 0.85,
+      "bindings": [
+        { "property": "scale", "variable": "level", "scale": 12.0, "offset": 0.25 }
+      ]
+    }
+  ]
+}
