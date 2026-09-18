@@ -1,0 +1,68 @@
+{
+  "$schema": "../../../schemas/show.schema.json",
+  "name": "beacon",
+  "size": [256, 256],
+  "background": "#0A0F14",
+  "layers": [
+    {
+      "name": "floor",
+      "type": "shape",
+      "shape": { "rect": [16, 200, 224, 8] },
+      "fill": "#12331E"
+    },
+    {
+      "name": "orb",
+      "type": "image",
+      "image": "orb",
+      "size": [128, 128],
+      "x": 64,
+      "y": 64,
+      "timelines": [
+        {
+          "name": "pulse",
+          "autoplay": true,
+          "loop": true,
+          "tracks": [
+            {
+              "property": "scale",
+              "keys": [
+                { "t": 0.0, "v": 1.0 },
+                { "t": 1.0, "v": 1.15 },
+                { "t": 2.0, "v": 1.0 }
+              ]
+            },
+            {
+              "property": "x",
+              "keys": [
+                { "t": 0.0, "v": 64.0 },
+                { "t": 1.0, "v": 54.4 },
+                { "t": 2.0, "v": 64.0 }
+              ]
+            },
+            {
+              "property": "y",
+              "keys": [
+                { "t": 0.0, "v": 64.0 },
+                { "t": 1.0, "v": 54.4 },
+                { "t": 2.0, "v": 64.0 }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "flash",
+          "trigger": "flash",
+          "tracks": [
+            {
+              "property": "opacity",
+              "keys": [
+                { "t": 0.0, "v": 0.15 },
+                { "t": 0.35, "v": 1.0, "ease": "quad_out" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
