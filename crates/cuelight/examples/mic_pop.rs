@@ -1,4 +1,4 @@
-//! Microphone demo: the primary input device drives the scene.
+//! Microphone demo: the primary input device drives the show.
 //!
 //! The host side (this example) captures audio with cpal, computes an RMS
 //! level per buffer and feeds the engine through the core contract only:
@@ -166,13 +166,13 @@ impl App {
         }
         self.engine.advance_frame(dt);
 
-        // Fit the scene into the window: uniform scale, centered.
-        let [scene_w, scene_h] = self.engine.scene().expect("scene loaded").size;
+        // Fit the show into the window: uniform scale, centered.
+        let [show_w, show_h] = self.engine.show().expect("show loaded").size;
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let scale = (f64::from(sw) / f64::from(scene_w)).min(f64::from(sh) / f64::from(scene_h));
-        let tx = (f64::from(sw) - f64::from(scene_w) * scale) / 2.0;
-        let ty = (f64::from(sh) - f64::from(scene_h) * scale) / 2.0;
+        let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
+        let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
+        let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
         let mut frame = vello::Scene::new();
         frame.append(
             &build_vello_scene(&self.engine, &mut self.images).expect("build vello scene"),
@@ -244,7 +244,7 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        let [w, h] = self.engine.scene().expect("scene loaded").size;
+        let [w, h] = self.engine.show().expect("show loaded").size;
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -350,9 +350,9 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("starting mic_pop example");
 
-    let json = include_str!("scenes/mic_pop.json");
+    let json = include_str!("shows/mic_pop.json");
     let mut engine = Engine::new();
-    engine.load_scene(json)?;
+    engine.load_show(json)?;
 
     let microphone = start_microphone();
 

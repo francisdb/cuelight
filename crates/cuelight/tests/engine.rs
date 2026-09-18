@@ -2,7 +2,7 @@
 
 use cuelight::{Engine, ResolvedShape};
 
-const MINIGOLF: &str = include_str!("../examples/scenes/minigolf.json");
+const MINIGOLF: &str = include_str!("../examples/shows/minigolf.json");
 
 fn ball_x(engine: &Engine) -> f64 {
     let layers = engine.resolved_layers().unwrap();
@@ -14,9 +14,9 @@ fn ball_x(engine: &Engine) -> f64 {
 }
 
 #[test]
-fn loads_scene_and_resolves_layers() {
+fn loads_show_and_resolves_layers() {
     let mut engine = Engine::new();
-    engine.load_scene(MINIGOLF).unwrap();
+    engine.load_show(MINIGOLF).unwrap();
     let layers = engine.resolved_layers().unwrap();
     // court, court_right, hole, score_bar, ball, ball_shadow (the golf_ball
     // group flattens into its children)
@@ -26,16 +26,16 @@ fn loads_scene_and_resolves_layers() {
 }
 
 #[test]
-fn rejects_invalid_scene() {
+fn rejects_invalid_show() {
     let mut engine = Engine::new();
-    assert!(engine.load_scene("{ not json").is_err());
+    assert!(engine.load_show("{ not json").is_err());
     assert!(engine.resolved_layers().is_err());
 }
 
 #[test]
 fn binding_follows_variable() {
     let mut engine = Engine::new();
-    engine.load_scene(MINIGOLF).unwrap();
+    engine.load_show(MINIGOLF).unwrap();
     let opacity = |e: &Engine| {
         e.resolved_layers()
             .unwrap()
@@ -53,7 +53,7 @@ fn binding_follows_variable() {
 #[test]
 fn trigger_starts_timeline_and_advance_frame_animates() {
     let mut engine = Engine::new();
-    engine.load_scene(MINIGOLF).unwrap();
+    engine.load_show(MINIGOLF).unwrap();
 
     // Nothing moves before the trigger.
     engine.advance_frame(0.25);
@@ -75,7 +75,7 @@ fn trigger_starts_timeline_and_advance_frame_animates() {
 #[test]
 fn timeline_end_value_holds_at_duration() {
     let mut engine = Engine::new();
-    engine.load_scene(MINIGOLF).unwrap();
+    engine.load_show(MINIGOLF).unwrap();
     engine.trigger("go");
     // Land close to, but not past, the end.
     engine.advance_frame(0.999);
@@ -95,7 +95,7 @@ fn image_layers_resolve_with_host_pixels() {
         ]
     }"#;
     let mut engine = Engine::new();
-    engine.load_scene(SCENE).unwrap();
+    engine.load_show(SCENE).unwrap();
 
     // No pixels registered yet: image layers are skipped, not an error.
     assert!(engine.resolved_layers().unwrap().is_empty());
@@ -163,7 +163,7 @@ fn autoplay_looping_timeline_runs_and_wraps() {
         _ => panic!("dot should be a circle"),
     };
     let mut engine = Engine::new();
-    engine.load_scene(SCENE).unwrap();
+    engine.load_show(SCENE).unwrap();
     // Started at load, no trigger required.
     assert_eq!(dot_x(&engine), 0.0);
     engine.advance_frame(1.0);
@@ -194,7 +194,7 @@ fn scale_property_binds_and_scales_geometry() {
         ]
     }"##;
     let mut engine = Engine::new();
-    engine.load_scene(SCENE).unwrap();
+    engine.load_show(SCENE).unwrap();
     let halo = |e: &Engine| match e.resolved_layers().unwrap()[0].shape {
         ResolvedShape::Circle { cx, cy, radius } => (cx, cy, radius),
         _ => panic!("halo should be a circle"),
@@ -209,7 +209,7 @@ fn scale_property_binds_and_scales_geometry() {
 #[test]
 fn unknown_variable_and_trigger_are_harmless() {
     let mut engine = Engine::new();
-    engine.load_scene(MINIGOLF).unwrap();
+    engine.load_show(MINIGOLF).unwrap();
     engine.set_variable("nonexistent", true);
     engine.trigger("nonexistent");
     engine.advance_frame(0.1);

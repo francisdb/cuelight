@@ -2,11 +2,11 @@
 //! noise and a sine wave), crossfaded every two seconds, looping forever.
 //!
 //! The images are generated in memory and handed to the engine with
-//! `Engine::set_image`; the scene's looping autoplay timelines do the rest,
+//! `Engine::set_image`; the show's looping autoplay timelines do the rest,
 //! no external events required. Escape quits.
 //!
 //! The images are generated oversampled at the window's effective
-//! resolution (device pixels per scene unit, fetched from the window at
+//! resolution (device pixels per show unit, fetched from the window at
 //! startup) and mapped back down through the image layers' declared
 //! `size`, so they stay crisp on hidpi displays where the window surface
 //! outresolves the 480x270 canvas.
@@ -67,7 +67,7 @@ fn sine_wave(w: u32, h: u32, oversample: f64) -> Vec<u8> {
         for x in 0..w {
             let phase = f64::from(x) / f64::from(w) * std::f64::consts::TAU * 2.0;
             let curve_y = mid - phase.sin() * amplitude;
-            // Trace thickness in image pixels: a 2-scene-unit core fading
+            // Trace thickness in image pixels: a 2-show-unit core fading
             // out over 2 more, regardless of oversampling.
             let dist = (f64::from(y) - curve_y).abs() / oversample;
             let glow = (1.0 - (dist - 2.0) / 2.0).clamp(0.0, 1.0);
@@ -126,13 +126,13 @@ impl App {
         self.last_frame = now;
         self.engine.advance_frame(dt);
 
-        // Fit the scene into the window: uniform scale, centered.
-        let [scene_w, scene_h] = self.engine.scene().expect("scene loaded").size;
+        // Fit the show into the window: uniform scale, centered.
+        let [show_w, show_h] = self.engine.show().expect("show loaded").size;
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let scale = (f64::from(sw) / f64::from(scene_w)).min(f64::from(sh) / f64::from(scene_h));
-        let tx = (f64::from(sw) - f64::from(scene_w) * scale) / 2.0;
-        let ty = (f64::from(sh) - f64::from(scene_h) * scale) / 2.0;
+        let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
+        let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
+        let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
         let mut frame = vello::Scene::new();
         frame.append(
             &build_vello_scene(&self.engine, &mut self.images).expect("build vello scene"),
@@ -204,7 +204,7 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        let [w, h] = self.engine.scene().expect("scene loaded").size;
+        let [w, h] = self.engine.show().expect("show loaded").size;
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -235,8 +235,8 @@ impl ApplicationHandler for App {
         });
 
         // Generate the slides now that the window exists: oversample by the
-        // window's device pixels per scene unit (hidpi factor included) so
-        // the images resolve 1:1 on the surface. The scene's image layers
+        // window's device pixels per show unit (hidpi factor included) so
+        // the images resolve 1:1 on the surface. The show's image layers
         // were skipped until now; they pick the pixels up next frame.
         let oversample = (f64::from(size.width.max(1)) / f64::from(w))
             .min(f64::from(size.height.max(1)) / f64::from(h))
@@ -323,10 +323,10 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("starting slideshow example");
-    let json = include_str!("scenes/slideshow.json");
+    let json = include_str!("shows/slideshow.json");
 
     let mut engine = Engine::new();
-    engine.load_scene(json)?;
+    engine.load_show(json)?;
 
     let mut app = App {
         engine,

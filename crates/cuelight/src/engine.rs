@@ -1,14 +1,14 @@
-use crate::model::{parse_color, Layer, LayerKind, Property, Scene, Shape};
+use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show};
 use crate::value::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("no scene loaded")]
-    NoScene,
-    #[error("invalid scene: {0}")]
-    InvalidScene(String),
+    #[error("no show loaded")]
+    NoShow,
+    #[error("invalid show: {0}")]
+    InvalidShow(String),
     #[error("invalid color literal {0:?}")]
     InvalidColor(String),
     #[error("invalid image: {0}")]
@@ -38,22 +38,22 @@ impl ImageData {
 /// A running timeline instance.
 #[derive(Debug, Clone)]
 struct Playhead {
-    /// Path to the owning layer within the scene tree.
+    /// Path to the owning layer within the show tree.
     layer_path: Vec<usize>,
     /// Timeline index within that layer.
     timeline: usize,
     time: f64,
 }
 
-/// The engine: owns the loaded scene and all runtime state.
+/// The engine: owns the loaded show and all runtime state.
 ///
-/// Hosts drive it through the four core calls (`load_scene`, `set_variable`,
+/// Hosts drive it through the four core calls (`load_show`, `set_variable`,
 /// `trigger`, `advance_frame`) and read the result back either as
 /// [`resolved_layers`](Engine::resolved_layers) (a flattened draw list, no
 /// GPU involved) or through the `render` feature's rasterizer.
 #[derive(Debug, Default)]
 pub struct Engine {
-    scene: Option<Scene>,
+    show: Option<Show>,
     variables: BTreeMap<String, Value>,
     images: BTreeMap<String, ImageData>,
     image_revision: u64,
@@ -66,17 +66,17 @@ impl Engine {
         Self::default()
     }
 
-    /// Load a scene from its JSON description, replacing any current scene
+    /// Load a show from its JSON description, replacing any current show
     /// and resetting all runtime state. Autoplay timelines start at 0.
-    pub fn load_scene(&mut self, json: &str) -> Result<(), Error> {
-        let scene: Scene =
-            serde_json::from_str(json).map_err(|e| Error::InvalidScene(e.to_string()))?;
-        parse_color(&scene.background)
-            .ok_or_else(|| Error::InvalidColor(scene.background.clone()))?;
-        self.variables = scene.variables.clone();
+    pub fn load_show(&mut self, json: &str) -> Result<(), Error> {
+        let show: Show =
+            serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
+        parse_color(&show.background)
+            .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
+        self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
-        self.scene = Some(scene);
+        self.show = Some(show);
         self.start_matching(|tl| tl.autoplay);
         Ok(())
     }
@@ -92,8 +92,8 @@ impl Engine {
     }
 
     /// Register (or replace) a named RGBA8 image that image layers can
-    /// reference. Images are host assets, not scene content: they survive
-    /// `load_scene` and may be provided before or after the scene that
+    /// reference. Images are host assets, not show content: they survive
+    /// `load_show` and may be provided before or after the show that
     /// uses them (layers referencing a missing image are skipped).
     pub fn set_image(
         &mut self,
@@ -139,11 +139,11 @@ impl Engine {
     /// bindings/base values).
     pub fn advance_frame(&mut self, dt: f64) {
         self.time += dt;
-        let Some(scene) = &self.scene else { return };
+        let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
             p.time += dt;
-            let layer = layer_at(&scene.layers, &p.layer_path);
+            let layer = layer_at(&show.layers, &p.layer_path);
             let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
                 finished.push(i);
                 continue;
@@ -164,31 +164,31 @@ impl Engine {
         }
     }
 
-    /// Seconds advanced since the scene loaded.
+    /// Seconds advanced since the show loaded.
     pub fn time(&self) -> f64 {
         self.time
     }
 
-    pub fn scene(&self) -> Option<&Scene> {
-        self.scene.as_ref()
+    pub fn show(&self) -> Option<&Show> {
+        self.show.as_ref()
     }
 
-    /// Resolve the scene into a flat draw list: visible shape layers in
+    /// Resolve the show into a flat draw list: visible shape layers in
     /// paint order with absolute position and effective opacity.
     ///
     /// Property precedence, strongest first: running timeline, binding,
-    /// base value from the scene description.
+    /// base value from the show description.
     pub fn resolved_layers(&self) -> Result<Vec<ResolvedLayer>, Error> {
-        let scene = self.scene.as_ref().ok_or(Error::NoScene)?;
+        let show = self.show.as_ref().ok_or(Error::NoShow)?;
         let mut out = Vec::new();
-        self.walk(&scene.layers, &mut Vec::new(), 0.0, 0.0, 1.0, &mut out)?;
+        self.walk(&show.layers, &mut Vec::new(), 0.0, 0.0, 1.0, &mut out)?;
         Ok(out)
     }
 
     fn start_matching(&mut self, want: impl Fn(&crate::model::Timeline) -> bool) {
-        let Some(scene) = &self.scene else { return };
+        let Some(show) = &self.show else { return };
         let mut starts = Vec::new();
-        collect_timelines(&scene.layers, &mut Vec::new(), &mut |path, idx, tl| {
+        collect_timelines(&show.layers, &mut Vec::new(), &mut |path, idx, tl| {
             if want(tl) {
                 starts.push((path.to_vec(), idx));
             }
@@ -205,7 +205,7 @@ impl Engine {
     }
 
     fn property(&self, layer: &Layer, path: &[usize], prop: Property) -> f64 {
-        // Base value from the scene description.
+        // Base value from the show description.
         let mut v = match prop {
             Property::X => layer.x,
             Property::Y => layer.y,
@@ -344,7 +344,7 @@ fn resolve_shape(shape: Shape, x: f64, y: f64, scale: f64) -> ResolvedShape {
     }
 }
 
-/// One paintable item of the flattened scene, in canvas coordinates.
+/// One paintable item of the flattened show, in canvas coordinates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedLayer {
     pub name: String,

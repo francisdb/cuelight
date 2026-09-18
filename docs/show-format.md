@@ -1,19 +1,23 @@
-# Scene format
+# Show format
 
-A cuelight scene is a single JSON document describing everything the engine
+A cuelight show is a single JSON document describing everything the engine
 can play: a layer tree, the variables the host may drive, and keyframed
 timelines fired by triggers. The normative, machine-readable definition is
 the generated JSON Schema at
-[`crates/cuelight/schemas/scene.schema.json`](../crates/cuelight/schemas/scene.schema.json);
+[`crates/cuelight/schemas/show.schema.json`](../crates/cuelight/schemas/show.schema.json);
 this page explains the concepts the schema cannot.
 
 Point your editor at the schema for autocomplete and validation:
 
 ```json
-{ "$schema": "../../schemas/scene.schema.json", "name": "my_scene", ... }
+{ "$schema": "../../schemas/show.schema.json", "name": "my_show", ... }
 ```
 
 Unknown fields (like `$schema` itself) are ignored by the engine.
+
+Naming note: the word **scene** is deliberately reserved. A show is the
+whole loaded document; when switchable views / overlay queues land in the
+model (FlexDMD-style), those inner units will be called scenes.
 
 ## Top level
 
@@ -27,7 +31,7 @@ Unknown fields (like `$schema` itself) are ignored by the engine.
 }
 ```
 
-- `size` is the logical canvas in pixels. All coordinates in the scene are
+- `size` is the logical canvas in pixels. All coordinates in the show are
   authored against this space; hosts scale the rendered output to whatever
   surface they have (the bundled examples letterbox it into the window).
 - `background` and every `fill` are `#RRGGBB` or `#RRGGBBAA`.
@@ -59,9 +63,9 @@ Layer kinds:
 - `image`: `image` names pixels the host registers at runtime with
   `Engine::set_image` (RGBA8, kept in memory). Optional `size`
   `[width, height]` scales the image into the canvas; omitted, it draws at
-  its natural pixel size. Images are host assets, not scene content: a
+  its natural pixel size. Images are host assets, not show content: a
   layer whose image is not (yet) registered is skipped, so hosts can
-  stream assets in after `load_scene`.
+  stream assets in after `load_show`.
 
 ## Bindings
 
@@ -122,7 +126,7 @@ visible jump, make base values match the timeline's endpoints.
 
 ## Host contract
 
-The engine is driven exclusively through four calls: `load_scene` (JSON in),
+The engine is driven exclusively through four calls: `load_show` (JSON in),
 `set_variable`, `trigger`, and `advance_frame(dt)`. Output is either
 `resolved_layers()` (a flat, GPU-free draw list) or the `render` feature's
 vello rasterizer. Everything else, including where variable values and

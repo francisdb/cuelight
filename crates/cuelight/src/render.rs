@@ -1,4 +1,4 @@
-//! Offscreen rasterization of the engine's resolved scene via vello + wgpu.
+//! Offscreen rasterization of the engine's resolved show via vello + wgpu.
 //!
 //! The renderer owns a headless wgpu device and renders into a texture the
 //! host can composite; [`Renderer::render_to_rgba`] additionally reads the
@@ -75,7 +75,7 @@ pub fn build_vello_scene(
     engine: &Engine,
     images: &mut ImageCache,
 ) -> Result<vello::Scene, RenderError> {
-    let mut scene = vello::Scene::new();
+    let mut show = vello::Scene::new();
     for layer in engine.resolved_layers()? {
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
@@ -88,11 +88,11 @@ pub fn build_vello_scene(
                 height,
             } => {
                 let rect = Rect::new(x, y, x + width, y + height);
-                scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
             }
             ResolvedShape::Circle { cx, cy, radius } => {
                 let circle = Circle::new((cx, cy), radius);
-                scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
+                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
             }
             ResolvedShape::Image {
                 image,
@@ -113,18 +113,18 @@ pub fn build_vello_scene(
                         width / f64::from(data.width),
                         height / f64::from(data.height),
                     );
-                scene.draw_image(brush.as_ref(), transform);
+                show.draw_image(brush.as_ref(), transform);
             }
         }
     }
-    Ok(scene)
+    Ok(show)
 }
 
-/// The loaded scene's declared background as a vello color; opaque black
-/// when no scene is loaded or the color string does not parse.
+/// The loaded show's declared background as a vello color; opaque black
+/// when no show is loaded or the color string does not parse.
 pub fn background_color(engine: &Engine) -> Color {
     let bg = engine
-        .scene()
+        .show()
         .and_then(|s| parse_color(&s.background))
         .unwrap_or([0, 0, 0, 255]);
     Color::from_rgba8(bg[0], bg[1], bg[2], bg[3])
@@ -164,11 +164,11 @@ impl Renderer {
     /// Render the engine's current state into an offscreen texture and read
     /// it back as tightly-packed RGBA8 bytes (`width * height * 4`).
     pub fn render_to_rgba(&mut self, engine: &Engine) -> Result<RgbaFrame, RenderError> {
-        let scene_meta = engine
-            .scene()
-            .ok_or(crate::engine::Error::NoScene)
+        let show_meta = engine
+            .show()
+            .ok_or(crate::engine::Error::NoShow)
             .map_err(RenderError::Engine)?;
-        let [width, height] = scene_meta.size;
+        let [width, height] = show_meta.size;
         let base_color = background_color(engine);
 
         let vello_scene = build_vello_scene(engine, &mut self.images)?;
