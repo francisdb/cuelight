@@ -502,8 +502,10 @@ fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), String> {
     let rgba = match info.color_type {
         png::ColorType::Rgba => buf,
         png::ColorType::Rgb => buf
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
             .collect(),
         other => {
             return Err(format!(
