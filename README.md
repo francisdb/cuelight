@@ -83,12 +83,12 @@ skipped.
 
 An optional second argument plays a driver file: a scripted sequence of
 the same commands with delays, standing in for a live host, optionally
-looping (see `examples/drivers/`):
+looping, conventionally `<scene>.driver.json` next to its scene:
 
 ```sh
 cargo run --example player -- \
   crates/cuelight/examples/scenes/minigolf.json \
-  crates/cuelight/examples/drivers/minigolf.json
+  crates/cuelight/examples/scenes/minigolf.driver.json
 ```
 
 The windowed examples log startup info (render backend, windowing system,

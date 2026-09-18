@@ -12,7 +12,8 @@
 //! escape quits.
 //!
 //! A driver file scripts the same commands with delays, standing in for a
-//! live host (see `examples/drivers/`):
+//! live host, conventionally named `<scene>.driver.json` next to its
+//! scene (see `examples/scenes/`):
 //!
 //! ```json
 //! {
