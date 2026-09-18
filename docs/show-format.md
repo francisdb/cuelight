@@ -34,6 +34,12 @@ model (FlexDMD-style), those inner units will be called scenes.
 - `size` is the logical canvas in pixels. All coordinates in the show are
   authored against this space; hosts scale the rendered output to whatever
   surface they have (the bundled examples letterbox it into the window).
+- The origin is the **top-left** corner: x grows right, y grows down.
+  Shapes place their geometry relative to the layer's x/y (a circle at
+  `[0, 0, r]` is centered on the layer origin), while an image's
+  **top-left corner** sits at the layer's x/y - there is no anchor
+  property yet, so scaling an image grows it toward the bottom-right and
+  keeping it centered means counter-animating x/y (see the beacon show).
 - `background` and every `fill` are `#RRGGBB` or `#RRGGBBAA`.
 - `variables` declares the host-drivable inputs and their initial values
   (numbers, booleans, or text; bindings read them as numbers, booleans as

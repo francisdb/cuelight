@@ -1,0 +1,10 @@
+{
+  "loop": true,
+  "steps": [
+    { "wait": 2.3 },
+    { "trigger": "flash" },
+    { "wait": 3.7 },
+    { "trigger": "flash" },
+    { "trigger": "flash" }
+  ]
+}

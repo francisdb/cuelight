@@ -32,10 +32,15 @@ fn checked_in_schema_matches_model() {
 fn example_shows_validate_as_shows() {
     for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/shows")).unwrap()
     {
-        let path = entry.unwrap().path();
-        // Driver files (<show>.driver.json) script the player, they are
+        let mut path = entry.unwrap().path();
+        // A directory is a show folder: its document is show.json inside.
+        if path.is_dir() {
+            path = path.join("show.json");
+            assert!(path.is_file(), "show folder without show.json: {path:?}");
+        }
+        // Driver files (*test-driver.json) script the player, they are
         // not shows.
-        if path.to_string_lossy().ends_with(".driver.json") {
+        if path.to_string_lossy().ends_with("test-driver.json") {
             continue;
         }
         let json = std::fs::read_to_string(&path).unwrap();

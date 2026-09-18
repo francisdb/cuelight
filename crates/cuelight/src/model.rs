@@ -10,6 +10,8 @@ pub struct Show {
     pub name: String,
     /// Logical canvas size in pixels `[width, height]`. Hosts scale the
     /// rendered texture; content is authored against this space.
+    /// Coordinates have their origin at the top-left corner: x grows
+    /// right, y grows down.
     pub size: [u32; 2],
     /// Background color, `#RRGGBB` or `#RRGGBBAA`.
     #[serde(default = "default_background")]
@@ -32,7 +34,8 @@ pub struct Layer {
     pub name: String,
     #[serde(flatten)]
     pub kind: LayerKind,
-    /// Translation applied to this layer (and its subtree, for groups).
+    /// Translation applied to this layer (and its subtree, for groups),
+    /// in canvas coordinates (origin top-left, y down).
     #[serde(default)]
     pub x: f64,
     #[serde(default)]
@@ -41,7 +44,10 @@ pub struct Layer {
     #[serde(default = "default_opacity")]
     pub opacity: f64,
     /// Uniform scale of this layer's own geometry around its x/y origin
-    /// (shape coordinates and sizes, image destination size). Not inherited
+    /// (shape coordinates and sizes, image destination size). For images
+    /// the origin is the top-left corner, so scaling grows toward the
+    /// bottom-right; keeping a scaled image centered means
+    /// counter-animating x/y (see the beacon example show). Not inherited
     /// by group children yet.
     #[serde(default = "default_scale")]
     pub scale: f64,
@@ -75,8 +81,9 @@ pub enum LayerKind {
         fill: String,
     },
     /// A host-provided raster image, registered under `image` via
-    /// [`Engine::set_image`](crate::Engine::set_image). Drawn at the layer's
-    /// x/y; not yet registered images are skipped.
+    /// [`Engine::set_image`](crate::Engine::set_image). Drawn with its
+    /// top-left corner at the layer's x/y (there is no anchor property
+    /// yet); not yet registered images are skipped.
     Image {
         image: String,
         /// Destination size `[width, height]`; the image's natural size
