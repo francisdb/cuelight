@@ -1,0 +1,17 @@
+{
+  "loop": true,
+  "steps": [
+    { "set": { "level": 0.02 } },
+    { "wait": 0.4 },
+    { "set": { "level": 0.12 } },
+    { "trigger": "pop" },
+    { "wait": 0.15 },
+    { "set": { "level": 0.05 } },
+    { "wait": 0.45 },
+    { "set": { "level": 0.14 } },
+    { "trigger": "pop" },
+    { "wait": 0.15 },
+    { "set": { "level": 0.04 } },
+    { "wait": 0.85 }
+  ]
+}

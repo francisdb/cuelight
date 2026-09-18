@@ -1,15 +1,31 @@
 //! Generic scene player: load any scene file, list what it can do, drive
-//! it interactively.
+//! it interactively or from a driver file.
 //!
 //! ```sh
-//! cargo run --example player -- path/to/scene.json
+//! cargo run --example player -- path/to/scene.json [path/to/driver.json]
 //! ```
 //!
-//! With no argument the bundled minigolf scene plays. The player inspects the
-//! model and prints its actions (trigger names) and variables to the
+//! With no arguments the bundled minigolf scene plays. The player inspects
+//! the model and prints its actions (trigger names) and variables to the
 //! console: type an action's number or name to fire it, `name=value` to
 //! set a variable, `q` to quit. Digit keys in the window fire actions too,
 //! escape quits.
+//!
+//! A driver file scripts the same commands with delays, standing in for a
+//! live host (see `examples/drivers/`):
+//!
+//! ```json
+//! {
+//!   "loop": true,
+//!   "steps": [
+//!     { "set": { "score": 0 } },
+//!     { "wait": 0.5 },
+//!     { "trigger": "go" }
+//!   ]
+//! }
+//! ```
+//!
+//! Console and keyboard input keep working while a driver runs.
 //!
 //! The player registers no images, so scenes referencing host-provided
 //! images (like the slideshow's) render without them; each missing image
@@ -36,6 +52,58 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 mod common;
+
+/// A scripted command sequence with delays, standing in for a live host.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct Driver {
+    #[serde(default, rename = "loop")]
+    looping: bool,
+    #[serde(default)]
+    steps: Vec<Step>,
+}
+
+/// One driver step: exactly one of `wait` (seconds), `trigger` (fire an
+/// action) or `set` (variable assignments).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+enum Step {
+    Wait {
+        wait: f64,
+    },
+    Trigger {
+        trigger: String,
+    },
+    Set {
+        set: std::collections::BTreeMap<String, Value>,
+    },
+}
+
+/// Playback state for a loaded [`Driver`].
+struct DriverState {
+    driver: Driver,
+    index: usize,
+    wait_left: f64,
+    done: bool,
+}
+
+impl DriverState {
+    fn new(driver: Driver) -> Self {
+        Self {
+            driver,
+            index: 0,
+            wait_left: 0.0,
+            done: false,
+        }
+    }
+}
+
+fn fmt_value(value: &Value) -> String {
+    match value {
+        Value::Text(text) => format!("{text:?}"),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+    }
+}
 
 /// Collect every trigger name declared by timelines in the layer tree.
 fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
@@ -84,11 +152,7 @@ fn print_menu(engine: &Engine, actions: &[String]) {
     if !scene.variables.is_empty() {
         println!("variables:");
         for (name, value) in &scene.variables {
-            match value {
-                Value::Text(text) => println!("  {name} = {text:?}"),
-                Value::Bool(b) => println!("  {name} = {b}"),
-                Value::Number(n) => println!("  {name} = {n}"),
-            }
+            println!("  {name} = {}", fmt_value(value));
         }
     }
     println!("type an action number or name, name=value to set a variable, q to quit");
@@ -115,6 +179,7 @@ struct RenderState {
 struct App {
     engine: Engine,
     actions: Vec<String>,
+    driver: Option<DriverState>,
     console: Receiver<String>,
     context: RenderContext,
     // One vello renderer per wgpu device the context hands out.
@@ -165,12 +230,62 @@ impl App {
         true
     }
 
-    fn redraw(&mut self) {
-        let Some(state) = &self.state else { return };
+    /// Advance the driver playhead by `dt`: waits consume time, commands
+    /// execute the moment their wait is over.
+    fn advance_driver(&mut self, mut dt: f64) {
+        let Some(d) = &mut self.driver else { return };
+        if d.done {
+            return;
+        }
+        let mut wraps = 0;
+        loop {
+            if d.wait_left > 0.0 {
+                if dt < d.wait_left {
+                    d.wait_left -= dt;
+                    return;
+                }
+                dt -= d.wait_left;
+                d.wait_left = 0.0;
+            }
+            if d.index >= d.driver.steps.len() {
+                if !d.driver.looping || d.driver.steps.is_empty() {
+                    log::info!("driver finished");
+                    d.done = true;
+                    return;
+                }
+                wraps += 1;
+                if wraps > 1 {
+                    log::warn!("looping driver has no wait steps; stopping it");
+                    d.done = true;
+                    return;
+                }
+                log::debug!("driver loops, restarting");
+                d.index = 0;
+            }
+            let step = d.driver.steps[d.index].clone();
+            d.index += 1;
+            match step {
+                Step::Wait { wait } => d.wait_left = wait.max(0.0),
+                Step::Trigger { trigger } => {
+                    log::info!("driver fires action {trigger:?}");
+                    self.engine.trigger(&trigger);
+                }
+                Step::Set { set } => {
+                    for (name, value) in set {
+                        log::info!("driver sets {name:?} = {}", fmt_value(&value));
+                        self.engine.set_variable(&name, value);
+                    }
+                }
+            }
+        }
+    }
 
+    fn redraw(&mut self) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f64().min(0.1);
         self.last_frame = now;
+        self.advance_driver(dt);
+        let Some(state) = &self.state else { return };
         self.engine.advance_frame(dt);
 
         // Fit the scene into the window: uniform scale, centered.
@@ -374,6 +489,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .load_scene(&json)
         .map_err(|e| format!("cannot load scene {path:?}: {e}"))?;
 
+    let driver = match std::env::args().nth(2) {
+        Some(driver_path) => {
+            let json = std::fs::read_to_string(&driver_path)
+                .map_err(|e| format!("cannot read driver {driver_path:?}: {e}"))?;
+            let driver: Driver = serde_json::from_str(&json)
+                .map_err(|e| format!("cannot load driver {driver_path:?}: {e}"))?;
+            log::info!(
+                "driving with {driver_path:?}: {} steps{}",
+                driver.steps.len(),
+                if driver.looping { ", looping" } else { "" }
+            );
+            Some(DriverState::new(driver))
+        }
+        None => None,
+    };
+
     let mut actions = BTreeSet::new();
     let scene_layers = engine.scene().expect("scene loaded").layers.clone();
     collect_actions(&scene_layers, &mut actions);
@@ -387,6 +518,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App {
         engine,
         actions,
+        driver,
         console: rx,
         context: RenderContext::new(),
         renderers: Vec::new(),

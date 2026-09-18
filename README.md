@@ -81,6 +81,16 @@ window work too), `name=value` to set a variable, `q` to quit. Image
 layers whose pixels the host never registered are logged as warnings and
 skipped.
 
+An optional second argument plays a driver file: a scripted sequence of
+the same commands with delays, standing in for a live host, optionally
+looping (see `examples/drivers/`):
+
+```sh
+cargo run --example player -- \
+  crates/cuelight/examples/scenes/minigolf.json \
+  crates/cuelight/examples/drivers/minigolf.json
+```
+
 The windowed examples log startup info (render backend, windowing system,
 window size and scale) and events; set `RUST_LOG=debug` for more detail.
 
