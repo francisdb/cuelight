@@ -100,6 +100,10 @@ demonstrates it:
 cargo run --example player -- crates/cuelight/examples/shows/beacon
 ```
 
+More shows live in the
+[cuelight-examples](https://github.com/francisdb/cuelight-examples)
+repository, one show folder each, playable directly with the player.
+
 The windowed examples log startup info (render backend, windowing system,
 window size and scale) and events; set `RUST_LOG=debug` for more detail.
 
