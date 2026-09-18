@@ -1,0 +1,15 @@
+{
+  "loop": true,
+  "steps": [
+    { "set": { "score": 0 } },
+    { "wait": 0.6 },
+    { "trigger": "go" },
+    { "wait": 1.2 },
+    { "set": { "score": 400 } },
+    { "wait": 0.6 },
+    { "trigger": "go" },
+    { "wait": 1.2 },
+    { "set": { "score": 800 } },
+    { "wait": 1.0 }
+  ]
+}
