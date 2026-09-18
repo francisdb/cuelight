@@ -83,13 +83,26 @@ skipped.
 
 An optional second argument plays a driver file: a scripted sequence of
 the same commands with delays, standing in for a live host, optionally
-looping, conventionally `<show>.driver.json` next to its show:
+looping, conventionally `<show>.test-driver.json` next to its show:
 
 ```sh
 cargo run --example player -- \
   crates/cuelight/examples/shows/minigolf.json \
-  crates/cuelight/examples/shows/minigolf.driver.json
+  crates/cuelight/examples/shows/minigolf.test-driver.json
 ```
+
+A show can also be a folder: `show.json` plus an optional
+`test-driver.json` (picked up automatically) and `assets/` with PNGs
+registered as images by filename stem. The bundled beacon show
+demonstrates it:
+
+```sh
+cargo run --example player -- crates/cuelight/examples/shows/beacon
+```
+
+More shows live in the
+[cuelight-examples](https://github.com/francisdb/cuelight-examples)
+repository, one show folder each, playable directly with the player.
 
 The windowed examples log startup info (render backend, windowing system,
 window size and scale) and events; set `RUST_LOG=debug` for more detail.

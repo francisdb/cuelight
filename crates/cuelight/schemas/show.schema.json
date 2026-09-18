@@ -20,7 +20,7 @@
       "type": "string"
     },
     "size": {
-      "description": "Logical canvas size in pixels `[width, height]`. Hosts scale the\nrendered texture; content is authored against this space.",
+      "description": "Logical canvas size in pixels `[width, height]`. Hosts scale the\nrendered texture; content is authored against this space.\nCoordinates have their origin at the top-left corner: x grows\nright, y grows down.",
       "type": "array",
       "items": {
         "type": "integer",
@@ -128,7 +128,7 @@
           "default": 1.0
         },
         "scale": {
-          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). Not inherited\nby group children yet.",
+          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). For images\nthe origin is the top-left corner, so scaling grows toward the\nbottom-right; keeping a scaled image centered means\ncounter-animating x/y (see the beacon example show). Not inherited\nby group children yet.",
           "type": "number",
           "format": "double",
           "default": 1.0
@@ -146,7 +146,7 @@
           "default": true
         },
         "x": {
-          "description": "Translation applied to this layer (and its subtree, for groups).",
+          "description": "Translation applied to this layer (and its subtree, for groups),\nin canvas coordinates (origin top-left, y down).",
           "type": "number",
           "format": "double",
           "default": 0.0
@@ -198,7 +198,7 @@
           ]
         },
         {
-          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn at the layer's\nx/y; not yet registered images are skipped.",
+          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn with its\ntop-left corner at the layer's x/y (there is no anchor property\nyet); not yet registered images are skipped.",
           "type": "object",
           "properties": {
             "image": {
