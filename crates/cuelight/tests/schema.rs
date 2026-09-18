@@ -33,6 +33,11 @@ fn example_scenes_validate_as_scenes() {
     for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/scenes")).unwrap()
     {
         let path = entry.unwrap().path();
+        // Driver files (<scene>.driver.json) script the player, they are
+        // not scenes.
+        if path.to_string_lossy().ends_with(".driver.json") {
+            continue;
+        }
         let json = std::fs::read_to_string(&path).unwrap();
         serde_json::from_str::<Scene>(&json)
             .unwrap_or_else(|e| panic!("{} does not parse: {e}", path.display()));
