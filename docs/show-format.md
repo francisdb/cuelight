@@ -207,6 +207,18 @@ block is as tall as its line heights, except that the last line grows to
 fit its tallest glyph. Characters missing from the font fall back to their
 uppercase form, then to a space.
 
+  With `sheet: { "cell": [width, height], "columns": n }` the image is a
+  sprite sheet: a grid of equal cells numbered row by row from the
+  top-left, and the layer draws the single cell its `frame` property
+  selects (base value `frame`, default 0). Without `size` a cell draws at
+  its own pixel size. `frame` is rounded down and clamped to the cells
+  that fit the image, so a linear key from 0 to 8 over 0.128 s plays eight
+  cells 16 ms each; loop it for a run cycle:
+
+  ```json
+  { "property": "frame", "keys": [{ "t": 0, "v": 0 }, { "t": 0.128, "v": 8 }] }
+  ```
+
 ## Bindings
 
 A binding wires a layer property to a variable, evaluated every frame:
@@ -216,7 +228,7 @@ A binding wires a layer property to a variable, evaluated every frame:
 ```
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
-`x`, `y`, `opacity`, `scale`.
+`x`, `y`, `opacity`, `scale`, and `frame` for sprite sheet images.
 
 A text layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted

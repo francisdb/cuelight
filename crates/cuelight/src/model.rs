@@ -228,9 +228,16 @@ pub enum LayerKind {
     Image {
         image: String,
         /// Destination size `[width, height]`; the image's natural size
-        /// when omitted.
+        /// (one cell's size with a `sheet`) when omitted.
         #[serde(default)]
         size: Option<[f64; 2]>,
+        /// Treat the image as a grid of equally sized cells and draw one:
+        /// the one the `frame` property selects.
+        #[serde(default)]
+        sheet: Option<Sheet>,
+        /// Base cell index for sheets (row-major, 0 is the top-left cell).
+        #[serde(default)]
+        frame: f64,
     },
     /// Text in a bitmap font style from the show's `fonts`. With `size` the
     /// text is aligned inside that box (its top-left corner at the layer's
@@ -245,6 +252,15 @@ pub enum LayerKind {
         #[serde(default)]
         align: Align,
     },
+}
+
+/// A sprite sheet layout: cells of `cell` `[width, height]` pixels,
+/// `columns` per row, numbered row by row from the top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Sheet {
+    pub cell: [u32; 2],
+    pub columns: u32,
 }
 
 /// Vector shapes, in the layer's local coordinate space.
@@ -273,6 +289,9 @@ pub enum Property {
     Text,
     /// The font style of a text layer; bindable, not animatable.
     Font,
+    /// Sprite sheet cell of an image layer: rounded down and clamped to
+    /// the sheet, so a linear key from 0 to n steps through n cells.
+    Frame,
 }
 
 impl Property {
@@ -309,7 +328,8 @@ impl Layer {
             (Property::Scale, _) => Value::Number(self.scale),
             (Property::Text, LayerKind::Text { text, .. }) => Value::Text(text.clone()),
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
-            (Property::Text | Property::Font, _) => return None,
+            (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
+            (Property::Text | Property::Font | Property::Frame, _) => return None,
         })
     }
 }

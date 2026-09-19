@@ -64,3 +64,32 @@ fn circular_clip_cuts_the_corners() {
     assert_eq!(pixel(&frame, 8, 8), [255, 255, 255, 255]);
     assert_eq!(pixel(&frame, 1, 1), [0, 0, 0, 255]);
 }
+
+#[test]
+fn sheet_cell_lands_on_the_destination() {
+    // 4x2 image: left 2x2 cell red, right 2x2 cell green.
+    let mut pixels = Vec::new();
+    for _y in 0..2 {
+        for x in 0..4 {
+            pixels.extend_from_slice(if x < 2 {
+                &[255, 0, 0, 255]
+            } else {
+                &[0, 255, 0, 255]
+            });
+        }
+    }
+    let show = r##"{ "name": "s", "size": [8, 8], "layers": [
+        { "name": "cell", "type": "image", "image": "cells", "x": 2, "y": 2,
+          "sheet": { "cell": [2, 2], "columns": 2 }, "frame": 1, "size": [4, 4] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.set_image("cells", 4, 2, pixels).unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // The whole 4x4 destination is the green cell, nothing outside it.
+    for (x, y) in [(2, 2), (5, 2), (2, 5), (5, 5), (3, 4)] {
+        assert_eq!(pixel(&frame, x, y), [0, 255, 0, 255], "pixel ({x}, {y})");
+    }
+    assert_eq!(pixel(&frame, 1, 3), [0, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 6, 3), [0, 0, 0, 255]);
+}
