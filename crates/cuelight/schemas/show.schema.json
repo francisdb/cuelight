@@ -53,6 +53,21 @@
     "size"
   ],
   "$defs": {
+    "Align": {
+      "description": "Where content sits in a box: one of nine positions.",
+      "type": "string",
+      "enum": [
+        "top_left",
+        "top",
+        "top_right",
+        "left",
+        "center",
+        "right",
+        "bottom_left",
+        "bottom",
+        "bottom_right"
+      ]
+    },
     "Binding": {
       "description": "A permanent wiring of a property to a variable, evaluated every frame.",
       "type": "object",
@@ -119,6 +134,18 @@
       "description": "One node in the show tree.",
       "type": "object",
       "properties": {
+        "anchor": {
+          "description": "Which point of the layer's content box sits at its x/y. Without an\nanchor, images put their top-left corner there and shapes their\nlocal origin. Not supported on groups.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "bindings": {
           "description": "Live property bindings: `property = variable * scale + offset`.",
           "type": "array",
@@ -137,7 +164,7 @@
           "default": 1.0
         },
         "scale": {
-          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). For images\nthe origin is the top-left corner, so scaling grows toward the\nbottom-right; keeping a scaled image centered means\ncounter-animating x/y (see the beacon example show). Not inherited\nby group children yet.",
+          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). With an\n`anchor` the anchored point stays at x/y while scaling. Not\ninherited by group children yet.",
           "type": "number",
           "format": "double",
           "default": 1.0
@@ -207,7 +234,7 @@
           ]
         },
         {
-          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn with its\ntop-left corner at the layer's x/y (there is no anchor property\nyet); not yet registered images are skipped.",
+          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn with its\ntop-left corner at the layer's x/y unless the layer has an\n`anchor`; not yet registered images are skipped.",
           "type": "object",
           "properties": {
             "image": {

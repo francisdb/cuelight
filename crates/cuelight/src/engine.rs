@@ -85,6 +85,7 @@ impl Engine {
             serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
         parse_color(&show.background)
             .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
+        validate(&show)?;
         self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
@@ -331,6 +332,14 @@ impl Engine {
                 let opacity =
                     (oa * self.property(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
                 let scale = self.property(root, layer, path, Property::Scale);
+                // Shift the layer so its anchor point lands on x/y.
+                let (x, y) = match (layer.anchor, self.content_box(layer, scale)) {
+                    (Some(anchor), Some([bx, by, bw, bh])) => {
+                        let (ax, ay) = anchor.offset(bw, bh, 0.0, 0.0);
+                        (x + ax - bx, y + ay - by)
+                    }
+                    _ => (x, y),
+                };
                 match &layer.kind {
                     LayerKind::Group { children } => {
                         self.walk(root, children, path, x, y, opacity, out)?;
@@ -378,6 +387,53 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
         Root::Show => Some(&show.layers),
         Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
     }
+}
+
+impl Engine {
+    /// A layer's content box `[x, y, width, height]` in its local space,
+    /// scaled; `None` for groups and unregistered images.
+    fn content_box(&self, layer: &Layer, scale: f64) -> Option<[f64; 4]> {
+        match &layer.kind {
+            LayerKind::Group { .. } => None,
+            LayerKind::Shape { shape, .. } => Some(match *shape {
+                Shape::Rect([x, y, w, h]) => [x * scale, y * scale, w * scale, h * scale],
+                Shape::Circle([cx, cy, r]) => [
+                    (cx - r) * scale,
+                    (cy - r) * scale,
+                    2.0 * r * scale,
+                    2.0 * r * scale,
+                ],
+            }),
+            LayerKind::Image { image, size } => {
+                let data = self.images.get(image)?;
+                let [w, h] = size.unwrap_or([f64::from(data.width), f64::from(data.height)]);
+                Some([0.0, 0.0, w * scale, h * scale])
+            }
+        }
+    }
+}
+
+/// Checks `load_show` does beyond parsing.
+fn validate(show: &Show) -> Result<(), Error> {
+    fn layers(list: &[Layer]) -> Result<(), Error> {
+        for layer in list {
+            if let LayerKind::Group { children } = &layer.kind {
+                if layer.anchor.is_some() {
+                    return Err(Error::InvalidShow(format!(
+                        "group {:?} has an anchor; groups have no content box",
+                        layer.name
+                    )));
+                }
+                layers(children)?;
+            }
+        }
+        Ok(())
+    }
+    layers(&show.layers)?;
+    for scene in &show.scenes {
+        layers(&scene.layers)?;
+    }
+    Ok(())
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {

@@ -60,9 +60,8 @@ distribution form.
 - The origin is the **top-left** corner: x grows right, y grows down.
   Shapes place their geometry relative to the layer's x/y (a circle at
   `[0, 0, r]` is centered on the layer origin), while an image's
-  **top-left corner** sits at the layer's x/y - there is no anchor
-  property yet, so scaling an image grows it toward the bottom-right and
-  keeping it centered means counter-animating x/y (see the beacon show).
+  **top-left corner** sits at the layer's x/y, unless the layer sets an
+  `anchor` (see [Layers](#layers)).
 - `background` and every `fill` are `#RRGGBB` or `#RRGGBBAA`.
 - `variables` declares the host-drivable inputs and their initial values
   (numbers, booleans, or text; bindings read them as numbers, booleans as
@@ -103,7 +102,15 @@ group children behind whatever follows the group. Every layer has:
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
-  its x/y origin. Not yet inherited by group children.
+  its x/y origin (or its anchor point). Not yet inherited by group
+  children.
+- `anchor` (optional): which point of the layer's content box sits at its
+  x/y: `top_left`, `top`, `top_right`, `left`, `center`, `right`,
+  `bottom_left`, `bottom`, `bottom_right`. The content box is an image's
+  drawn rectangle or a shape's bounding box, after `scale`, so an image
+  anchored at `center` stays centered while it scales (see the beacon
+  show). Without an anchor, images put their top-left corner and shapes
+  their local origin at x/y. Groups cannot be anchored.
 - `visible` (default true): invisible layers (and their subtrees) resolve
   to nothing.
 - `bindings`, `timelines`: see below.
