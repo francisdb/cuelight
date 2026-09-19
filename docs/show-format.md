@@ -121,6 +121,18 @@ Layer kinds:
   layer whose image is not (yet) registered is skipped, so hosts can
   stream assets in after `load_show`.
 
+  With `sheet: { "cell": [width, height], "columns": n }` the image is a
+  sprite sheet: a grid of equal cells numbered row by row from the
+  top-left, and the layer draws the single cell its `frame` property
+  selects (base value `frame`, default 0). Without `size` a cell draws at
+  its own pixel size. `frame` is rounded down and clamped to the cells
+  that fit the image, so a linear key from 0 to 8 over 0.128 s plays eight
+  cells 16 ms each; loop it for a run cycle:
+
+  ```json
+  { "property": "frame", "keys": [{ "t": 0, "v": 0 }, { "t": 0.128, "v": 8 }] }
+  ```
+
 ## Bindings
 
 A binding wires a layer property to a variable, evaluated every frame:
@@ -130,7 +142,7 @@ A binding wires a layer property to a variable, evaluated every frame:
 ```
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
-`x`, `y`, `opacity`, `scale`.
+`x`, `y`, `opacity`, `scale`, and `frame` for sprite sheet images.
 
 ## Timelines
 

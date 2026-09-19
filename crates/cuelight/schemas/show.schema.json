@@ -210,11 +210,29 @@
           "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn with its\ntop-left corner at the layer's x/y (there is no anchor property\nyet); not yet registered images are skipped.",
           "type": "object",
           "properties": {
+            "frame": {
+              "description": "Base cell index for sheets (row-major, 0 is the top-left cell).",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
             "image": {
               "type": "string"
             },
+            "sheet": {
+              "description": "Treat the image as a grid of equally sized cells and draw one:\nthe one the `frame` property selects.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Sheet"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "size": {
-              "description": "Destination size `[width, height]`; the image's natural size\nwhen omitted.",
+              "description": "Destination size `[width, height]`; the image's natural size\n(one cell's size with a `sheet`) when omitted.",
               "type": [
                 "array",
                 "null"
@@ -244,12 +262,21 @@
     },
     "Property": {
       "description": "An animatable layer property.",
-      "type": "string",
-      "enum": [
-        "x",
-        "y",
-        "opacity",
-        "scale"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "opacity",
+            "scale"
+          ]
+        },
+        {
+          "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
+          "type": "string",
+          "const": "frame"
+        }
       ]
     },
     "Scene": {
@@ -320,6 +347,31 @@
             "circle"
           ]
         }
+      ]
+    },
+    "Sheet": {
+      "description": "A sprite sheet layout: cells of `cell` `[width, height]` pixels,\n`columns` per row, numbered row by row from the top-left.",
+      "type": "object",
+      "properties": {
+        "cell": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "columns": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cell",
+        "columns"
       ]
     },
     "Timeline": {

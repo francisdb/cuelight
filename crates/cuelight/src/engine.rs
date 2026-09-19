@@ -1,4 +1,4 @@
-use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Sheet, Show, Timeline};
 use crate::value::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -285,6 +285,10 @@ impl Engine {
             Property::Y => layer.y,
             Property::Opacity => layer.opacity,
             Property::Scale => layer.scale,
+            Property::Frame => match &layer.kind {
+                LayerKind::Image { frame, .. } => *frame,
+                _ => 0.0,
+            },
         };
         // Bindings override base.
         for b in &layer.bindings {
@@ -345,16 +349,26 @@ impl Engine {
                             opacity,
                         });
                     }
-                    LayerKind::Image { image, size } => {
+                    LayerKind::Image {
+                        image, size, sheet, ..
+                    } => {
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
                         if let Some(data) = self.images.get(image) {
-                            let [width, height] =
-                                size.unwrap_or([f64::from(data.width), f64::from(data.height)]);
+                            let source = sheet.map(|sheet| {
+                                let frame = self.property(root, layer, path, Property::Frame);
+                                sheet_cell(sheet, data.width, data.height, frame)
+                            });
+                            let natural = match source {
+                                Some([_, _, w, h]) => [f64::from(w), f64::from(h)],
+                                None => [f64::from(data.width), f64::from(data.height)],
+                            };
+                            let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
+                                    source,
                                     x,
                                     y,
                                     width: width * scale,
@@ -378,6 +392,21 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
         Root::Show => Some(&show.layers),
         Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
     }
+}
+
+/// The pixel rectangle `[x, y, width, height]` of sheet cell `frame`
+/// (rounded down, clamped to the cells that fit the image).
+fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> [u32; 4] {
+    let [cw, ch] = sheet.cell.map(|c| c.max(1));
+    let columns = sheet.columns.clamp(1, (image_width / cw).max(1));
+    let rows = (image_height / ch).max(1);
+    let last = columns * rows - 1;
+    let index = if frame.is_finite() && frame > 0.0 {
+        (frame.floor() as u32).min(last)
+    } else {
+        0
+    };
+    [index % columns * cw, index / columns * ch, cw, ch]
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
@@ -452,9 +481,11 @@ pub enum ResolvedShape {
         radius: f64,
     },
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
-    /// the destination rectangle.
+    /// the destination rectangle: the whole image, or with `source` only
+    /// that pixel rectangle `[x, y, width, height]` of it (a sheet cell).
     Image {
         image: String,
+        source: Option<[u32; 4]>,
         x: f64,
         y: f64,
         width: f64,

@@ -39,6 +39,9 @@ pub enum RenderError {
 #[derive(Default)]
 pub struct ImageCache {
     entries: HashMap<String, (u64, vello::peniko::ImageData)>,
+    /// Sprite sheet cells cut out of registered images, by image name and
+    /// cell rectangle, with the image revision they were cut from.
+    cells: HashMap<(String, [u32; 4]), (u64, vello::peniko::ImageData)>,
 }
 
 impl ImageCache {
@@ -62,6 +65,39 @@ impl ImageCache {
                 image
             }
         }
+    }
+
+    /// One sheet cell as its own image, so sampling at its edges never
+    /// reads neighboring cells (bilinear filtering would bleed them in).
+    fn cell(
+        &mut self,
+        name: &str,
+        data: &crate::engine::ImageData,
+        [x, y, w, h]: [u32; 4],
+    ) -> vello::peniko::ImageData {
+        let key = (name.to_owned(), [x, y, w, h]);
+        if let Some((revision, image)) = self.cells.get(&key) {
+            if *revision == data.revision() {
+                return image.clone();
+            }
+        }
+        // The engine clamps cells to the image, this only guards races.
+        let w = w.min(data.width.saturating_sub(x));
+        let h = h.min(data.height.saturating_sub(y));
+        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+        for row in y..y + h {
+            let start = ((row * data.width + x) * 4) as usize;
+            pixels.extend_from_slice(&data.pixels[start..start + (w * 4) as usize]);
+        }
+        let image = vello::peniko::ImageData {
+            data: Blob::new(Arc::new(pixels)),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width: w,
+            height: h,
+        };
+        self.cells.insert(key, (data.revision(), image.clone()));
+        image
     }
 }
 
@@ -96,6 +132,7 @@ pub fn build_vello_scene(
             }
             ResolvedShape::Image {
                 image,
+                source,
                 x,
                 y,
                 width,
@@ -106,13 +143,16 @@ pub fn build_vello_scene(
                 let Some(data) = engine.image(&image) else {
                     continue;
                 };
-                let brush =
-                    ImageBrush::new(images.get(&image, data)).with_alpha(layer.opacity as f32);
+                let pixels = match source {
+                    None => images.get(&image, data),
+                    Some(cell) => images.cell(&image, data, cell),
+                };
                 let transform = Affine::translate((x, y))
                     * Affine::scale_non_uniform(
-                        width / f64::from(data.width),
-                        height / f64::from(data.height),
+                        width / f64::from(pixels.width),
+                        height / f64::from(pixels.height),
                     );
+                let brush = ImageBrush::new(pixels).with_alpha(layer.opacity as f32);
                 show.draw_image(brush.as_ref(), transform);
             }
         }

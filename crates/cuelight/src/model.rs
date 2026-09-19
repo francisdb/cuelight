@@ -106,10 +106,26 @@ pub enum LayerKind {
     Image {
         image: String,
         /// Destination size `[width, height]`; the image's natural size
-        /// when omitted.
+        /// (one cell's size with a `sheet`) when omitted.
         #[serde(default)]
         size: Option<[f64; 2]>,
+        /// Treat the image as a grid of equally sized cells and draw one:
+        /// the one the `frame` property selects.
+        #[serde(default)]
+        sheet: Option<Sheet>,
+        /// Base cell index for sheets (row-major, 0 is the top-left cell).
+        #[serde(default)]
+        frame: f64,
     },
+}
+
+/// A sprite sheet layout: cells of `cell` `[width, height]` pixels,
+/// `columns` per row, numbered row by row from the top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Sheet {
+    pub cell: [u32; 2],
+    pub columns: u32,
 }
 
 /// Vector shapes, in the layer's local coordinate space.
@@ -132,6 +148,9 @@ pub enum Property {
     Y,
     Opacity,
     Scale,
+    /// Sprite sheet cell of an image layer: rounded down and clamped to
+    /// the sheet, so a linear key from 0 to n steps through n cells.
+    Frame,
 }
 
 /// A permanent wiring of a property to a variable, evaluated every frame.

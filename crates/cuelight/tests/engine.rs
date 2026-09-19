@@ -110,6 +110,7 @@ fn image_layers_resolve_with_host_pixels() {
         layers[0].shape,
         ResolvedShape::Image {
             image: "tex".into(),
+            source: None,
             x: 4.0,
             y: 6.0,
             width: 2.0,
@@ -340,4 +341,76 @@ fn show_without_scenes_has_no_active_scene() {
     let mut engine = Engine::new();
     engine.load_show(MINIGOLF).unwrap();
     assert_eq!(engine.active_scene(), None);
+}
+
+const SHEET: &str = r##"{
+  "name": "sheet",
+  "size": [32, 32],
+  "layers": [
+    {
+      "name": "girl",
+      "type": "image",
+      "image": "sheet",
+      "sheet": { "cell": [4, 2], "columns": 3 },
+      "frame": 1,
+      "x": 5,
+      "timelines": [
+        {
+          "name": "run",
+          "trigger": "run",
+          "loop": true,
+          "tracks": [{ "property": "frame", "keys": [{ "t": 0, "v": 0 }, { "t": 0.6, "v": 6 }] }]
+        }
+      ]
+    }
+  ]
+}"##;
+
+fn source(engine: &Engine) -> (Option<[u32; 4]>, f64, f64) {
+    match engine.resolved_layers().unwrap()[0].shape.clone() {
+        ResolvedShape::Image {
+            source,
+            width,
+            height,
+            ..
+        } => (source, width, height),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn sheet_draws_the_frame_cell() {
+    let mut engine = Engine::new();
+    // 12x4 image: 3 columns x 2 rows of 4x2 cells.
+    engine
+        .set_image("sheet", 12, 4, vec![255u8; 12 * 4 * 4])
+        .unwrap();
+    engine.load_show(SHEET).unwrap();
+    // Base frame 1, drawn at the cell's size.
+    assert_eq!(source(&engine), (Some([4, 0, 4, 2]), 4.0, 2.0));
+    engine.trigger("run");
+    engine.advance_frame(0.35);
+    // Frame 3.5 rounds down to 3: first cell of the second row.
+    assert_eq!(source(&engine).0, Some([0, 2, 4, 2]));
+    engine.set_variable("unused", 0.0);
+    engine.advance_frame(0.2);
+    // 5.5 -> 5, the last cell.
+    assert_eq!(source(&engine).0, Some([8, 2, 4, 2]));
+}
+
+#[test]
+fn sheet_frame_is_clamped_and_bindable() {
+    let show = SHEET.replace(
+        r#""frame": 1,"#,
+        r#""frame": 1, "bindings": [{ "property": "frame", "variable": "f" }],"#,
+    );
+    let mut engine = Engine::new();
+    engine
+        .set_image("sheet", 12, 4, vec![255u8; 12 * 4 * 4])
+        .unwrap();
+    engine.load_show(&show).unwrap();
+    engine.set_variable("f", 99.0);
+    assert_eq!(source(&engine).0, Some([8, 2, 4, 2]));
+    engine.set_variable("f", -3.0);
+    assert_eq!(source(&engine).0, Some([0, 0, 4, 2]));
 }
