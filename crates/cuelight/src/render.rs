@@ -3,9 +3,14 @@
 //! The renderer owns a headless wgpu device and renders into a texture the
 //! host can composite; [`Renderer::render_to_rgba`] additionally reads the
 //! pixels back for inspection, tests and PNG dumps.
+//!
+//! The show's output mode (see [`Engine::output`]) is applied to the
+//! finished frame: [`Renderer`] does it after readback, hosts rendering on
+//! their own device can run [`OutputPass`] on the GPU.
 
 use crate::engine::{Engine, ResolvedShape};
 use crate::model::parse_color;
+use crate::output::{OutputColor, LUMA_WEIGHTS};
 use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, Circle, Rect};
@@ -260,12 +265,163 @@ impl Renderer {
         }
         drop(mapped);
         buffer.unmap();
+        engine.output().apply(&mut pixels);
 
         Ok(RgbaFrame {
             width,
             height,
             pixels,
         })
+    }
+}
+
+const OUTPUT_SHADER: &str = r#"
+struct Params {
+    tint: vec4<f32>,
+    // Highest gray level; 0 passes colors through unchanged.
+    max_level: f32,
+    luma: vec3<f32>,
+}
+
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var dst: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(2) var<uniform> params: Params;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = textureDimensions(src);
+    if id.x >= size.x || id.y >= size.y {
+        return;
+    }
+    let color = textureLoad(src, vec2<i32>(id.xy), 0);
+    var out = color;
+    if params.max_level > 0.0 {
+        let level = round(dot(color.rgb, params.luma) * params.max_level);
+        out = vec4<f32>(params.tint.rgb * level / params.max_level, color.a);
+    }
+    textureStore(dst, vec2<i32>(id.xy), out);
+}
+"#;
+
+/// GPU version of [`OutputColor::apply`]: converts a rendered frame into
+/// the show's output colors, texture to texture, for hosts that render on
+/// their own device and never read pixels back.
+pub struct OutputPass {
+    pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl OutputPass {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("cuelight-output"),
+            source: wgpu::ShaderSource::Wgsl(OUTPUT_SHADER.into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("cuelight-output"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("cuelight-output"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("cuelight-output"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Self { pipeline, layout }
+    }
+
+    /// Record the conversion of `src` into `dst`. Both are `width` x
+    /// `height`; `src` needs `TEXTURE_BINDING` usage, `dst` must be
+    /// `Rgba8Unorm` with `STORAGE_BINDING` usage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::TextureView,
+        dst: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        output: OutputColor,
+    ) {
+        let [r, g, b] = output.tint.map(|c| f32::from(c) / 255.0);
+        let max_level = f32::from(output.max_level().unwrap_or(0));
+        let [lr, lg, lb] = LUMA_WEIGHTS.map(|w| w as f32);
+        // Layout matches Params: vec4 tint, f32 level, then vec3 luma at
+        // offset 16 + 16 (vec3 aligns to 16 bytes), struct padded to 48.
+        let params: [f32; 12] = [r, g, b, 1.0, max_level, 0.0, 0.0, 0.0, lr, lg, lb, 0.0];
+        let bytes: Vec<u8> = params.iter().flat_map(|f| f.to_le_bytes()).collect();
+        let uniform = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("cuelight-output-params"),
+                contents: &bytes,
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("cuelight-output"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(dst),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform.as_entire_binding(),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("cuelight-output"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
     }
 }
 

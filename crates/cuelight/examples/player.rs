@@ -47,10 +47,11 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cuelight::render::{background_color, build_vello_scene, ImageCache};
+use cuelight::render::{background_color, build_vello_scene, ImageCache, OutputPass};
 use cuelight::vello;
-use cuelight::{Engine, Layer, LayerKind, Show, Value};
+use cuelight::{Engine, Layer, LayerKind, OutputMode, Show, Value};
 use vello::kurbo::Affine;
+use vello::peniko::{Color, ImageBrush};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wgpu::CurrentSurfaceTexture;
@@ -208,6 +209,56 @@ struct RenderState {
     surface: RenderSurface<'static>,
 }
 
+/// The show rendered at its own resolution, for output modes that convert
+/// the finished frame (gray levels, tint) before it is scaled into the
+/// window. The converted texture is registered with vello as an image.
+struct NativeFrame {
+    render: wgpu::TextureView,
+    converted: wgpu::TextureView,
+    image: vello::peniko::ImageData,
+    pass: OutputPass,
+}
+
+impl NativeFrame {
+    fn new(
+        device: &wgpu::Device,
+        renderer: &mut vello::Renderer,
+        [width, height]: [u32; 2],
+    ) -> Self {
+        let texture = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let render = texture(
+            "cuelight-native",
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let converted = texture(
+            "cuelight-native-output",
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        );
+        let converted_view = converted.create_view(&wgpu::TextureViewDescriptor::default());
+        Self {
+            render: render.create_view(&wgpu::TextureViewDescriptor::default()),
+            converted: converted_view,
+            image: renderer.register_texture(converted),
+            pass: OutputPass::new(device),
+        }
+    }
+}
+
 struct App {
     engine: Engine,
     actions: Vec<String>,
@@ -221,6 +272,7 @@ struct App {
     last_frame: Instant,
     fps: common::Fps,
     images: ImageCache,
+    native: Option<NativeFrame>,
 }
 
 impl App {
@@ -327,25 +379,71 @@ impl App {
         let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
         let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
         let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
+        let placement = Affine::translate((tx, ty)) * Affine::scale(scale);
+        let show_scene =
+            build_vello_scene(&self.engine, &mut self.images).expect("build vello scene");
+        let output = self.engine.output();
+        let device_handle = &self.context.devices[surface.dev_id];
+        let renderer = self.renderers[surface.dev_id]
+            .as_mut()
+            .expect("renderer for surface device");
+
         let mut frame = vello::Scene::new();
-        frame.append(
-            &build_vello_scene(&self.engine, &mut self.images).expect("build vello scene"),
-            Some(Affine::translate((tx, ty)) * Affine::scale(scale)),
-        );
+        if output.mode == OutputMode::Rgb {
+            frame.append(&show_scene, Some(placement));
+        } else {
+            // Render at show resolution, convert on the GPU, then draw the
+            // converted texture scaled into the window.
+            let native = self.native.get_or_insert_with(|| {
+                NativeFrame::new(&device_handle.device, renderer, [show_w, show_h])
+            });
+            renderer
+                .render_to_texture(
+                    &device_handle.device,
+                    &device_handle.queue,
+                    &show_scene,
+                    &native.render,
+                    &vello::RenderParams {
+                        base_color: background_color(&self.engine),
+                        width: show_w,
+                        height: show_h,
+                        antialiasing_method: vello::AaConfig::Area,
+                    },
+                )
+                .expect("vello render");
+            let mut encoder =
+                device_handle
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("cuelight-output"),
+                    });
+            native.pass.encode(
+                &device_handle.device,
+                &mut encoder,
+                &native.render,
+                &native.converted,
+                show_w,
+                show_h,
+                output,
+            );
+            device_handle.queue.submit([encoder.finish()]);
+            renderer.mark_override_image_dirty(&native.image);
+            frame.draw_image(&ImageBrush::new(native.image.clone()), placement);
+        }
         self.fps.tick();
         self.fps.draw(&mut frame, state.window.scale_factor());
 
-        let device_handle = &self.context.devices[surface.dev_id];
-        self.renderers[surface.dev_id]
-            .as_mut()
-            .expect("renderer for surface device")
+        // The letterbox around the show takes the converted background.
+        let [r, g, b, a] = background_color(&self.engine).to_rgba8().to_u8_array();
+        let [r, g, b, a] = output.apply_pixel([r, g, b, a]);
+        renderer
             .render_to_texture(
                 &device_handle.device,
                 &device_handle.queue,
                 &frame,
                 &surface.target_view,
                 &vello::RenderParams {
-                    base_color: background_color(&self.engine),
+                    base_color: Color::from_rgba8(r, g, b, a),
                     width: sw,
                     height: sh,
                     antialiasing_method: vello::AaConfig::Area,
@@ -646,6 +744,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         last_frame: Instant::now(),
         fps: common::Fps::new(),
         images: ImageCache::new(),
+        native: None,
     };
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut app)?;

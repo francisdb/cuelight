@@ -1,4 +1,5 @@
 use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::output::OutputColor;
 use crate::value::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -85,6 +86,12 @@ impl Engine {
             serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
         parse_color(&show.background)
             .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
+        for output in std::iter::once(&show.output)
+            .chain(show.scenes.iter().filter_map(|s| s.output.as_ref()))
+        {
+            OutputColor::from_output(output)
+                .ok_or_else(|| Error::InvalidColor(output.tint.clone().unwrap_or_default()))?;
+        }
         self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
@@ -164,6 +171,21 @@ impl Engine {
     pub fn active_scene(&self) -> Option<&str> {
         let show = self.show.as_ref()?;
         Some(show.scenes.get(self.active_scene?)?.name.as_str())
+    }
+
+    /// Output color handling for the current frame: the active scene's
+    /// when it declares one, otherwise the show's. Full color when no
+    /// show is loaded. Renderers apply it to the finished frame.
+    pub fn output(&self) -> OutputColor {
+        let Some(show) = &self.show else {
+            return OutputColor::RGB;
+        };
+        let scene_output = self
+            .active_scene
+            .and_then(|i| show.scenes.get(i))
+            .and_then(|s| s.output.as_ref());
+        // Tints were validated at load.
+        OutputColor::from_output(scene_output.unwrap_or(&show.output)).unwrap_or_default()
     }
 
     fn enter_scene(&mut self, scene: usize) {
