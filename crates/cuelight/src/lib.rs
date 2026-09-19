@@ -20,12 +20,17 @@
 
 mod easing;
 mod engine;
+mod font;
 mod model;
 mod value;
 
 pub use easing::Easing;
 pub use engine::{Engine, Error, ImageData, ResolvedLayer, ResolvedShape};
-pub use model::{Binding, Key, Layer, LayerKind, Property, Scene, Shape, Show, Timeline, Track};
+pub use font::BitmapFont;
+pub use model::{
+    Align, Binding, Border, FontStyle, Key, Layer, LayerKind, NumberFormat, Property, Scene, Shape,
+    Show, Timeline, Track,
+};
 pub use value::Value;
 
 #[cfg(feature = "render")]

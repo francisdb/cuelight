@@ -39,6 +39,22 @@ pub enum RenderError {
 #[derive(Default)]
 pub struct ImageCache {
     entries: HashMap<String, (u64, vello::peniko::ImageData)>,
+    /// Engine-generated bitmaps (text) by revision.
+    bitmaps: HashMap<u64, vello::peniko::ImageData>,
+}
+
+/// Bound on cached bitmap uploads; text that changes every frame would
+/// otherwise accumulate. Clearing only costs re-uploads.
+const MAX_CACHED_BITMAPS: usize = 512;
+
+fn peniko_image(data: &crate::engine::ImageData) -> vello::peniko::ImageData {
+    vello::peniko::ImageData {
+        data: Blob::new(Arc::new(data.pixels.clone())),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width: data.width,
+        height: data.height,
+    }
 }
 
 impl ImageCache {
@@ -50,18 +66,24 @@ impl ImageCache {
         match self.entries.get(name) {
             Some((revision, image)) if *revision == data.revision() => image.clone(),
             _ => {
-                let image = vello::peniko::ImageData {
-                    data: Blob::new(Arc::new(data.pixels.clone())),
-                    format: ImageFormat::Rgba8,
-                    alpha_type: ImageAlphaType::Alpha,
-                    width: data.width,
-                    height: data.height,
-                };
+                let image = peniko_image(data);
                 self.entries
                     .insert(name.to_owned(), (data.revision(), image.clone()));
                 image
             }
         }
+    }
+
+    fn bitmap(&mut self, data: &crate::engine::ImageData) -> vello::peniko::ImageData {
+        if let Some(image) = self.bitmaps.get(&data.revision()) {
+            return image.clone();
+        }
+        if self.bitmaps.len() >= MAX_CACHED_BITMAPS {
+            self.bitmaps.clear();
+        }
+        let image = peniko_image(data);
+        self.bitmaps.insert(data.revision(), image.clone());
+        image
     }
 }
 
@@ -112,6 +134,21 @@ pub fn build_vello_scene(
                     * Affine::scale_non_uniform(
                         width / f64::from(data.width),
                         height / f64::from(data.height),
+                    );
+                show.draw_image(brush.as_ref(), transform);
+            }
+            ResolvedShape::Bitmap {
+                image,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let brush = ImageBrush::new(images.bitmap(&image)).with_alpha(layer.opacity as f32);
+                let transform = Affine::translate((x, y))
+                    * Affine::scale_non_uniform(
+                        width / f64::from(image.width),
+                        height / f64::from(image.height),
                     );
                 show.draw_image(brush.as_ref(), transform);
             }

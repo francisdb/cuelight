@@ -9,6 +9,14 @@
       "type": "string",
       "default": "#000000"
     },
+    "fonts": {
+      "description": "Named text styles for text layers: a bitmap font plus colors.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/FontStyle"
+      },
+      "default": {}
+    },
     "layers": {
       "description": "Layers that are always present, painted behind the active scene.",
       "type": "array",
@@ -53,10 +61,30 @@
     "size"
   ],
   "$defs": {
+    "Align": {
+      "description": "Where content sits in a box: one of nine positions.",
+      "type": "string",
+      "enum": [
+        "top_left",
+        "top",
+        "top_right",
+        "left",
+        "center",
+        "right",
+        "bottom_left",
+        "bottom",
+        "bottom_right"
+      ]
+    },
     "Binding": {
-      "description": "A permanent wiring of a property to a variable, evaluated every frame.",
+      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`.",
       "type": "object",
       "properties": {
+        "format": {
+          "description": "How a number becomes text (text bindings only).",
+          "$ref": "#/$defs/NumberFormat",
+          "default": "plain"
+        },
         "offset": {
           "type": "number",
           "format": "double",
@@ -79,6 +107,26 @@
         "variable"
       ]
     },
+    "Border": {
+      "description": "An outline drawn around every glyph.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB`",
+          "type": "string"
+        },
+        "width": {
+          "description": "Outline width in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "color"
+      ]
+    },
     "Easing": {
       "description": "Easing applied to the segment that ends at the keyframe carrying it.",
       "type": "string",
@@ -91,6 +139,35 @@
         "cubic_out",
         "cubic_in_out",
         "step"
+      ]
+    },
+    "FontStyle": {
+      "description": "A text style: a bitmap font the host registered, tinted and optionally\noutlined.",
+      "type": "object",
+      "properties": {
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Border"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "color": {
+          "description": "Glyph color multiplier, `#RRGGBB`; white keeps the font's colors.",
+          "type": "string",
+          "default": "#FFFFFF"
+        },
+        "file": {
+          "description": "Name of the bitmap font as registered by the host with\n[`Engine::set_font`](crate::Engine::set_font) (by convention the\n`.fnt` file stem).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
       ]
     },
     "Key": {
@@ -236,20 +313,82 @@
             "type",
             "image"
           ]
+        },
+        {
+          "description": "Text in a bitmap font style from the show's `fonts`. With `size` the\ntext is aligned inside that box (its top-left corner at the layer's\nx/y); without, the box is the text's own size. Multi-line text\n(`\\n`) aligns each line on its own. Skipped while the style's font\nis not registered.",
+          "type": "object",
+          "properties": {
+            "align": {
+              "$ref": "#/$defs/Align",
+              "default": "center"
+            },
+            "font": {
+              "type": "string"
+            },
+            "size": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "required": [
+            "type",
+            "text",
+            "font"
+          ]
         }
       ],
       "required": [
         "name"
       ]
     },
+    "NumberFormat": {
+      "description": "Number to text conversion for text bindings.",
+      "oneOf": [
+        {
+          "description": "Shortest form: `1500`, `2.5`.",
+          "type": "string",
+          "const": "plain"
+        },
+        {
+          "description": "Rounded to an integer with comma thousands separators: `1,500`.",
+          "type": "string",
+          "const": "thousands"
+        }
+      ]
+    },
     "Property": {
       "description": "An animatable layer property.",
-      "type": "string",
-      "enum": [
-        "x",
-        "y",
-        "opacity",
-        "scale"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "opacity",
+            "scale"
+          ]
+        },
+        {
+          "description": "The text of a text layer; bindable, not animatable.",
+          "type": "string",
+          "const": "text"
+        }
       ]
     },
     "Scene": {

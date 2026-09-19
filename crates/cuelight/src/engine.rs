@@ -1,7 +1,9 @@
-use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::font::{BitmapFont, Rgba, StyledFont};
+use crate::model::{parse_color, Align, Layer, LayerKind, Property, Shape, Show, Timeline};
 use crate::value::Value;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -13,11 +15,13 @@ pub enum Error {
     InvalidColor(String),
     #[error("invalid image: {0}")]
     InvalidImage(String),
+    #[error("invalid font: {0}")]
+    InvalidFont(String),
 }
 
 /// A host-provided raster image: tightly packed RGBA8 pixels (straight,
 /// non-premultiplied alpha), kept in memory and shared with renderers.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImageData {
     pub width: u32,
     pub height: u32,
@@ -29,9 +33,21 @@ pub struct ImageData {
 impl ImageData {
     /// Engine-unique, increasing with every [`Engine::set_image`] call.
     /// Lets renderers cache GPU resources per upload instead of comparing
-    /// pixels.
+    /// pixels. Engine-generated bitmaps ([`ResolvedShape::Bitmap`]) number
+    /// their revisions in a separate, process-wide sequence.
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Wrap engine-generated pixels with a fresh bitmap revision.
+    fn generated(rgba: Rgba) -> Self {
+        static REVISION: AtomicU64 = AtomicU64::new(0);
+        Self {
+            width: rgba.width,
+            height: rgba.height,
+            pixels: rgba.pixels.into(),
+            revision: REVISION.fetch_add(1, Ordering::Relaxed) + 1,
+        }
     }
 }
 
@@ -43,6 +59,34 @@ enum Root {
     /// The layers of the scene at this index.
     Scene(usize),
 }
+
+/// A host-registered bitmap font: its description and page pixels.
+#[derive(Debug)]
+struct RegisteredFont {
+    font: BitmapFont,
+    pages: Vec<Rgba>,
+}
+
+/// Rasterized text, placed relative to its layer's box.
+#[derive(Debug)]
+struct TextRaster {
+    image: ImageData,
+    offset: [i32; 2],
+}
+
+/// Caches for text rendering, filled lazily while resolving layers.
+#[derive(Debug, Default)]
+struct TextCache {
+    /// Styled fonts by style name.
+    styled: HashMap<String, Arc<StyledFont>>,
+    /// Rasters by style, text, box and alignment; `None` for text that
+    /// draws nothing.
+    rasters: HashMap<String, Option<Arc<TextRaster>>>,
+}
+
+/// Bound on cached text rasters: changing texts (scores) would otherwise
+/// grow the cache forever. Clearing it only costs re-rasterizing.
+const MAX_CACHED_RASTERS: usize = 512;
 
 /// A running timeline instance.
 #[derive(Debug, Clone)]
@@ -67,6 +111,8 @@ pub struct Engine {
     variables: BTreeMap<String, Value>,
     images: BTreeMap<String, ImageData>,
     image_revision: u64,
+    fonts: BTreeMap<String, RegisteredFont>,
+    text_cache: Mutex<TextCache>,
     playing: Vec<Playhead>,
     active_scene: Option<usize>,
     time: f64,
@@ -85,6 +131,8 @@ impl Engine {
             serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
         parse_color(&show.background)
             .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
+        validate(&show)?;
+        *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
@@ -137,6 +185,50 @@ impl Engine {
             },
         );
         Ok(())
+    }
+
+    /// Register (or replace) a named bitmap font that font styles reference
+    /// by `file`: a parsed description plus its page images in page order
+    /// (see [`BitmapFont::pages`]), each `(width, height, RGBA8 pixels)`.
+    /// Like images, fonts are host assets that survive `load_show`.
+    pub fn set_font(
+        &mut self,
+        name: &str,
+        font: BitmapFont,
+        pages: Vec<(u32, u32, Vec<u8>)>,
+    ) -> Result<(), Error> {
+        if pages.len() != font.pages().len() {
+            return Err(Error::InvalidFont(format!(
+                "{name:?}: {} page images for {} pages",
+                pages.len(),
+                font.pages().len()
+            )));
+        }
+        let pages = pages
+            .into_iter()
+            .map(|(width, height, pixels)| {
+                if pixels.len() != width as usize * height as usize * 4 {
+                    return Err(Error::InvalidFont(format!(
+                        "{name:?}: page of {} bytes for {width}x{height}",
+                        pixels.len()
+                    )));
+                }
+                Ok(Rgba {
+                    width,
+                    height,
+                    pixels,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        self.fonts
+            .insert(name.to_owned(), RegisteredFont { font, pages });
+        *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
+        Ok(())
+    }
+
+    /// Whether a bitmap font is registered under `name`.
+    pub fn has_font(&self, name: &str) -> bool {
+        self.fonts.contains_key(name)
     }
 
     /// The pixels registered under `name`, if any.
@@ -285,6 +377,8 @@ impl Engine {
             Property::Y => layer.y,
             Property::Opacity => layer.opacity,
             Property::Scale => layer.scale,
+            // Not numeric, see text_property.
+            Property::Text => return 0.0,
         };
         // Bindings override base.
         for b in &layer.bindings {
@@ -310,6 +404,73 @@ impl Engine {
             }
         }
         v
+    }
+
+    /// A text layer's text: its base text, overridden by text bindings.
+    fn text_property(&self, layer: &Layer, base: &str) -> String {
+        let mut text = base.to_owned();
+        for b in &layer.bindings {
+            if b.property != Property::Text {
+                continue;
+            }
+            if let Some(value) = self.variables.get(&b.variable) {
+                text = match value {
+                    Value::Text(t) => t.clone(),
+                    Value::Bool(v) => v.to_string(),
+                    Value::Number(n) => b.format.format(n * b.scale + b.offset),
+                };
+            }
+        }
+        text
+    }
+
+    /// Rasterize (or fetch from cache) `text` in font style `style`.
+    /// `None` when the style's font is not registered or nothing draws.
+    fn text_raster(
+        &self,
+        style_name: &str,
+        text: &str,
+        size: Option<[f64; 2]>,
+        align: Align,
+    ) -> Option<Arc<TextRaster>> {
+        let style = self.show.as_ref()?.fonts.get(style_name)?;
+        let registered = self.fonts.get(&style.file)?;
+        let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let key = format!("{style_name}\u{1}{text}\u{1}{size:?}\u{1}{align:?}");
+        if let Some(raster) = cache.rasters.get(&key) {
+            return raster.clone();
+        }
+        let styled = cache
+            .styled
+            .entry(style_name.to_owned())
+            .or_insert_with(|| {
+                // Colors were validated at load.
+                let rgb = |c: &str| {
+                    let [r, g, b, _] = parse_color(c).unwrap_or([255; 4]);
+                    [r, g, b]
+                };
+                let border = style.border.as_ref().map(|b| (rgb(&b.color), b.width));
+                Arc::new(StyledFont::new(
+                    &registered.font,
+                    &registered.pages,
+                    rgb(&style.color),
+                    border,
+                ))
+            })
+            .clone();
+        let raster = styled
+            .rasterize(text, size, align)
+            .map(|(rgba, offset, _)| {
+                Arc::new(TextRaster {
+                    image: ImageData::generated(rgba),
+                    offset,
+                })
+            });
+        if cache.rasters.len() >= MAX_CACHED_RASTERS {
+            cache.rasters.clear();
+        }
+        cache.rasters.insert(key, raster.clone());
+        raster
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -365,6 +526,29 @@ impl Engine {
                             });
                         }
                     }
+                    LayerKind::Text {
+                        text,
+                        font,
+                        size,
+                        align,
+                    } => {
+                        let text = self.text_property(layer, text);
+                        if let Some(raster) = self.text_raster(font, &text, *size, *align) {
+                            let [ox, oy] = raster.offset;
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::Bitmap {
+                                    x: x + f64::from(ox) * scale,
+                                    y: y + f64::from(oy) * scale,
+                                    width: f64::from(raster.image.width) * scale,
+                                    height: f64::from(raster.image.height) * scale,
+                                    image: raster.image.clone(),
+                                },
+                                color: [255, 255, 255, 255],
+                                opacity,
+                            });
+                        }
+                    }
                 }
             }
             path.pop();
@@ -378,6 +562,45 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
         Root::Show => Some(&show.layers),
         Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
     }
+}
+
+/// Checks `load_show` does beyond parsing: colors parse, text layers use
+/// declared font styles, only numeric properties are keyframed.
+fn validate(show: &Show) -> Result<(), Error> {
+    for style in show.fonts.values() {
+        for color in std::iter::once(&style.color).chain(style.border.as_ref().map(|b| &b.color)) {
+            parse_color(color).ok_or_else(|| Error::InvalidColor(color.clone()))?;
+        }
+    }
+    fn layers(show: &Show, list: &[Layer]) -> Result<(), Error> {
+        for layer in list {
+            if let LayerKind::Text { font, .. } = &layer.kind {
+                if !show.fonts.contains_key(font) {
+                    return Err(Error::InvalidShow(format!(
+                        "layer {:?} uses undeclared font style {font:?}",
+                        layer.name
+                    )));
+                }
+            }
+            for timeline in &layer.timelines {
+                if timeline.tracks.iter().any(|t| t.property == Property::Text) {
+                    return Err(Error::InvalidShow(format!(
+                        "timeline {:?} of layer {:?} animates text, which can only be bound",
+                        timeline.name, layer.name
+                    )));
+                }
+            }
+            if let LayerKind::Group { children } = &layer.kind {
+                layers(show, children)?;
+            }
+        }
+        Ok(())
+    }
+    layers(show, &show.layers)?;
+    for scene in &show.scenes {
+        layers(show, &scene.layers)?;
+    }
+    Ok(())
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
@@ -455,6 +678,15 @@ pub enum ResolvedShape {
     /// the destination rectangle.
     Image {
         image: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+    /// Pixels the engine generated (rasterized text), drawn into the
+    /// destination rectangle. `image.revision()` identifies the content.
+    Bitmap {
+        image: ImageData,
         x: f64,
         y: f64,
         width: f64,
