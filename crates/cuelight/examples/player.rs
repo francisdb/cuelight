@@ -47,10 +47,11 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cuelight::render::{background_color, build_vello_scene, ImageCache};
+use cuelight::render::{background_color, build_vello_scene, fit, ImageCache};
 use cuelight::vello;
 use cuelight::{Engine, Layer, LayerKind, Show, Value};
 use vello::kurbo::Affine;
+use vello::peniko::{ImageBrush, ImageQuality};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wgpu::CurrentSurfaceTexture;
@@ -208,6 +209,41 @@ struct RenderState {
     surface: RenderSurface<'static>,
 }
 
+/// The show rendered at its own resolution for pixel-perfect shows: the
+/// texture is registered with vello as an image, then drawn scaled with
+/// nearest-neighbor sampling.
+struct NativeFrame {
+    view: wgpu::TextureView,
+    image: vello::peniko::ImageData,
+}
+
+impl NativeFrame {
+    fn new(
+        device: &wgpu::Device,
+        renderer: &mut vello::Renderer,
+        [width, height]: [u32; 2],
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cuelight-native"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        Self {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            image: renderer.register_texture(texture),
+        }
+    }
+}
+
 struct App {
     engine: Engine,
     actions: Vec<String>,
@@ -221,6 +257,7 @@ struct App {
     last_frame: Instant,
     fps: common::Fps,
     images: ImageCache,
+    native: Option<NativeFrame>,
 }
 
 impl App {
@@ -321,24 +358,49 @@ impl App {
         self.engine.advance_frame(dt);
 
         // Fit the show into the window: uniform scale, centered.
-        let [show_w, show_h] = self.engine.show().expect("show loaded").size;
+        let show = self.engine.show().expect("show loaded");
+        let (show_size, pixel_perfect) = (show.size, show.pixel_perfect);
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
-        let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
-        let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
+        let (scale, tx, ty) = fit(show_size, [sw, sh], pixel_perfect);
+        let placement = Affine::translate((tx, ty)) * Affine::scale(scale);
+        let show_scene =
+            build_vello_scene(&self.engine, &mut self.images).expect("build vello scene");
+        let device_handle = &self.context.devices[surface.dev_id];
+        let renderer = self.renderers[surface.dev_id]
+            .as_mut()
+            .expect("renderer for surface device");
+
         let mut frame = vello::Scene::new();
-        frame.append(
-            &build_vello_scene(&self.engine, &mut self.images).expect("build vello scene"),
-            Some(Affine::translate((tx, ty)) * Affine::scale(scale)),
-        );
+        if pixel_perfect {
+            // Render at show resolution, then blow the pixels up.
+            let native = self.native.get_or_insert_with(|| {
+                NativeFrame::new(&device_handle.device, renderer, show_size)
+            });
+            renderer
+                .render_to_texture(
+                    &device_handle.device,
+                    &device_handle.queue,
+                    &show_scene,
+                    &native.view,
+                    &vello::RenderParams {
+                        base_color: background_color(&self.engine),
+                        width: show_size[0],
+                        height: show_size[1],
+                        antialiasing_method: vello::AaConfig::Area,
+                    },
+                )
+                .expect("vello render");
+            renderer.mark_override_image_dirty(&native.image);
+            let brush = ImageBrush::new(native.image.clone()).with_quality(ImageQuality::Low);
+            frame.draw_image(&brush, placement);
+        } else {
+            frame.append(&show_scene, Some(placement));
+        }
         self.fps.tick();
         self.fps.draw(&mut frame, state.window.scale_factor());
 
-        let device_handle = &self.context.devices[surface.dev_id];
-        self.renderers[surface.dev_id]
-            .as_mut()
-            .expect("renderer for surface device")
+        renderer
             .render_to_texture(
                 &device_handle.device,
                 &device_handle.queue,
@@ -646,6 +708,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         last_frame: Instant::now(),
         fps: common::Fps::new(),
         images: ImageCache::new(),
+        native: None,
     };
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut app)?;

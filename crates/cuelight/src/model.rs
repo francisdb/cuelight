@@ -16,6 +16,11 @@ pub struct Show {
     /// Background color, `#RRGGBB` or `#RRGGBBAA`.
     #[serde(default = "default_background")]
     pub background: String,
+    /// Ask hosts to scale the rendered frame up by whole-number factors
+    /// with nearest-neighbor sampling, so every canvas pixel becomes a
+    /// crisp block (DMD content). Otherwise hosts may scale smoothly.
+    #[serde(default)]
+    pub pixel_perfect: bool,
     /// Declared variables and their initial values.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,

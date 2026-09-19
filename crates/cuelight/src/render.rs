@@ -120,6 +120,27 @@ pub fn build_vello_scene(
     Ok(show)
 }
 
+/// Where a `show` sized canvas lands in a `target` sized surface: uniform
+/// scale, centered, as `(scale, x, y)`. With `pixel_perfect` (see
+/// [`Show::pixel_perfect`](crate::Show::pixel_perfect)) the scale is a
+/// whole number whenever the target is at least the show's size, and the
+/// offsets are whole pixels, so nearest-neighbor sampling maps every
+/// canvas pixel to an equal block.
+pub fn fit(show: [u32; 2], target: [u32; 2], pixel_perfect: bool) -> (f64, f64, f64) {
+    let [show_w, show_h] = show.map(f64::from);
+    let [tw, th] = target.map(f64::from);
+    let mut scale = (tw / show_w).min(th / show_h);
+    let (mut x, mut y) = ((tw - show_w * scale) / 2.0, (th - show_h * scale) / 2.0);
+    if pixel_perfect {
+        if scale >= 1.0 {
+            scale = scale.floor();
+        }
+        x = ((tw - show_w * scale) / 2.0).floor();
+        y = ((th - show_h * scale) / 2.0).floor();
+    }
+    (scale, x, y)
+}
+
 /// The loaded show's declared background as a vello color; opaque black
 /// when no show is loaded or the color string does not parse.
 pub fn background_color(engine: &Engine) -> Color {
@@ -290,5 +311,26 @@ impl RgbaFrame {
             .write_image_data(&self.pixels)
             .map_err(|e| RenderError::Png(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit;
+
+    #[test]
+    fn fit_letterboxes_smoothly_by_default() {
+        assert_eq!(
+            fit([128, 32], [300, 100], false),
+            (300.0 / 128.0, 0.0, 12.5)
+        );
+    }
+
+    #[test]
+    fn pixel_perfect_fit_uses_whole_pixels() {
+        // 300 / 128 = 2.34 -> 2x, centered on whole pixels.
+        assert_eq!(fit([128, 32], [300, 100], true), (2.0, 22.0, 18.0));
+        // Smaller than the show: shrink (fractionally), never zero.
+        assert_eq!(fit([128, 32], [64, 64], true), (0.5, 0.0, 24.0));
     }
 }

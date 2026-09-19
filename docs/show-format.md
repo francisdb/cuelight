@@ -63,6 +63,11 @@ distribution form.
   **top-left corner** sits at the layer's x/y - there is no anchor
   property yet, so scaling an image grows it toward the bottom-right and
   keeping it centered means counter-animating x/y (see the beacon show).
+- `pixel_perfect` (default false) asks hosts to scale the rendered frame
+  up by whole-number factors with nearest-neighbor sampling, so each
+  canvas pixel becomes a crisp square block: what DMD-resolution content
+  (128x32 and the like) wants, instead of a blurry smooth scale. The
+  player honors it (`render::fit` computes the placement).
 - `background` and every `fill` are `#RRGGBB` or `#RRGGBBAA`.
 - `variables` declares the host-drivable inputs and their initial values
   (numbers, booleans, or text; bindings read them as numbers, booleans as
