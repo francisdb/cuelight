@@ -215,3 +215,129 @@ fn unknown_variable_and_trigger_are_harmless() {
     engine.advance_frame(0.1);
     assert_eq!(engine.resolved_layers().unwrap().len(), 6);
 }
+
+const SCENES: &str = r##"{
+  "name": "scenes",
+  "size": [64, 32],
+  "layers": [
+    { "name": "frame", "type": "shape", "shape": { "rect": [0, 0, 64, 1] }, "fill": "#FFFFFF" }
+  ],
+  "scenes": [
+    {
+      "name": "attract",
+      "trigger": "attract",
+      "layers": [
+        {
+          "name": "logo",
+          "type": "shape",
+          "shape": { "circle": [0, 0, 4] },
+          "fill": "#FF0000",
+          "timelines": [
+            {
+              "name": "slide",
+              "autoplay": true,
+              "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 10 }] }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "game",
+      "trigger": "start",
+      "layers": [
+        {
+          "name": "score",
+          "type": "shape",
+          "shape": { "rect": [0, 0, 8, 8] },
+          "fill": "#00FF00",
+          "timelines": [
+            {
+              "name": "pop",
+              "trigger": "start",
+              "tracks": [{ "property": "scale", "keys": [{ "t": 0, "v": 2 }, { "t": 1, "v": 1 }] }]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}"##;
+
+fn names(engine: &Engine) -> Vec<String> {
+    engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .map(|l| l.name)
+        .collect()
+}
+
+fn circle_cx(engine: &Engine, name: &str) -> f64 {
+    let layers = engine.resolved_layers().unwrap();
+    match layers.iter().find(|l| l.name == name).unwrap().shape {
+        ResolvedShape::Circle { cx, .. } => cx,
+        _ => panic!("{name} should be a circle"),
+    }
+}
+
+#[test]
+fn first_scene_is_active_and_show_layers_paint_behind_it() {
+    let mut engine = Engine::new();
+    engine.load_show(SCENES).unwrap();
+    assert_eq!(engine.active_scene(), Some("attract"));
+    assert_eq!(names(&engine), ["frame", "logo"]);
+}
+
+#[test]
+fn trigger_enters_scene_and_starts_its_timelines() {
+    let mut engine = Engine::new();
+    engine.load_show(SCENES).unwrap();
+    engine.trigger("start");
+    assert_eq!(engine.active_scene(), Some("game"));
+    assert_eq!(names(&engine), ["frame", "score"]);
+    // The entering trigger also fires the scene's own timelines.
+    let width = |e: &Engine| match e.resolved_layers().unwrap()[1].shape {
+        ResolvedShape::Rect { width, .. } => width,
+        _ => panic!("score should be a rect"),
+    };
+    assert_eq!(width(&engine), 16.0);
+    engine.advance_frame(0.5);
+    assert_eq!(width(&engine), 12.0);
+}
+
+#[test]
+fn reentering_a_scene_restarts_its_autoplay_timelines() {
+    let mut engine = Engine::new();
+    engine.load_show(SCENES).unwrap();
+    engine.advance_frame(0.5);
+    assert_eq!(circle_cx(&engine, "logo"), 5.0);
+    engine.trigger("start");
+    engine.advance_frame(0.2);
+    engine.trigger("attract");
+    assert_eq!(circle_cx(&engine, "logo"), 0.0);
+    engine.advance_frame(0.25);
+    assert_eq!(circle_cx(&engine, "logo"), 2.5);
+    // Firing the active scene's trigger restarts it too.
+    engine.trigger("attract");
+    assert_eq!(circle_cx(&engine, "logo"), 0.0);
+}
+
+#[test]
+fn inactive_scene_timelines_do_not_run() {
+    let mut engine = Engine::new();
+    engine.load_show(SCENES).unwrap();
+    // "pop" lives in the inactive game scene: firing a timeline-only
+    // trigger there must not leave a playhead behind.
+    engine.trigger("attract");
+    engine.advance_frame(2.0);
+    assert_eq!(engine.active_scene(), Some("attract"));
+    assert_eq!(names(&engine), ["frame", "logo"]);
+}
+
+#[test]
+fn show_without_scenes_has_no_active_scene() {
+    let mut engine = Engine::new();
+    engine.load_show(MINIGOLF).unwrap();
+    assert_eq!(engine.active_scene(), None);
+}

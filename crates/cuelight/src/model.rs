@@ -19,6 +19,25 @@ pub struct Show {
     /// Declared variables and their initial values.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
+    /// Layers that are always present, painted behind the active scene.
+    #[serde(default)]
+    pub layers: Vec<Layer>,
+    /// Switchable views; exactly one is active at a time (the first one
+    /// when the show loads), entered by firing its trigger.
+    #[serde(default)]
+    pub scenes: Vec<Scene>,
+}
+
+/// A switchable view of the show: its layers render only while it is the
+/// active scene. Entering a scene (again) restarts it: timelines of the
+/// previous scene stop, the entered scene's autoplay timelines start at 0.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Scene {
+    pub name: String,
+    /// Trigger name that enters this scene.
+    #[serde(default)]
+    pub trigger: Option<String>,
     #[serde(default)]
     pub layers: Vec<Layer>,
 }

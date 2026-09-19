@@ -15,9 +15,8 @@ Point your editor at the schema for autocomplete and validation:
 
 Unknown fields (like `$schema` itself) are ignored by the engine.
 
-Naming note: the word **scene** is deliberately reserved. A show is the
-whole loaded document; when switchable views / overlay queues land in the
-model (FlexDMD-style), those inner units will be called scenes.
+Naming note: a **show** is the whole loaded document; **scenes** are the
+switchable views inside it (see [Scenes](#scenes)).
 
 ## On disk
 
@@ -68,6 +67,31 @@ distribution form.
 - `variables` declares the host-drivable inputs and their initial values
   (numbers, booleans, or text; bindings read them as numbers, booleans as
   0/1).
+- `layers` are always present; `scenes` (optional) are switchable views
+  painted on top of them.
+
+## Scenes
+
+```json
+{
+  "scenes": [
+    { "name": "attract", "trigger": "attract", "layers": [] },
+    { "name": "game", "trigger": "start", "layers": [] }
+  ]
+}
+```
+
+Exactly one scene is active at a time: the first one when the show loads,
+afterwards the one whose `trigger` fired last. Only the show's own
+`layers` and the active scene's layers render, and only their timelines
+respond to triggers.
+
+Entering a scene restarts it: the previous scene's running timelines stop,
+the entered scene's `autoplay` timelines start at 0. Firing the trigger of
+the scene that is already active restarts it the same way. The show's own
+layers are not affected by scene changes. A trigger that enters a scene
+also starts the timelines that declare the same trigger, in the show's
+layers and in the newly entered scene.
 
 ## Layers
 

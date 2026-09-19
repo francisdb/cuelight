@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 
 use cuelight::render::{background_color, build_vello_scene, ImageCache};
 use cuelight::vello;
-use cuelight::{Engine, Layer, LayerKind, Value};
+use cuelight::{Engine, Layer, LayerKind, Show, Value};
 use vello::kurbo::Affine;
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
@@ -115,6 +115,20 @@ fn fmt_value(value: &Value) -> String {
     }
 }
 
+/// Every layer tree of the show: its own layers and each scene's.
+fn layer_trees(show: &Show) -> impl Iterator<Item = &[Layer]> {
+    std::iter::once(show.layers.as_slice()).chain(show.scenes.iter().map(|s| s.layers.as_slice()))
+}
+
+/// Collect every trigger name the show declares: scene triggers and
+/// timeline triggers in any layer tree.
+fn collect_show_actions(show: &Show, out: &mut BTreeSet<String>) {
+    out.extend(show.scenes.iter().filter_map(|s| s.trigger.clone()));
+    for layers in layer_trees(show) {
+        collect_actions(layers, out);
+    }
+}
+
 /// Collect every trigger name declared by timelines in the layer tree.
 fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
     for layer in layers {
@@ -158,6 +172,14 @@ fn print_menu(engine: &Engine, actions: &[String]) {
         for (i, action) in actions.iter().enumerate() {
             println!("  {}) {action}", i + 1);
         }
+    }
+    if !show.scenes.is_empty() {
+        let scenes: Vec<&str> = show.scenes.iter().map(|s| s.name.as_str()).collect();
+        println!(
+            "scenes: {} (active: {})",
+            scenes.join(", "),
+            engine.active_scene().unwrap_or("none")
+        );
     }
     if !show.variables.is_empty() {
         println!("variables:");
@@ -601,9 +623,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut actions = BTreeSet::new();
-    let show_layers = engine.show().expect("show loaded").layers.clone();
-    collect_actions(&show_layers, &mut actions);
-    warn_missing_images(&engine, &show_layers);
+    let show = engine.show().expect("show loaded");
+    collect_show_actions(show, &mut actions);
+    for layers in layer_trees(show) {
+        warn_missing_images(&engine, layers);
+    }
     let actions: Vec<String> = actions.into_iter().collect();
     print_menu(&engine, &actions);
 

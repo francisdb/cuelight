@@ -1,4 +1,4 @@
-use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show};
+use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show, Timeline};
 use crate::value::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -35,10 +35,20 @@ impl ImageData {
     }
 }
 
+/// Which layer tree a layer path is rooted in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Root {
+    /// The show's own, always present layers.
+    Show,
+    /// The layers of the scene at this index.
+    Scene(usize),
+}
+
 /// A running timeline instance.
 #[derive(Debug, Clone)]
 struct Playhead {
-    /// Path to the owning layer within the show tree.
+    root: Root,
+    /// Path to the owning layer within its root's layer tree.
     layer_path: Vec<usize>,
     /// Timeline index within that layer.
     timeline: usize,
@@ -58,6 +68,7 @@ pub struct Engine {
     images: BTreeMap<String, ImageData>,
     image_revision: u64,
     playing: Vec<Playhead>,
+    active_scene: Option<usize>,
     time: f64,
 }
 
@@ -67,7 +78,8 @@ impl Engine {
     }
 
     /// Load a show from its JSON description, replacing any current show
-    /// and resetting all runtime state. Autoplay timelines start at 0.
+    /// and resetting all runtime state. The first scene (if any) becomes
+    /// active; autoplay timelines start at 0.
     pub fn load_show(&mut self, json: &str) -> Result<(), Error> {
         let show: Show =
             serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
@@ -76,8 +88,12 @@ impl Engine {
         self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
+        self.active_scene = (!show.scenes.is_empty()).then_some(0);
         self.show = Some(show);
-        self.start_matching(|tl| tl.autoplay);
+        self.start_matching(Some(Root::Show), |tl| tl.autoplay);
+        if let Some(scene) = self.active_scene {
+            self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
+        }
         Ok(())
     }
 
@@ -128,10 +144,32 @@ impl Engine {
         self.images.get(name)
     }
 
-    /// Fire a named event: every timeline declaring it as its trigger
+    /// Fire a named event. A scene declaring it as its trigger becomes the
+    /// active scene (restarting it when already active); then every
+    /// timeline declaring it, in the show's layers or the active scene,
     /// (re)starts from 0.
     pub fn trigger(&mut self, name: &str) {
-        self.start_matching(|tl| tl.trigger.as_deref() == Some(name));
+        let entered = self.show.as_ref().and_then(|show| {
+            show.scenes
+                .iter()
+                .position(|s| s.trigger.as_deref() == Some(name))
+        });
+        if let Some(scene) = entered {
+            self.enter_scene(scene);
+        }
+        self.start_matching(None, |tl| tl.trigger.as_deref() == Some(name));
+    }
+
+    /// Name of the active scene, if the show has scenes.
+    pub fn active_scene(&self) -> Option<&str> {
+        let show = self.show.as_ref()?;
+        Some(show.scenes.get(self.active_scene?)?.name.as_str())
+    }
+
+    fn enter_scene(&mut self, scene: usize) {
+        self.playing.retain(|p| p.root == Root::Show);
+        self.active_scene = Some(scene);
+        self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
     }
 
     /// Advance time by `dt` seconds: running timelines progress, looping
@@ -143,7 +181,7 @@ impl Engine {
         let mut finished: Vec<usize> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
             p.time += dt;
-            let layer = layer_at(&show.layers, &p.layer_path);
+            let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
             let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
                 finished.push(i);
                 continue;
@@ -181,22 +219,58 @@ impl Engine {
     pub fn resolved_layers(&self) -> Result<Vec<ResolvedLayer>, Error> {
         let show = self.show.as_ref().ok_or(Error::NoShow)?;
         let mut out = Vec::new();
-        self.walk(&show.layers, &mut Vec::new(), 0.0, 0.0, 1.0, &mut out)?;
+        self.walk(
+            Root::Show,
+            &show.layers,
+            &mut Vec::new(),
+            0.0,
+            0.0,
+            1.0,
+            &mut out,
+        )?;
+        if let Some(scene) = self.active_scene {
+            if let Some(layers) = root_layers(show, Root::Scene(scene)) {
+                self.walk(
+                    Root::Scene(scene),
+                    layers,
+                    &mut Vec::new(),
+                    0.0,
+                    0.0,
+                    1.0,
+                    &mut out,
+                )?;
+            }
+        }
         Ok(out)
     }
 
-    fn start_matching(&mut self, want: impl Fn(&crate::model::Timeline) -> bool) {
+    /// (Re)start the timelines `want` selects, in `root` or, with `None`,
+    /// in the show's layers and the active scene.
+    fn start_matching(&mut self, root: Option<Root>, want: impl Fn(&Timeline) -> bool) {
         let Some(show) = &self.show else { return };
+        let roots = match root {
+            Some(root) => vec![root],
+            None => std::iter::once(Root::Show)
+                .chain(self.active_scene.map(Root::Scene))
+                .collect(),
+        };
         let mut starts = Vec::new();
-        collect_timelines(&show.layers, &mut Vec::new(), &mut |path, idx, tl| {
-            if want(tl) {
-                starts.push((path.to_vec(), idx));
-            }
-        });
-        for (layer_path, timeline) in starts {
-            self.playing
-                .retain(|p| !(p.layer_path == layer_path && p.timeline == timeline));
+        for root in roots {
+            let Some(layers) = root_layers(show, root) else {
+                continue;
+            };
+            collect_timelines(layers, &mut Vec::new(), &mut |path, idx, tl| {
+                if want(tl) {
+                    starts.push((root, path.to_vec(), idx));
+                }
+            });
+        }
+        for (root, layer_path, timeline) in starts {
+            self.playing.retain(|p| {
+                !(p.root == root && p.layer_path == layer_path && p.timeline == timeline)
+            });
             self.playing.push(Playhead {
+                root,
                 layer_path,
                 timeline,
                 time: 0.0,
@@ -204,7 +278,7 @@ impl Engine {
         }
     }
 
-    fn property(&self, layer: &Layer, path: &[usize], prop: Property) -> f64 {
+    fn property(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> f64 {
         // Base value from the show description.
         let mut v = match prop {
             Property::X => layer.x,
@@ -222,7 +296,7 @@ impl Engine {
         }
         // A running timeline owns the property.
         for p in &self.playing {
-            if p.layer_path != path {
+            if p.root != root || p.layer_path != path {
                 continue;
             }
             if let Some(tl) = layer.timelines.get(p.timeline) {
@@ -241,6 +315,7 @@ impl Engine {
     #[allow(clippy::too_many_arguments)]
     fn walk(
         &self,
+        root: Root,
         layers: &[Layer],
         path: &mut Vec<usize>,
         ox: f64,
@@ -251,13 +326,14 @@ impl Engine {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if layer.visible {
-                let x = ox + self.property(layer, path, Property::X);
-                let y = oy + self.property(layer, path, Property::Y);
-                let opacity = (oa * self.property(layer, path, Property::Opacity)).clamp(0.0, 1.0);
-                let scale = self.property(layer, path, Property::Scale);
+                let x = ox + self.property(root, layer, path, Property::X);
+                let y = oy + self.property(root, layer, path, Property::Y);
+                let opacity =
+                    (oa * self.property(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
+                let scale = self.property(root, layer, path, Property::Scale);
                 match &layer.kind {
                     LayerKind::Group { children } => {
-                        self.walk(children, path, x, y, opacity, out)?;
+                        self.walk(root, children, path, x, y, opacity, out)?;
                     }
                     LayerKind::Shape { shape, fill } => {
                         let color =
@@ -297,6 +373,13 @@ impl Engine {
     }
 }
 
+fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
+    match root {
+        Root::Show => Some(&show.layers),
+        Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
+    }
+}
+
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
     let (&first, rest) = path.split_first()?;
     let layer = layers.get(first)?;
@@ -312,7 +395,7 @@ fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
 fn collect_timelines(
     layers: &[Layer],
     path: &mut Vec<usize>,
-    f: &mut impl FnMut(&[usize], usize, &crate::model::Timeline),
+    f: &mut impl FnMut(&[usize], usize, &Timeline),
 ) {
     for (i, layer) in layers.iter().enumerate() {
         path.push(i);
