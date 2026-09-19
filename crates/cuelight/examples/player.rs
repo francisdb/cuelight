@@ -376,6 +376,9 @@ impl App {
         self.advance_driver(dt);
         let Some(state) = &self.state else { return };
         self.engine.advance_frame(dt);
+        for event in self.engine.drain_events() {
+            log::info!("show event: {event:?}");
+        }
 
         // Fit the show into the window: uniform scale, centered.
         let [show_w, show_h] = self.engine.show().expect("show loaded").size;

@@ -11,9 +11,10 @@ use std::sync::{Mutex, OnceLock};
 /// tests on parallel threads, and creating GPU devices concurrently (or
 /// tearing them down at thread exit) crashes some software adapters.
 fn render(engine: &Engine) -> Option<RgbaFrame> {
-    // The Windows CI runners only offer a software adapter (WARP), and
-    // vello's compute pipeline crashes it with an access violation. Linux
-    // and macOS CI, and Windows machines with a real GPU, still run these.
+    // On GitHub's Windows runners these renders die with an access
+    // violation (cause unknown; a Windows 10 VM with the same DX12 software
+    // adapter runs them fine). Linux and macOS CI, and any other Windows
+    // machine, still run them.
     if cfg!(windows) && std::env::var_os("CI").is_some() {
         eprintln!("software adapter on Windows CI, skipping");
         return None;

@@ -1,6 +1,6 @@
 //! Structural tests: the whole trigger/variable/timeline model with no GPU.
 
-use cuelight::{Engine, ResolvedShape};
+use cuelight::{Engine, Event, ResolvedShape};
 
 const MINIGOLF: &str = include_str!("../examples/shows/minigolf.json");
 
@@ -539,4 +539,117 @@ fn sheet_anchor_uses_the_cell_size_and_frame_needs_an_image() {
         { "name": "box", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
           "bindings": [{ "property": "frame", "variable": "f" }] } ] }"##;
     assert!(engine.load_show(show).is_err());
+}
+
+const PLAYBACK: &str = r##"{
+  "name": "playback",
+  "size": [64, 64],
+  "layers": [
+    {
+      "name": "scroll",
+      "type": "shape",
+      "shape": { "rect": [0, 0, 1, 1] },
+      "fill": "#FFFFFF",
+      "x": 5,
+      "timelines": [
+        {
+          "name": "scroll",
+          "autoplay": true,
+          "loop": true,
+          "delay": 2.0,
+          "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 10, "v": -10 }] }]
+        }
+      ]
+    },
+    {
+      "name": "blink",
+      "type": "shape",
+      "shape": { "rect": [0, 0, 1, 1] },
+      "fill": "#FFFFFF",
+      "timelines": [
+        {
+          "name": "cycle",
+          "trigger": "go",
+          "repeat": 2.5,
+          "on_end": "done",
+          "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 10 }] }]
+        },
+        {
+          "name": "after",
+          "trigger": "done",
+          "tracks": [{ "property": "y", "keys": [{ "t": 0, "v": 7 }, { "t": 1, "v": 7 }] }]
+        }
+      ]
+    }
+  ]
+}"##;
+
+fn rect_xy(engine: &Engine, name: &str) -> (f64, f64) {
+    let layers = engine.resolved_layers().unwrap();
+    match layers.iter().find(|l| l.name == name).unwrap().shape {
+        ResolvedShape::Rect { x, y, .. } => (x, y),
+        ref other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn delay_holds_the_base_value_and_is_not_looped() {
+    let mut engine = Engine::new();
+    engine.load_show(PLAYBACK).unwrap();
+    engine.advance_frame(1.5);
+    // Still delayed: the base x applies.
+    assert_eq!(rect_xy(&engine, "scroll").0, 5.0);
+    engine.advance_frame(1.5);
+    assert_eq!(rect_xy(&engine, "scroll").0, -1.0);
+    // 2s delay + 10s play: wraps to the start without waiting again.
+    engine.advance_frame(9.0);
+    assert_eq!(rect_xy(&engine, "scroll").0, 0.0);
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "scroll").0, -1.0);
+}
+
+#[test]
+fn repeat_plays_n_times_then_fires_on_end() {
+    let mut engine = Engine::new();
+    engine.load_show(PLAYBACK).unwrap();
+    engine.trigger("go");
+    engine.advance_frame(1.25);
+    // Second play, a quarter in.
+    assert_eq!(rect_xy(&engine, "blink"), (2.5, 0.0));
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "blink"), (2.5, 0.0));
+    assert!(engine.drain_events().is_empty());
+    // 2.5 plays end at 2.5s: on_end fires "done", which starts "after"
+    // and is reported to the host once.
+    engine.advance_frame(0.5);
+    assert_eq!(rect_xy(&engine, "blink"), (0.0, 7.0));
+    assert_eq!(engine.drain_events(), [Event::Trigger("done".into())]);
+    assert!(engine.drain_events().is_empty());
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "blink"), (0.0, 0.0));
+}
+
+#[test]
+fn loop_with_repeat_is_rejected() {
+    let mut engine = Engine::new();
+    let show = PLAYBACK.replace(r#""delay": 2.0,"#, r#""delay": 2.0, "repeat": 2,"#);
+    assert!(engine.load_show(&show).is_err());
+}
+
+#[test]
+fn on_end_can_enter_a_scene() {
+    let show = r##"{ "name": "s", "size": [8, 8], "scenes": [
+        { "name": "intro", "trigger": "intro", "layers": [
+            { "name": "logo", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+              "timelines": [{ "name": "hold", "autoplay": true, "on_end": "menu",
+                "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 1 }] }] }] } ] },
+        { "name": "menu", "trigger": "menu", "layers": [] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.advance_frame(0.5);
+    assert_eq!(engine.active_scene(), Some("intro"));
+    engine.advance_frame(0.6);
+    assert_eq!(engine.active_scene(), Some("menu"));
+    assert_eq!(engine.drain_events(), [Event::Trigger("menu".into())]);
 }

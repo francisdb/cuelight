@@ -627,12 +627,36 @@
           "type": "boolean",
           "default": false
         },
+        "delay": {
+          "description": "Seconds to wait after starting before the first key plays; the\ntimeline does not own its properties meanwhile. Loops and repeats\ndo not wait again.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
         "loop": {
+          "description": "Repeat forever. Cannot be combined with `repeat`.",
           "type": "boolean",
           "default": false
         },
         "name": {
           "type": "string"
+        },
+        "on_end": {
+          "description": "Trigger fired when the timeline finishes (never for loops).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "repeat": {
+          "description": "Number of plays (fractions allowed: 2.5 stops halfway through the\nthird); once when omitted.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
         },
         "tracks": {
           "type": "array",

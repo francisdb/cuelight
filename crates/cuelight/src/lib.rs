@@ -26,7 +26,7 @@ mod output;
 mod value;
 
 pub use easing::Easing;
-pub use engine::{Engine, Error, ImageData, ResolvedLayer, ResolvedShape};
+pub use engine::{Engine, Error, Event, ImageData, ResolvedLayer, ResolvedShape};
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, FontStyle, Key, Layer, LayerKind, NumberFormat, Output, OutputMode,
