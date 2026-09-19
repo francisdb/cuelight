@@ -341,3 +341,78 @@ fn show_without_scenes_has_no_active_scene() {
     engine.load_show(MINIGOLF).unwrap();
     assert_eq!(engine.active_scene(), None);
 }
+
+const ANCHORS: &str = r##"{
+  "name": "anchors",
+  "size": [64, 64],
+  "layers": [
+    { "name": "img", "type": "image", "image": "px", "size": [8, 4], "x": 32, "y": 32, "anchor": "bottom_right" },
+    { "name": "grow", "type": "image", "image": "px", "size": [8, 8], "x": 32, "y": 32, "anchor": "center", "scale": 2 },
+    { "name": "bar", "type": "shape", "shape": { "rect": [0, 0, 10, 2] }, "fill": "#FFFFFF", "x": 64, "anchor": "top_right" },
+    { "name": "dot", "type": "shape", "shape": { "circle": [0, 0, 3] }, "fill": "#FFFFFF", "x": 10, "y": 10, "anchor": "top_left" },
+    { "name": "plain", "type": "shape", "shape": { "circle": [0, 0, 3] }, "fill": "#FFFFFF", "x": 10, "y": 10 }
+  ]
+}"##;
+
+#[test]
+fn anchor_places_content_box_point_at_position() {
+    let mut engine = Engine::new();
+    engine.set_image("px", 1, 1, vec![255u8; 4]).unwrap();
+    engine.load_show(ANCHORS).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let shape = |name: &str| {
+        layers
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap()
+            .shape
+            .clone()
+    };
+    let image = |name: &str| match shape(name) {
+        ResolvedShape::Image {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => (x, y, width, height),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(image("img"), (24.0, 28.0, 8.0, 4.0));
+    // Scaling keeps the anchored center in place.
+    assert_eq!(image("grow"), (24.0, 24.0, 16.0, 16.0));
+    assert_eq!(
+        shape("bar"),
+        ResolvedShape::Rect {
+            x: 54.0,
+            y: 0.0,
+            width: 10.0,
+            height: 2.0
+        }
+    );
+    assert_eq!(
+        shape("dot"),
+        ResolvedShape::Circle {
+            cx: 13.0,
+            cy: 13.0,
+            radius: 3.0
+        }
+    );
+    // No anchor: shapes keep their local origin at x/y.
+    assert_eq!(
+        shape("plain"),
+        ResolvedShape::Circle {
+            cx: 10.0,
+            cy: 10.0,
+            radius: 3.0
+        }
+    );
+}
+
+#[test]
+fn anchor_on_group_is_rejected() {
+    let mut engine = Engine::new();
+    let show = r#"{ "name": "g", "size": [8, 8], "layers": [
+        { "name": "g", "type": "group", "children": [], "anchor": "center" } ] }"#;
+    assert!(engine.load_show(show).is_err());
+}

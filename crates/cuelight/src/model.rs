@@ -176,13 +176,16 @@ pub struct Layer {
     #[serde(default = "default_opacity")]
     pub opacity: f64,
     /// Uniform scale of this layer's own geometry around its x/y origin
-    /// (shape coordinates and sizes, image destination size). For images
-    /// the origin is the top-left corner, so scaling grows toward the
-    /// bottom-right; keeping a scaled image centered means
-    /// counter-animating x/y (see the beacon example show). Not inherited
-    /// by group children yet.
+    /// (shape coordinates and sizes, image destination size). With an
+    /// `anchor` the anchored point stays at x/y while scaling. Not
+    /// inherited by group children yet.
     #[serde(default = "default_scale")]
     pub scale: f64,
+    /// Which point of the layer's content box sits at its x/y. Without an
+    /// anchor, images put their top-left corner there and shapes their
+    /// local origin. Not supported on groups.
+    #[serde(default)]
+    pub anchor: Option<Align>,
     #[serde(default = "default_visible")]
     pub visible: bool,
     /// Live property bindings: `property = variable * scale + offset`.
@@ -215,8 +218,8 @@ pub enum LayerKind {
     },
     /// A host-provided raster image, registered under `image` via
     /// [`Engine::set_image`](crate::Engine::set_image). Drawn with its
-    /// top-left corner at the layer's x/y (there is no anchor property
-    /// yet); not yet registered images are skipped.
+    /// top-left corner at the layer's x/y unless the layer has an
+    /// `anchor`; not yet registered images are skipped.
     Image {
         image: String,
         /// Destination size `[width, height]`; the image's natural size
