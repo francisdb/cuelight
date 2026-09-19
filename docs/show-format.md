@@ -154,7 +154,10 @@ group children behind whatever follows the group. Every layer has:
 
 Layer kinds:
 
-- `group`: `children` is a nested layer list.
+- `group`: `children` is a nested layer list. Optional `clip` is a shape
+  (`{ "rect": [x, y, width, height] }` or `{ "circle": [cx, cy, radius] }`,
+  in the group's local space like a shape layer's) outside which the
+  children do not show: a window onto its content.
 - `shape`: `shape` is `{ "rect": [x, y, width, height] }` or
   `{ "circle": [cx, cy, radius] }` in the layer's local space, plus a
   `fill` color.

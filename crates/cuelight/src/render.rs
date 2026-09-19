@@ -122,6 +122,27 @@ pub fn build_vello_scene(
                 let circle = Circle::new((cx, cy), radius);
                 show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
             }
+            ResolvedShape::ClipBegin { shape } => match *shape {
+                ResolvedShape::Circle { cx, cy, radius } => {
+                    let circle = Circle::new((cx, cy), radius);
+                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &circle);
+                }
+                // Always push something so the matching ClipEnd balances;
+                // anything that is not a rect or circle clips nothing.
+                other => {
+                    let rect = match other {
+                        ResolvedShape::Rect {
+                            x,
+                            y,
+                            width,
+                            height,
+                        } => Rect::new(x, y, x + width, y + height),
+                        _ => Rect::new(f64::MIN, f64::MIN, f64::MAX, f64::MAX),
+                    };
+                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &rect);
+                }
+            },
+            ResolvedShape::ClipEnd => show.pop_layer(),
             ResolvedShape::Image {
                 image,
                 x,
