@@ -21,11 +21,16 @@
 mod easing;
 mod engine;
 mod model;
+mod output;
 mod value;
 
 pub use easing::Easing;
 pub use engine::{Engine, Error, ImageData, ResolvedLayer, ResolvedShape};
-pub use model::{Binding, Key, Layer, LayerKind, Property, Scene, Shape, Show, Timeline, Track};
+pub use model::{
+    Binding, Key, Layer, LayerKind, Output, OutputMode, Property, Scene, Shape, Show, Timeline,
+    Track,
+};
+pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use value::Value;
 
 #[cfg(feature = "render")]

@@ -16,6 +16,11 @@ pub struct Show {
     /// Background color, `#RRGGBB` or `#RRGGBBAA`.
     #[serde(default = "default_background")]
     pub background: String,
+    /// How rendered colors reach the display: full color by default, or
+    /// quantized luminance tinted in one color (DMD style). Scenes can
+    /// override it.
+    #[serde(default)]
+    pub output: Output,
     /// Declared variables and their initial values.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
@@ -38,8 +43,38 @@ pub struct Scene {
     /// Trigger name that enters this scene.
     #[serde(default)]
     pub trigger: Option<String>,
+    /// Output color handling while this scene is active; the show's when
+    /// omitted.
+    #[serde(default)]
+    pub output: Option<Output>,
     #[serde(default)]
     pub layers: Vec<Layer>,
+}
+
+/// Output color handling, applied to the finished frame.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Output {
+    #[serde(default)]
+    pub mode: OutputMode,
+    /// Color that full luminance maps to in the gray modes, `#RRGGBB`
+    /// (white when omitted). Ignored in `rgb` mode.
+    #[serde(default)]
+    pub tint: Option<String>,
+}
+
+/// How the finished frame's colors are converted for the display.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum OutputMode {
+    /// Full color, unchanged.
+    #[default]
+    Rgb,
+    /// Luminance quantized to 4 levels (2 bits), times the tint.
+    Gray2,
+    /// Luminance quantized to 16 levels (4 bits), times the tint.
+    Gray4,
 }
 
 fn default_background() -> String {

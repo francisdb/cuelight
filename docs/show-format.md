@@ -93,6 +93,40 @@ layers are not affected by scene changes. A trigger that enters a scene
 also starts the timelines that declare the same trigger, in the show's
 layers and in the newly entered scene.
 
+## Output
+
+```json
+{ "output": { "mode": "gray4", "tint": "#FF5820" } }
+```
+
+`output` says how the finished frame's colors reach the display:
+
+- `rgb` (default): full color, unchanged.
+- `gray4` / `gray2`: each pixel's brightness (luma, see below) is
+  quantized to 16 / 4 levels and multiplied by `tint` (`#RRGGBB`, white by
+  default). This is how a monochrome DMD shows content: author in any
+  color, it lands as shades of the display's color.
+
+Luma is how bright a color looks, as one number. The eye is far more
+sensitive to green than to red, and least to blue, so a plain average of
+r, g and b would make pure blue look as bright as pure green. The weights
+come from Rec. 709, the HDTV standard that also defines the sRGB primaries:
+
+```text
+luma = 0.2126 r + 0.7152 g + 0.0722 b
+```
+
+They are applied directly to the 8-bit channel values (no linearization),
+so white is full brightness, pure green lands at about 72 %, pure red at
+21 % and pure blue at 7 %: in `gray4`, levels 11, 3 and 1 of 15.
+
+A scene may declare its own `output`, used while it is active; otherwise
+the show's applies. The conversion happens on the whole frame after
+compositing, so antialiased edges and opacity quantize like everything
+else. Hosts read the active mode with `Engine::output()`; the offscreen
+renderer applies it after readback, and `render::OutputPass` does the same
+on the GPU for hosts rendering on their own device.
+
 ## Layers
 
 `layers` is a tree painted in order: earlier layers are behind later ones,

@@ -20,6 +20,14 @@
     "name": {
       "type": "string"
     },
+    "output": {
+      "description": "How rendered colors reach the display: full color by default, or\nquantized luminance tinted in one color (DMD style). Scenes can\noverride it.",
+      "$ref": "#/$defs/Output",
+      "default": {
+        "mode": "rgb",
+        "tint": null
+      }
+    },
     "scenes": {
       "description": "Switchable views; exactly one is active at a time (the first one\nwhen the show loads), entered by firing its trigger.",
       "type": "array",
@@ -242,6 +250,44 @@
         "name"
       ]
     },
+    "Output": {
+      "description": "Output color handling, applied to the finished frame.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/OutputMode",
+          "default": "rgb"
+        },
+        "tint": {
+          "description": "Color that full luminance maps to in the gray modes, `#RRGGBB`\n(white when omitted). Ignored in `rgb` mode.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "OutputMode": {
+      "description": "How the finished frame's colors are converted for the display.",
+      "oneOf": [
+        {
+          "description": "Full color, unchanged.",
+          "type": "string",
+          "const": "rgb"
+        },
+        {
+          "description": "Luminance quantized to 4 levels (2 bits), times the tint.",
+          "type": "string",
+          "const": "gray2"
+        },
+        {
+          "description": "Luminance quantized to 16 levels (4 bits), times the tint.",
+          "type": "string",
+          "const": "gray4"
+        }
+      ]
+    },
     "Property": {
       "description": "An animatable layer property.",
       "type": "string",
@@ -265,6 +311,18 @@
         },
         "name": {
           "type": "string"
+        },
+        "output": {
+          "description": "Output color handling while this scene is active; the show's when\nomitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Output"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "trigger": {
           "description": "Trigger name that enters this scene.",
