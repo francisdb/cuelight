@@ -12,6 +12,8 @@
 //!   show.json           the show document (required)
 //!   test-driver.json    optional driver, picked up automatically
 //!   assets/             PNGs registered as images by filename stem
+//!     fonts/            bitmap fonts (.fnt plus page PNGs), registered by
+//!                       .fnt filename stem
 //! ```
 //!
 //! A bare `.json` path plays a single show file instead. With no arguments
@@ -49,7 +51,7 @@ use std::time::{Duration, Instant};
 
 use cuelight::render::{background_color, build_vello_scene, ImageCache, OutputPass};
 use cuelight::vello;
-use cuelight::{Engine, Layer, LayerKind, OutputMode, Show, Value};
+use cuelight::{BitmapFont, Engine, Layer, LayerKind, OutputMode, Show, Value};
 use vello::kurbo::Affine;
 use vello::peniko::{Color, ImageBrush};
 use vello::util::{RenderContext, RenderSurface};
@@ -144,8 +146,10 @@ fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
     }
 }
 
-/// Warn (once, at load) about image layers whose pixels nobody registered.
+/// Warn (once, at load) about image and text layers whose pixels or font
+/// nobody registered.
 fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
+    let fonts = &engine.show().expect("show loaded").fonts;
     for layer in layers {
         match &layer.kind {
             LayerKind::Image { image, .. } if engine.image(image).is_none() => {
@@ -153,6 +157,15 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                     "image {image:?} (layer {:?}) is not registered; it will not render",
                     layer.name
                 );
+            }
+            LayerKind::Text { font, .. } => {
+                if let Some(style) = fonts.get(font).filter(|s| !engine.has_font(&s.file)) {
+                    log::warn!(
+                        "font {:?} (layer {:?}) is not registered; it will not render",
+                        style.file,
+                        layer.name
+                    );
+                }
             }
             LayerKind::Group { children } => warn_missing_images(engine, children),
             _ => {}
@@ -653,6 +666,14 @@ fn register_assets(engine: &mut Engine, dir: &std::path::Path) -> Result<(), Str
         .collect();
     entries.sort();
     for path in entries {
+        if path.is_dir() {
+            if path.file_name().is_some_and(|n| n == "fonts") {
+                register_fonts(engine, &path)?;
+            } else {
+                log::warn!("skipping asset directory {path:?}");
+            }
+            continue;
+        }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
@@ -666,6 +687,41 @@ fn register_assets(engine: &mut Engine, dir: &std::path::Path) -> Result<(), Str
             .set_image(stem, width, height, rgba)
             .map_err(|e| format!("cannot register asset {path:?}: {e}"))?;
         log::info!("registered asset {stem:?} ({width}x{height})");
+    }
+    Ok(())
+}
+
+/// Register every `*.fnt` in `dir` as a bitmap font named by its filename
+/// stem; page images are PNGs next to it, as the description names them.
+fn register_fonts(engine: &mut Engine, dir: &std::path::Path) -> Result<(), String> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "fnt"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let fnt = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read font {path:?}: {e}"))?;
+        let font =
+            BitmapFont::parse(&fnt).map_err(|e| format!("cannot parse font {path:?}: {e}"))?;
+        let pages = font
+            .pages()
+            .iter()
+            .map(|page| {
+                let page_path = dir.join(page);
+                load_png(&page_path)
+                    .map_err(|e| format!("cannot load font page {page_path:?}: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        engine
+            .set_font(stem, font, pages)
+            .map_err(|e| format!("cannot register font {path:?}: {e}"))?;
+        log::info!("registered font {stem:?}");
     }
     Ok(())
 }

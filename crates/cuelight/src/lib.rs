@@ -20,15 +20,17 @@
 
 mod easing;
 mod engine;
+mod font;
 mod model;
 mod output;
 mod value;
 
 pub use easing::Easing;
 pub use engine::{Engine, Error, ImageData, ResolvedLayer, ResolvedShape};
+pub use font::BitmapFont;
 pub use model::{
-    Binding, Key, Layer, LayerKind, Output, OutputMode, Property, Scene, Shape, Show, Timeline,
-    Track,
+    Align, Binding, Border, FontStyle, Key, Layer, LayerKind, NumberFormat, Output, OutputMode,
+    Property, Scene, Shape, Show, Timeline, Track,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use value::Value;
