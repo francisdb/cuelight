@@ -165,6 +165,15 @@ A timeline is a keyframed animation owned by its layer:
   it stops and its properties fall back (see precedence); with `loop`
   the playhead wraps instead. For a seamless loop, author each track's
   value at the end equal to its value at 0.
+- `delay` (seconds) postpones the first key after the timeline starts;
+  meanwhile it does not own its properties. A loop or repeat does not
+  wait again, so `delay` plus `loop` is "wait, then repeat forever".
+- `repeat` plays it that many times (fractions stop partway: `2.5` ends
+  halfway through the third play); `loop` repeats forever. The two cannot
+  be combined.
+- `on_end` names a trigger fired when the timeline finishes (after its
+  last repeat; loops never finish). It behaves exactly like a host firing
+  the trigger, so it can start other timelines or restart a sequence.
 
 ## Property precedence
 

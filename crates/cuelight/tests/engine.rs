@@ -341,3 +341,94 @@ fn show_without_scenes_has_no_active_scene() {
     engine.load_show(MINIGOLF).unwrap();
     assert_eq!(engine.active_scene(), None);
 }
+
+const PLAYBACK: &str = r##"{
+  "name": "playback",
+  "size": [64, 64],
+  "layers": [
+    {
+      "name": "scroll",
+      "type": "shape",
+      "shape": { "rect": [0, 0, 1, 1] },
+      "fill": "#FFFFFF",
+      "x": 5,
+      "timelines": [
+        {
+          "name": "scroll",
+          "autoplay": true,
+          "loop": true,
+          "delay": 2.0,
+          "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 10, "v": -10 }] }]
+        }
+      ]
+    },
+    {
+      "name": "blink",
+      "type": "shape",
+      "shape": { "rect": [0, 0, 1, 1] },
+      "fill": "#FFFFFF",
+      "timelines": [
+        {
+          "name": "cycle",
+          "trigger": "go",
+          "repeat": 2.5,
+          "on_end": "done",
+          "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 10 }] }]
+        },
+        {
+          "name": "after",
+          "trigger": "done",
+          "tracks": [{ "property": "y", "keys": [{ "t": 0, "v": 7 }, { "t": 1, "v": 7 }] }]
+        }
+      ]
+    }
+  ]
+}"##;
+
+fn rect_xy(engine: &Engine, name: &str) -> (f64, f64) {
+    let layers = engine.resolved_layers().unwrap();
+    match layers.iter().find(|l| l.name == name).unwrap().shape {
+        ResolvedShape::Rect { x, y, .. } => (x, y),
+        ref other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn delay_holds_the_base_value_and_is_not_looped() {
+    let mut engine = Engine::new();
+    engine.load_show(PLAYBACK).unwrap();
+    engine.advance_frame(1.5);
+    // Still delayed: the base x applies.
+    assert_eq!(rect_xy(&engine, "scroll").0, 5.0);
+    engine.advance_frame(1.5);
+    assert_eq!(rect_xy(&engine, "scroll").0, -1.0);
+    // 2s delay + 10s play: wraps to the start without waiting again.
+    engine.advance_frame(9.0);
+    assert_eq!(rect_xy(&engine, "scroll").0, 0.0);
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "scroll").0, -1.0);
+}
+
+#[test]
+fn repeat_plays_n_times_then_fires_on_end() {
+    let mut engine = Engine::new();
+    engine.load_show(PLAYBACK).unwrap();
+    engine.trigger("go");
+    engine.advance_frame(1.25);
+    // Second play, a quarter in.
+    assert_eq!(rect_xy(&engine, "blink"), (2.5, 0.0));
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "blink"), (2.5, 0.0));
+    // 2.5 plays end at 2.5s: on_end fires "done", which starts "after".
+    engine.advance_frame(0.5);
+    assert_eq!(rect_xy(&engine, "blink"), (0.0, 7.0));
+    engine.advance_frame(1.0);
+    assert_eq!(rect_xy(&engine, "blink"), (0.0, 0.0));
+}
+
+#[test]
+fn loop_with_repeat_is_rejected() {
+    let mut engine = Engine::new();
+    let show = PLAYBACK.replace(r#""delay": 2.0,"#, r#""delay": 2.0, "repeat": 2,"#);
+    assert!(engine.load_show(&show).is_err());
+}

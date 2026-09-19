@@ -52,6 +52,7 @@ struct Playhead {
     layer_path: Vec<usize>,
     /// Timeline index within that layer.
     timeline: usize,
+    /// Seconds since the delay ended: negative while delayed.
     time: f64,
 }
 
@@ -85,6 +86,7 @@ impl Engine {
             serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
         parse_color(&show.background)
             .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
+        validate(&show)?;
         self.variables = show.variables.clone();
         self.playing.clear();
         self.time = 0.0;
@@ -174,11 +176,12 @@ impl Engine {
 
     /// Advance time by `dt` seconds: running timelines progress, looping
     /// ones wrap, finished ones stop (their properties fall back to
-    /// bindings/base values).
+    /// bindings/base values) and fire their `on_end` trigger.
     pub fn advance_frame(&mut self, dt: f64) {
         self.time += dt;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
+        let mut on_end: Vec<String> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
             p.time += dt;
             let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
@@ -186,19 +189,22 @@ impl Engine {
                 finished.push(i);
                 continue;
             };
+            if p.time < 0.0 {
+                continue;
+            }
             let duration = tl.duration();
-            if duration <= 0.0 {
+            if tl.looping && duration > 0.0 {
+                p.time %= duration;
+            } else if duration <= 0.0 || p.time >= tl.play_time() {
                 finished.push(i);
-            } else if p.time >= duration {
-                if tl.looping {
-                    p.time %= duration;
-                } else {
-                    finished.push(i);
-                }
+                on_end.extend(tl.on_end.clone());
             }
         }
         for i in finished.into_iter().rev() {
             self.playing.remove(i);
+        }
+        for name in on_end {
+            self.trigger(&name);
         }
     }
 
@@ -269,11 +275,15 @@ impl Engine {
             self.playing.retain(|p| {
                 !(p.root == root && p.layer_path == layer_path && p.timeline == timeline)
             });
+            let delay = root_layers(show, root)
+                .and_then(|layers| layer_at(layers, &layer_path))
+                .and_then(|l| l.timelines.get(timeline))
+                .map_or(0.0, |tl| tl.delay.max(0.0));
             self.playing.push(Playhead {
                 root,
                 layer_path,
                 timeline,
-                time: 0.0,
+                time: -delay,
             });
         }
     }
@@ -299,12 +309,16 @@ impl Engine {
             if p.root != root || p.layer_path != path {
                 continue;
             }
-            if let Some(tl) = layer.timelines.get(p.timeline) {
-                for track in &tl.tracks {
-                    if track.property == prop {
-                        if let Some(sampled) = track.sample(p.time) {
-                            v = sampled;
-                        }
+            let Some(tl) = layer.timelines.get(p.timeline) else {
+                continue;
+            };
+            let Some(time) = tl.local_time(p.time) else {
+                continue;
+            };
+            for track in &tl.tracks {
+                if track.property == prop {
+                    if let Some(sampled) = track.sample(time) {
+                        v = sampled;
                     }
                 }
             }
@@ -378,6 +392,31 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
         Root::Show => Some(&show.layers),
         Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
     }
+}
+
+/// Checks `load_show` does beyond parsing.
+fn validate(show: &Show) -> Result<(), Error> {
+    fn layers(list: &[Layer]) -> Result<(), Error> {
+        for layer in list {
+            for timeline in &layer.timelines {
+                if timeline.looping && timeline.repeat.is_some() {
+                    return Err(Error::InvalidShow(format!(
+                        "timeline {:?} of layer {:?} sets both loop and repeat",
+                        timeline.name, layer.name
+                    )));
+                }
+            }
+            if let LayerKind::Group { children } = &layer.kind {
+                layers(children)?;
+            }
+        }
+        Ok(())
+    }
+    layers(&show.layers)?;
+    for scene in &show.scenes {
+        layers(&scene.layers)?;
+    }
+    Ok(())
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
