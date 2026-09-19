@@ -25,7 +25,7 @@ mod value;
 
 pub use easing::Easing;
 pub use engine::{Engine, Error, ImageData, ResolvedLayer, ResolvedShape};
-pub use model::{Binding, Key, Layer, LayerKind, Property, Shape, Show, Timeline, Track};
+pub use model::{Binding, Key, Layer, LayerKind, Property, Scene, Shape, Show, Timeline, Track};
 pub use value::Value;
 
 #[cfg(feature = "render")]

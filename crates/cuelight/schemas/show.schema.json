@@ -10,6 +10,7 @@
       "default": "#000000"
     },
     "layers": {
+      "description": "Layers that are always present, painted behind the active scene.",
       "type": "array",
       "default": [],
       "items": {
@@ -18,6 +19,14 @@
     },
     "name": {
       "type": "string"
+    },
+    "scenes": {
+      "description": "Switchable views; exactly one is active at a time (the first one\nwhen the show loads), entered by firing its trigger.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Scene"
+      }
     },
     "size": {
       "description": "Logical canvas size in pixels `[width, height]`. Hosts scale the\nrendered texture; content is authored against this space.\nCoordinates have their origin at the top-left corner: x grows\nright, y grows down.",
@@ -241,6 +250,33 @@
         "y",
         "opacity",
         "scale"
+      ]
+    },
+    "Scene": {
+      "description": "A switchable view of the show: its layers render only while it is the\nactive scene. Entering a scene (again) restarts it: timelines of the\nprevious scene stop, the entered scene's autoplay timelines start at 0.",
+      "type": "object",
+      "properties": {
+        "layers": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Layer"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "trigger": {
+          "description": "Trigger name that enters this scene.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
       ]
     },
     "Shape": {
