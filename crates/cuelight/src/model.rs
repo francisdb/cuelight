@@ -224,13 +224,21 @@ pub enum Property {
     Scale,
     /// The text of a text layer; bindable, not animatable.
     Text,
+    /// The font style of a text layer; bindable, not animatable.
+    Font,
 }
 
 /// A permanent wiring of a property to a variable, evaluated every frame.
 ///
 /// Numeric properties take `variable * scale + offset`. The `text`
 /// property takes the variable as text: numbers get `scale`/`offset`
-/// applied, then `format`.
+/// applied, then `format`. The `font` property takes the variable as a
+/// font style name.
+///
+/// With `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)
+/// is looked up first and the mapped value, or `default` when it is not
+/// listed, takes the variable's place. Without either, the binding does
+/// not apply and the property keeps its base value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Binding {
@@ -243,6 +251,12 @@ pub struct Binding {
     /// How a number becomes text (text bindings only).
     #[serde(default)]
     pub format: NumberFormat,
+    /// Replace the variable's value by looking it up here.
+    #[serde(default)]
+    pub map: Option<BTreeMap<String, Value>>,
+    /// Value for variable values `map` does not list.
+    #[serde(default)]
+    pub default: Option<Value>,
 }
 
 /// Number to text conversion for text bindings.

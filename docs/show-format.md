@@ -182,6 +182,23 @@ comma separators: `1,500`).
 { "property": "text", "variable": "score", "format": "thousands" }
 ```
 
+A text layer's `font` property can be bound to a variable naming a font
+style, typically through a map.
+
+`map` looks the variable's value up (as text: `1`, `2.5`, `true`,
+`attract`) and uses the mapped value in its place; `default` covers values
+the map does not list, and without a default an unlisted value leaves the
+property at its base. The mapped value then goes through the same
+conversion as a plain variable (`scale`/`offset`, `format`). Highlighting
+the active player's score:
+
+```json
+{ "property": "font", "variable": "player", "map": { "2": "score_active" }, "default": "score_inactive" }
+```
+
+Font bindings may only map to declared font styles; `text` and `font`
+can be bound but not keyframed.
+
 ## Timelines
 
 A timeline is a keyframed animation owned by its layer:

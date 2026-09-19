@@ -136,3 +136,51 @@ fn number_formats() {
     assert_eq!(NumberFormat::Thousands.format(412_345_000.0), "412,345,000");
     assert_eq!(NumberFormat::Thousands.format(-1234.4), "-1,234");
 }
+
+const MAPPED: &str = r##"{
+  "name": "mapped",
+  "size": [32, 8],
+  "fonts": {
+    "dim": { "file": "blocks", "color": "#404040" },
+    "lit": { "file": "blocks" }
+  },
+  "variables": { "player": 1, "mode": "attract" },
+  "layers": [
+    {
+      "name": "p2",
+      "type": "text",
+      "font": "dim",
+      "text": "0",
+      "bindings": [
+        { "property": "font", "variable": "player", "map": { "2": "lit" }, "default": "dim" },
+        { "property": "opacity", "variable": "mode", "map": { "game": 1 }, "default": 0.25 }
+      ]
+    }
+  ]
+}"##;
+
+#[test]
+fn mapped_bindings_pick_values_by_variable() {
+    let mut engine = Engine::new();
+    let font = BitmapFont::parse(FNT).unwrap();
+    engine
+        .set_font("blocks", font, vec![(2, 3, vec![255; 2 * 3 * 4])])
+        .unwrap();
+    engine.load_show(MAPPED).unwrap();
+    let state = |e: &Engine| {
+        let layers = e.resolved_layers().unwrap();
+        let color = bitmap(e, "p2").4;
+        (color, layers[0].opacity)
+    };
+    assert_eq!(state(&engine), ([64, 64, 64, 255], 0.25));
+    engine.set_variable("player", 2.0);
+    engine.set_variable("mode", "game");
+    assert_eq!(state(&engine), ([255, 255, 255, 255], 1.0));
+}
+
+#[test]
+fn font_binding_to_undeclared_style_is_rejected() {
+    let mut engine = Engine::new();
+    let show = MAPPED.replace(r#""2": "lit""#, r#""2": "bright""#);
+    assert!(engine.load_show(&show).is_err());
+}

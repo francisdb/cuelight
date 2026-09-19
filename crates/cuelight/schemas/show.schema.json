@@ -77,13 +77,36 @@
       ]
     },
     "Binding": {
-      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`.",
+      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the variable as a\nfont style name.\n\nWith `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)\nis looked up first and the mapped value, or `default` when it is not\nlisted, takes the variable's place. Without either, the binding does\nnot apply and the property keeps its base value.",
       "type": "object",
       "properties": {
+        "default": {
+          "description": "Value for variable values `map` does not list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Value"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "format": {
           "description": "How a number becomes text (text bindings only).",
           "$ref": "#/$defs/NumberFormat",
           "default": "plain"
+        },
+        "map": {
+          "description": "Replace the variable's value by looking it up here.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          },
+          "default": null
         },
         "offset": {
           "type": "number",
@@ -388,6 +411,11 @@
           "description": "The text of a text layer; bindable, not animatable.",
           "type": "string",
           "const": "text"
+        },
+        {
+          "description": "The font style of a text layer; bindable, not animatable.",
+          "type": "string",
+          "const": "font"
         }
       ]
     },

@@ -1,5 +1,7 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
-use crate::model::{parse_color, Align, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::model::{
+    parse_color, Align, Binding, Layer, LayerKind, NumberFormat, Property, Shape, Show, Timeline,
+};
 use crate::value::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -377,13 +379,13 @@ impl Engine {
             Property::Y => layer.y,
             Property::Opacity => layer.opacity,
             Property::Scale => layer.scale,
-            // Not numeric, see text_property.
-            Property::Text => return 0.0,
+            // Not numeric, see text_property and font_property.
+            Property::Text | Property::Font => return 0.0,
         };
         // Bindings override base.
         for b in &layer.bindings {
             if b.property == prop {
-                if let Some(value) = self.variables.get(&b.variable) {
+                if let Some(value) = self.binding_value(b) {
                     v = value.as_number() * b.scale + b.offset;
                 }
             }
@@ -406,6 +408,23 @@ impl Engine {
         v
     }
 
+    /// The value a binding feeds its property: the variable's, or what
+    /// `map`/`default` turn it into. `None` when it does not apply.
+    fn binding_value(&self, b: &Binding) -> Option<Value> {
+        let value = self.variables.get(&b.variable)?;
+        match &b.map {
+            None => Some(value.clone()),
+            Some(map) => {
+                let key = match value {
+                    Value::Text(t) => t.clone(),
+                    Value::Bool(v) => v.to_string(),
+                    Value::Number(n) => NumberFormat::Plain.format(*n),
+                };
+                map.get(&key).or(b.default.as_ref()).cloned()
+            }
+        }
+    }
+
     /// A text layer's text: its base text, overridden by text bindings.
     fn text_property(&self, layer: &Layer, base: &str) -> String {
         let mut text = base.to_owned();
@@ -413,15 +432,33 @@ impl Engine {
             if b.property != Property::Text {
                 continue;
             }
-            if let Some(value) = self.variables.get(&b.variable) {
+            if let Some(value) = self.binding_value(b) {
                 text = match value {
-                    Value::Text(t) => t.clone(),
+                    Value::Text(t) => t,
                     Value::Bool(v) => v.to_string(),
                     Value::Number(n) => b.format.format(n * b.scale + b.offset),
                 };
             }
         }
         text
+    }
+
+    /// A text layer's font style: its base style, overridden by font
+    /// bindings naming a declared style.
+    fn font_property<'a>(&self, layer: &Layer, base: &'a str) -> std::borrow::Cow<'a, str> {
+        let mut font = std::borrow::Cow::Borrowed(base);
+        let Some(show) = &self.show else { return font };
+        for b in &layer.bindings {
+            if b.property != Property::Font {
+                continue;
+            }
+            if let Some(Value::Text(style)) = self.binding_value(b) {
+                if show.fonts.contains_key(&style) {
+                    font = std::borrow::Cow::Owned(style);
+                }
+            }
+        }
+        font
     }
 
     /// Rasterize (or fetch from cache) `text` in font style `style`.
@@ -533,7 +570,8 @@ impl Engine {
                         align,
                     } => {
                         let text = self.text_property(layer, text);
-                        if let Some(raster) = self.text_raster(font, &text, *size, *align) {
+                        let font = self.font_property(layer, font);
+                        if let Some(raster) = self.text_raster(&font, &text, *size, *align) {
                             let [ox, oy] = raster.offset;
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
@@ -583,11 +621,31 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
             }
             for timeline in &layer.timelines {
-                if timeline.tracks.iter().any(|t| t.property == Property::Text) {
+                if let Some(track) = timeline
+                    .tracks
+                    .iter()
+                    .find(|t| matches!(t.property, Property::Text | Property::Font))
+                {
                     return Err(Error::InvalidShow(format!(
-                        "timeline {:?} of layer {:?} animates text, which can only be bound",
-                        timeline.name, layer.name
+                        "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
+                        timeline.name, layer.name, track.property
                     )));
+                }
+            }
+            for binding in &layer.bindings {
+                if binding.property != Property::Font {
+                    continue;
+                }
+                let mapped = binding.map.iter().flat_map(|m| m.values());
+                for value in mapped.chain(&binding.default) {
+                    let known =
+                        matches!(value, Value::Text(style) if show.fonts.contains_key(style));
+                    if !known {
+                        return Err(Error::InvalidShow(format!(
+                            "font binding of layer {:?} maps to {value:?}, not a declared font style",
+                            layer.name
+                        )));
+                    }
                 }
             }
             if let LayerKind::Group { children } = &layer.kind {
