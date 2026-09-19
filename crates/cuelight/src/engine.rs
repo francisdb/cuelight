@@ -212,7 +212,9 @@ impl Engine {
     }
 
     /// Resolve the show into a flat draw list: visible shape layers in
-    /// paint order with absolute position and effective opacity.
+    /// paint order with absolute position and effective opacity. Clipped
+    /// groups bracket their children with [`ResolvedShape::ClipBegin`] and
+    /// [`ResolvedShape::ClipEnd`].
     ///
     /// Property precedence, strongest first: running timeline, binding,
     /// base value from the show description.
@@ -332,8 +334,29 @@ impl Engine {
                     (oa * self.property(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
                 let scale = self.property(root, layer, path, Property::Scale);
                 match &layer.kind {
-                    LayerKind::Group { children } => {
+                    LayerKind::Group { children, clip } => {
+                        if let Some([width, height]) = clip {
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::ClipBegin {
+                                    x,
+                                    y,
+                                    width: width * scale,
+                                    height: height * scale,
+                                },
+                                color: [0; 4],
+                                opacity,
+                            });
+                        }
                         self.walk(root, children, path, x, y, opacity, out)?;
+                        if clip.is_some() {
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::ClipEnd,
+                                color: [0; 4],
+                                opacity,
+                            });
+                        }
                     }
                     LayerKind::Shape { shape, fill } => {
                         let color =
@@ -387,7 +410,7 @@ fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
         return Some(layer);
     }
     match &layer.kind {
-        LayerKind::Group { children } => layer_at(children, rest),
+        LayerKind::Group { children, .. } => layer_at(children, rest),
         _ => None,
     }
 }
@@ -402,7 +425,7 @@ fn collect_timelines(
         for (idx, tl) in layer.timelines.iter().enumerate() {
             f(path, idx, tl);
         }
-        if let LayerKind::Group { children } = &layer.kind {
+        if let LayerKind::Group { children, .. } = &layer.kind {
             collect_timelines(children, path, f);
         }
         path.pop();
@@ -451,6 +474,16 @@ pub enum ResolvedShape {
         cy: f64,
         radius: f64,
     },
+    /// Start clipping: until the matching [`ResolvedShape::ClipEnd`],
+    /// items only show inside this rectangle. Clips nest.
+    ClipBegin {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+    /// End the innermost clip.
+    ClipEnd,
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle.
     Image {

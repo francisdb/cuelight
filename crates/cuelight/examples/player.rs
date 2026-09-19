@@ -137,7 +137,7 @@ fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
                 out.insert(trigger.clone());
             }
         }
-        if let LayerKind::Group { children } = &layer.kind {
+        if let LayerKind::Group { children, .. } = &layer.kind {
             collect_actions(children, out);
         }
     }
@@ -153,7 +153,7 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                     layer.name
                 );
             }
-            LayerKind::Group { children } => warn_missing_images(engine, children),
+            LayerKind::Group { children, .. } => warn_missing_images(engine, children),
             _ => {}
         }
     }

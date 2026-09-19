@@ -94,6 +94,16 @@ pub fn build_vello_scene(
                 let circle = Circle::new((cx, cy), radius);
                 show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
             }
+            ResolvedShape::ClipBegin {
+                x,
+                y,
+                width,
+                height,
+            } => {
+                let rect = Rect::new(x, y, x + width, y + height);
+                show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &rect);
+            }
+            ResolvedShape::ClipEnd => show.pop_layer(),
             ResolvedShape::Image {
                 image,
                 x,

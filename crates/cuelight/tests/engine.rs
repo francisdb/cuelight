@@ -341,3 +341,33 @@ fn show_without_scenes_has_no_active_scene() {
     engine.load_show(MINIGOLF).unwrap();
     assert_eq!(engine.active_scene(), None);
 }
+
+#[test]
+fn clipped_group_brackets_its_children() {
+    let show = r##"{ "name": "clip", "size": [64, 32], "layers": [
+        { "name": "content", "type": "group", "x": 40, "clip": [20, 32], "children": [
+            { "name": "title", "type": "shape", "shape": { "rect": [0, 0, 100, 8] }, "fill": "#FFFFFF" }
+        ] },
+        { "name": "after", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let shapes: Vec<_> = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .map(|l| l.shape)
+        .collect();
+    assert_eq!(
+        shapes[0],
+        ResolvedShape::ClipBegin {
+            x: 40.0,
+            y: 0.0,
+            width: 20.0,
+            height: 32.0
+        }
+    );
+    assert!(matches!(shapes[1], ResolvedShape::Rect { x, .. } if x == 40.0));
+    assert_eq!(shapes[2], ResolvedShape::ClipEnd);
+    assert_eq!(shapes.len(), 4);
+}

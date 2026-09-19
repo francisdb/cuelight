@@ -92,8 +92,13 @@ fn default_visible() -> bool {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum LayerKind {
+    /// A container: children are positioned relative to the group and
+    /// painted in order. With `clip` `[width, height]`, children only show
+    /// inside that rectangle at the group's origin.
     Group {
         children: Vec<Layer>,
+        #[serde(default)]
+        clip: Option<[f64; 2]>,
     },
     Shape {
         shape: Shape,

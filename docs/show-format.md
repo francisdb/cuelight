@@ -110,7 +110,10 @@ group children behind whatever follows the group. Every layer has:
 
 Layer kinds:
 
-- `group`: `children` is a nested layer list.
+- `group`: `children` is a nested layer list. Optional `clip`
+  `[width, height]` (scaled with the group's `scale`) hides whatever the
+  children draw outside that rectangle at the group's origin, like a
+  window onto its content.
 - `shape`: `shape` is `{ "rect": [x, y, width, height] }` or
   `{ "circle": [cx, cy, radius] }` in the layer's local space, plus a
   `fill` color.

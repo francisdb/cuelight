@@ -168,6 +168,7 @@
       },
       "oneOf": [
         {
+          "description": "A container: children are positioned relative to the group and\npainted in order. With `clip` `[width, height]`, children only show\ninside that rectangle at the group's origin.",
           "type": "object",
           "properties": {
             "children": {
@@ -175,6 +176,19 @@
               "items": {
                 "$ref": "#/$defs/Layer"
               }
+            },
+            "clip": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
             },
             "type": {
               "type": "string",
