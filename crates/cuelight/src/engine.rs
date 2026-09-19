@@ -1,4 +1,5 @@
 use crate::model::{parse_color, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::segments;
 use crate::value::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -365,6 +366,41 @@ impl Engine {
                             });
                         }
                     }
+                    LayerKind::Segments {
+                        style,
+                        digits,
+                        text,
+                        size: [width, height],
+                        fill,
+                        unlit,
+                    } => {
+                        let lit =
+                            parse_color(fill).ok_or_else(|| Error::InvalidColor(fill.clone()))?;
+                        let unlit = unlit
+                            .as_ref()
+                            .map(|c| parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone())))
+                            .transpose()?;
+                        let cell_w = width * scale / f64::from((*digits).max(1));
+                        let mut chars = text.chars();
+                        for i in 0..*digits {
+                            let cell = [x + f64::from(i) * cell_w, y, cell_w, height * scale];
+                            let mask = chars.next().map_or(0, |c| segments::mask(*style, c));
+                            let mut push = |mask: u16, color: [u8; 4]| {
+                                for points in segments::polygons(*style, mask, cell) {
+                                    out.push(ResolvedLayer {
+                                        name: layer.name.clone(),
+                                        shape: ResolvedShape::Polygon { points },
+                                        color,
+                                        opacity,
+                                    });
+                                }
+                            };
+                            if let Some(unlit) = unlit {
+                                push(!mask, unlit);
+                            }
+                            push(mask, lit);
+                        }
+                    }
                 }
             }
             path.pop();
@@ -450,6 +486,10 @@ pub enum ResolvedShape {
         cx: f64,
         cy: f64,
         radius: f64,
+    },
+    /// A filled polygon (segment display segments), closed implicitly.
+    Polygon {
+        points: Vec<[f64; 2]>,
     },
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle.

@@ -341,3 +341,33 @@ fn show_without_scenes_has_no_active_scene() {
     engine.load_show(MINIGOLF).unwrap();
     assert_eq!(engine.active_scene(), None);
 }
+
+#[test]
+fn segment_display_resolves_lit_and_unlit_segments() {
+    let show = r##"{ "name": "seg", "size": [32, 16], "layers": [
+        { "name": "d", "type": "segments", "style": "numeric7", "digits": 2, "text": "1",
+          "size": [16, 16], "x": 4, "fill": "#FF0000", "unlit": "#200000" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let lit: Vec<_> = layers
+        .iter()
+        .filter(|l| l.color == [255, 0, 0, 255])
+        .collect();
+    let unlit = layers.iter().filter(|l| l.color == [32, 0, 0, 255]).count();
+    // '1' lights b and c; the rest of digit one (5 + dot) and all of the
+    // blank digit two (7 + dot) are drawn unlit.
+    assert_eq!(lit.len(), 2);
+    assert_eq!(unlit, 6 + 8);
+    // Both lit segments sit on the right side of the first 8px cell.
+    for l in lit {
+        let ResolvedShape::Polygon { points } = &l.shape else {
+            panic!("segments resolve to polygons");
+        };
+        assert!(
+            points.iter().all(|&[x, _]| (9.0..12.0).contains(&x)),
+            "{points:?}"
+        );
+    }
+}

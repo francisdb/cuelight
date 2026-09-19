@@ -8,7 +8,7 @@ use crate::engine::{Engine, ResolvedShape};
 use crate::model::parse_color;
 use std::collections::HashMap;
 use std::sync::Arc;
-use vello::kurbo::{Affine, Circle, Rect};
+use vello::kurbo::{Affine, BezPath, Circle, Rect};
 use vello::peniko::{Blob, Color, Fill, ImageAlphaType, ImageBrush, ImageFormat};
 use vello::wgpu;
 
@@ -93,6 +93,18 @@ pub fn build_vello_scene(
             ResolvedShape::Circle { cx, cy, radius } => {
                 let circle = Circle::new((cx, cy), radius);
                 show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
+            }
+            ResolvedShape::Polygon { points } => {
+                let mut path = BezPath::new();
+                for (i, &[x, y]) in points.iter().enumerate() {
+                    if i == 0 {
+                        path.move_to((x, y));
+                    } else {
+                        path.line_to((x, y));
+                    }
+                }
+                path.close_path();
+                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
             }
             ResolvedShape::Image {
                 image,

@@ -236,6 +236,56 @@
             "type",
             "image"
           ]
+        },
+        {
+          "description": "A segment display: `digits` equal cells across `size`\n`[width, height]` (top-left at the layer's x/y), showing `text`\nfrom the first cell on. Characters without a segment pattern stay\ndark.",
+          "type": "object",
+          "properties": {
+            "digits": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "fill": {
+              "description": "Color of lit segments.",
+              "type": "string"
+            },
+            "size": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "style": {
+              "$ref": "#/$defs/SegmentStyle"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "segments"
+            },
+            "unlit": {
+              "description": "Color of dark segments; not drawn when omitted.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "type",
+            "style",
+            "digits",
+            "text",
+            "size",
+            "fill"
+          ]
         }
       ],
       "required": [
@@ -277,6 +327,21 @@
       },
       "required": [
         "name"
+      ]
+    },
+    "SegmentStyle": {
+      "description": "Segment layout of a segment display.",
+      "oneOf": [
+        {
+          "description": "14 segments plus dot: letters and digits (alphanumeric pinball\ndisplays).",
+          "type": "string",
+          "const": "alpha14"
+        },
+        {
+          "description": "7 segments plus dot: digits and `-`.",
+          "type": "string",
+          "const": "numeric7"
+        }
       ]
     },
     "Shape": {

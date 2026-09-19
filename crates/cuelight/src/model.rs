@@ -110,6 +110,33 @@ pub enum LayerKind {
         #[serde(default)]
         size: Option<[f64; 2]>,
     },
+    /// A segment display: `digits` equal cells across `size`
+    /// `[width, height]` (top-left at the layer's x/y), showing `text`
+    /// from the first cell on. Characters without a segment pattern stay
+    /// dark.
+    Segments {
+        style: SegmentStyle,
+        digits: u32,
+        text: String,
+        size: [f64; 2],
+        /// Color of lit segments.
+        fill: String,
+        /// Color of dark segments; not drawn when omitted.
+        #[serde(default)]
+        unlit: Option<String>,
+    },
+}
+
+/// Segment layout of a segment display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum SegmentStyle {
+    /// 14 segments plus dot: letters and digits (alphanumeric pinball
+    /// displays).
+    Alpha14,
+    /// 7 segments plus dot: digits and `-`.
+    Numeric7,
 }
 
 /// Vector shapes, in the layer's local coordinate space.

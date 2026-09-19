@@ -99,7 +99,7 @@ layers and in the newly entered scene.
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, or `image` (see below).
+- `type`: `group`, `shape`, `image` or `segments` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
@@ -120,6 +120,13 @@ Layer kinds:
   its natural pixel size. Images are host assets, not show content: a
   layer whose image is not (yet) registered is skipped, so hosts can
   stream assets in after `load_show`.
+- `segments`: a segment display, the alphanumeric and numeric displays of
+  pre-DMD pinball machines. `digits` equal cells across `size`
+  `[width, height]` (top-left at the layer's x/y) show `text` from the
+  first cell on; `fill` colors lit segments and the optional `unlit`
+  color draws the dark ones. `style` is `alpha14` (14 segments plus dot:
+  letters, digits, `- + * / \ = _ '`) or `numeric7` (7 segments plus dot:
+  digits and `-`); `.` and `,` light the dot.
 
 ## Bindings
 
