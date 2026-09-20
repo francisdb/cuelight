@@ -159,6 +159,43 @@
         "color"
       ]
     },
+    "DigitDisplay": {
+      "description": "How the cells of a digit row are drawn.",
+      "oneOf": [
+        {
+          "description": "A segment display: lit segments in `fill`, and the dark ones in\n`unlit` when given. A `.` or `,` lights the dot of the cell before\nit instead of taking a cell. Characters the style cannot show stay\ndark.",
+          "type": "object",
+          "properties": {
+            "segments": {
+              "type": "object",
+              "properties": {
+                "fill": {
+                  "type": "string"
+                },
+                "style": {
+                  "$ref": "#/$defs/SegmentStyle"
+                },
+                "unlit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "style",
+                "fill"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "segments"
+          ]
+        }
+      ]
+    },
     "Easing": {
       "description": "Easing applied to the segment that ends at the keyframe carrying it.",
       "type": "string",
@@ -200,6 +237,22 @@
       },
       "required": [
         "file"
+      ]
+    },
+    "Justify": {
+      "description": "Which end of a digit row its text sits against.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "left"
+          ]
+        },
+        {
+          "description": "As scores are shown: the last character in the last cell.",
+          "type": "string",
+          "const": "right"
+        }
       ]
     },
     "Key": {
@@ -425,6 +478,47 @@
             "text",
             "font"
           ]
+        },
+        {
+          "description": "A row of `digits` equal cells across `size` `[width, height]`\n(top-left at the layer's x/y) showing `text`, one character per\ncell; how a cell is drawn is up to `display`. Text longer than the\nrow is cut at the far side of `justify`.",
+          "type": "object",
+          "properties": {
+            "digits": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "display": {
+              "$ref": "#/$defs/DigitDisplay"
+            },
+            "justify": {
+              "$ref": "#/$defs/Justify",
+              "default": "left"
+            },
+            "size": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "text": {
+              "type": "string",
+              "default": ""
+            },
+            "type": {
+              "type": "string",
+              "const": "digits"
+            }
+          },
+          "required": [
+            "type",
+            "digits",
+            "size",
+            "display"
+          ]
         }
       ],
       "required": [
@@ -585,6 +679,21 @@
       },
       "required": [
         "name"
+      ]
+    },
+    "SegmentStyle": {
+      "description": "Segment layout of a segment display.",
+      "oneOf": [
+        {
+          "description": "14 segments plus dot: letters and digits.",
+          "type": "string",
+          "const": "alpha14"
+        },
+        {
+          "description": "7 segments plus dot: digits and `-`.",
+          "type": "string",
+          "const": "numeric7"
+        }
       ]
     },
     "Shape": {
