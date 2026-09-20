@@ -702,3 +702,47 @@ fn digit_row_text_is_bindable() {
     engine.set_variable("score", 38.0);
     assert_eq!(lit(&engine), 12);
 }
+
+#[test]
+fn timelines_and_scenes_can_listen_to_several_triggers() {
+    let show = r##"{ "name": "s", "size": [8, 8], "scenes": [
+        { "name": "idle", "trigger": ["idle", "reset"], "layers": [] },
+        { "name": "signals", "trigger": "signals", "layers": [
+            { "name": "left", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+              "timelines": [{ "name": "blink", "trigger": ["turn_left", "hazard"],
+                "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 5 }, { "t": 1, "v": 5 }] }] }] } ] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    assert!(engine.load_warnings().is_empty());
+    engine.trigger("signals");
+    let x = |e: &Engine| match e.resolved_layers().unwrap()[0].shape {
+        ResolvedShape::Rect { x, .. } => x,
+        ref other => panic!("{other:?}"),
+    };
+    for name in ["turn_left", "hazard"] {
+        assert_eq!(x(&engine), 0.0);
+        engine.trigger(name);
+        assert_eq!(x(&engine), 5.0, "{name}");
+        engine.advance_frame(1.5);
+    }
+    engine.trigger("turn_right");
+    assert_eq!(x(&engine), 0.0);
+    // either name enters the scene
+    engine.trigger("reset");
+    assert_eq!(engine.active_scene(), Some("idle"));
+}
+
+#[test]
+fn triggers_serialize_the_way_they_are_authored() {
+    use cuelight::Triggers;
+    let json = |t: &Triggers| serde_json::to_string(t).unwrap();
+    assert_eq!(json(&Triggers(vec![])), "null");
+    assert_eq!(json(&Triggers(vec!["go".into()])), r#""go""#);
+    assert_eq!(
+        json(&Triggers(vec!["a".into(), "b".into()])),
+        r#"["a","b"]"#
+    );
+    let back: Triggers = serde_json::from_str(r#"["a","b"]"#).unwrap();
+    assert!(back.contains("b") && !back.contains("c"));
+}

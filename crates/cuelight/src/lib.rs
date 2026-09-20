@@ -33,7 +33,7 @@ pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, DigitDisplay, FontStyle, Justify, Key, Layer, LayerKind, NumberFormat,
     Output, OutputMode, Property, Scaling, Scene, SegmentStyle, Shape, Sheet, Show, Timeline,
-    Track, FORMAT,
+    Track, Triggers, FORMAT,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use value::Value;

@@ -311,15 +311,14 @@ impl Engine {
     /// timeline declaring it, in the show's layers or the active scene,
     /// (re)starts from 0.
     pub fn trigger(&mut self, name: &str) {
-        let entered = self.show.as_ref().and_then(|show| {
-            show.scenes
-                .iter()
-                .position(|s| s.trigger.as_deref() == Some(name))
-        });
+        let entered = self
+            .show
+            .as_ref()
+            .and_then(|show| show.scenes.iter().position(|s| s.trigger.contains(name)));
         if let Some(scene) = entered {
             self.enter_scene(scene);
         }
-        self.start_matching(None, |tl| tl.trigger.as_deref() == Some(name));
+        self.start_matching(None, |tl| tl.trigger.contains(name));
     }
 
     /// Name of the active scene, if the show has scenes.

@@ -676,11 +676,8 @@
           "default": null
         },
         "trigger": {
-          "description": "Trigger name that enters this scene.",
-          "type": [
-            "string",
-            "null"
-          ],
+          "description": "Trigger name, or list of names, that enters this scene.",
+          "$ref": "#/$defs/Triggers",
           "default": null
         }
       },
@@ -817,11 +814,8 @@
           }
         },
         "trigger": {
-          "description": "Trigger name that (re)starts this timeline.",
-          "type": [
-            "string",
-            "null"
-          ],
+          "description": "Trigger name, or list of names, that (re)starts this timeline.",
+          "$ref": "#/$defs/Triggers",
           "default": null
         }
       },
@@ -846,6 +840,23 @@
       "required": [
         "property",
         "keys"
+      ]
+    },
+    "Triggers": {
+      "description": "A trigger name, or a list of names; firing any of them has the same effect.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "Value": {

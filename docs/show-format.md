@@ -320,7 +320,9 @@ A timeline is a keyframed animation owned by its layer:
 ```
 
 - It starts when the host fires its `trigger`, or at load when
-  `autoplay` is true. Re-firing the trigger restarts it from 0.
+  `autoplay` is true. Re-firing the trigger restarts it from 0. `trigger`
+  is one name or a list (`["turn_left", "hazard"]`); firing any of them
+  has the same effect. A scene's `trigger` takes the same two forms.
 - Keys are `(t seconds, value)`; between two keys the value interpolates
   using the **later** key's `ease` (before the first key it holds the
   first value, after the last it holds the last). Easings: `linear`
