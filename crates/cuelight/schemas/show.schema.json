@@ -32,7 +32,8 @@
       "description": "How rendered colors reach the display: full color by default, or\nquantized luminance tinted in one color (DMD style). Scenes can\noverride it.",
       "$ref": "#/$defs/Output",
       "default": {
-        "mode": "rgb",
+        "mode": null,
+        "scaling": null,
         "tint": null
       }
     },
@@ -446,15 +447,35 @@
       ]
     },
     "Output": {
-      "description": "Output color handling, applied to the finished frame.",
+      "description": "How the finished frame reaches the display. Every field is optional: a\nscene's output overrides only the fields it sets, the rest come from\nthe show's, then from the defaults.",
       "type": "object",
       "properties": {
         "mode": {
-          "$ref": "#/$defs/OutputMode",
-          "default": "rgb"
+          "description": "Color conversion; `rgb` by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scaling": {
+          "description": "How hosts scale the frame up to their surface; `smooth` by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Scaling"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tint": {
-          "description": "Color that full luminance maps to in the gray modes, `#RRGGBB`\n(white when omitted). Ignored in `rgb` mode.",
+          "description": "Color that full luminance maps to in the gray modes, `#RRGGBB`\n(white by default). Ignored in `rgb` mode.",
           "type": [
             "string",
             "null"
@@ -509,6 +530,21 @@
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"
+        }
+      ]
+    },
+    "Scaling": {
+      "description": "How hosts should scale the rendered frame up to their surface.",
+      "oneOf": [
+        {
+          "description": "Any factor, smoothly filtered.",
+          "type": "string",
+          "const": "smooth"
+        },
+        {
+          "description": "Whole-number factors with nearest-neighbor sampling, so every\ncanvas pixel becomes a crisp square block (DMD-resolution content).",
+          "type": "string",
+          "const": "pixel_perfect"
         }
       ]
     },

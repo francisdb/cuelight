@@ -121,8 +121,14 @@ They are applied directly to the 8-bit channel values (no linearization),
 so white is full brightness, pure green lands at about 72 %, pure red at
 21 % and pure blue at 7 %: in `gray4`, levels 11, 3 and 1 of 15.
 
-A scene may declare its own `output`, used while it is active; otherwise
-the show's applies. The conversion happens on the whole frame after
+`scaling` tells hosts how to bring the frame up to their surface:
+`smooth` (default: any factor, filtered) or `pixel_perfect` (whole-number
+factors with nearest-neighbor sampling, so every canvas pixel becomes a
+crisp square block, which is what DMD-resolution content wants). Hosts
+read it with `Engine::scaling()`, and `render::fit` computes the placement.
+
+A scene may declare its own `output`; while it is active, the fields it
+sets override the show's and the rest still come from the show. The conversion happens on the whole frame after
 compositing, so antialiased edges and opacity quantize like everything
 else. Hosts read the active mode with `Engine::output()`; the offscreen
 renderer applies it after readback, and `render::OutputPass` does the same

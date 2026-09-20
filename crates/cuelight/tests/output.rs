@@ -151,3 +151,27 @@ fn gpu_output_pass_matches_cpu_conversion() {
         );
     }
 }
+
+#[test]
+fn scene_output_overrides_only_what_it_sets() {
+    use cuelight::Scaling;
+    let show = r##"{
+      "name": "o", "size": [16, 4],
+      "output": { "mode": "gray4", "tint": "#FF5820", "scaling": "pixel_perfect" },
+      "scenes": [
+        { "name": "dmd", "trigger": "dmd" },
+        { "name": "color", "trigger": "color", "output": { "mode": "rgb" } },
+        { "name": "soft", "trigger": "soft", "output": { "scaling": "smooth" } }
+      ]
+    }"##;
+    let mut engine = Engine::new();
+    assert_eq!(engine.scaling(), Scaling::Smooth);
+    engine.load_show(show).unwrap();
+    assert_eq!(engine.scaling(), Scaling::PixelPerfect);
+    engine.trigger("color");
+    assert_eq!(engine.output(), OutputColor::RGB);
+    assert_eq!(engine.scaling(), Scaling::PixelPerfect);
+    engine.trigger("soft");
+    assert_eq!(engine.output().mode, OutputMode::Gray4);
+    assert_eq!(engine.scaling(), Scaling::Smooth);
+}

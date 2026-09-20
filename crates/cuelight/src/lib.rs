@@ -30,7 +30,7 @@ pub use engine::{Engine, Error, Event, ImageData, ResolvedLayer, ResolvedShape};
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, FontStyle, Key, Layer, LayerKind, NumberFormat, Output, OutputMode,
-    Property, Scene, Shape, Sheet, Show, Timeline, Track,
+    Property, Scaling, Scene, Shape, Sheet, Show, Timeline, Track,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use value::Value;
