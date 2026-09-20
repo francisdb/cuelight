@@ -9,6 +9,7 @@
 //! their own device can run [`OutputPass`] on the GPU.
 
 use crate::engine::{Engine, ResolvedShape};
+use crate::lru::ByteLru;
 use crate::model::{parse_color, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use std::collections::HashMap;
@@ -42,21 +43,32 @@ pub enum RenderError {
 ///
 /// Keep one alive per engine you render; [`Renderer`] owns its own. A fresh
 /// cache per frame still renders correctly, just without upload reuse.
-#[derive(Default)]
 pub struct ImageCache {
     entries: HashMap<String, (u64, vello::peniko::ImageData)>,
     /// Sprite sheet cells cut out of registered images, by image name and
     /// cell rectangle, with the image revision they were cut from.
     cells: HashMap<(String, [u32; 4]), (u64, vello::peniko::ImageData)>,
     /// Engine-generated bitmaps (text) by revision.
-    bitmaps: HashMap<u64, vello::peniko::ImageData>,
+    bitmaps: ByteLru<u64, vello::peniko::ImageData>,
     /// See [`ImageCache::keepalive`].
     keepalive: Option<vello::peniko::ImageData>,
 }
 
-/// Bound on cached bitmap uploads; text that changes every frame would
-/// otherwise accumulate. Clearing only costs re-uploads.
-const MAX_CACHED_BITMAPS: usize = 512;
+/// Budget for cached bitmap uploads; text that changes every frame would
+/// otherwise accumulate. Least recently used go first, and dropping one
+/// only costs a re-upload.
+const MAX_BITMAP_BYTES: usize = 32 * 1024 * 1024;
+
+impl Default for ImageCache {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            cells: HashMap::new(),
+            bitmaps: ByteLru::new(MAX_BITMAP_BYTES),
+            keepalive: None,
+        }
+    }
+}
 
 fn peniko_image(data: &crate::engine::ImageData) -> vello::peniko::ImageData {
     vello::peniko::ImageData {
@@ -107,11 +119,9 @@ impl ImageCache {
         if let Some(image) = self.bitmaps.get(&data.revision()) {
             return image.clone();
         }
-        if self.bitmaps.len() >= MAX_CACHED_BITMAPS {
-            self.bitmaps.clear();
-        }
         let image = peniko_image(data);
-        self.bitmaps.insert(data.revision(), image.clone());
+        self.bitmaps
+            .insert(data.revision(), image.clone(), data.pixels.len());
         image
     }
 

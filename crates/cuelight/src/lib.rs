@@ -21,6 +21,7 @@
 mod easing;
 mod engine;
 mod font;
+mod lru;
 mod model;
 mod output;
 mod segments;
