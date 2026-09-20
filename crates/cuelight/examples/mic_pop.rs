@@ -62,15 +62,17 @@ fn start_microphone() -> Option<cpal::Stream> {
     };
     log::info!(
         "listening to {:?} ({} Hz, {} ch, {:?})",
-        device.name().unwrap_or_else(|_| "?".into()),
-        config.sample_rate().0,
+        device
+            .description()
+            .map_or_else(|_| "?".to_owned(), |d| d.name().to_owned()),
+        config.sample_rate(),
         config.channels(),
         config.sample_format()
     );
     let result = match config.sample_format() {
-        cpal::SampleFormat::F32 => build_stream::<f32>(&device, &config.into()),
-        cpal::SampleFormat::I16 => build_stream::<i16>(&device, &config.into()),
-        cpal::SampleFormat::U16 => build_stream::<u16>(&device, &config.into()),
+        cpal::SampleFormat::F32 => build_stream::<f32>(&device, config.into()),
+        cpal::SampleFormat::I16 => build_stream::<i16>(&device, config.into()),
+        cpal::SampleFormat::U16 => build_stream::<u16>(&device, config.into()),
         other => {
             log::warn!("unsupported sample format {other:?}; press space to pop");
             return None;
@@ -93,8 +95,8 @@ fn start_microphone() -> Option<cpal::Stream> {
 
 fn build_stream<T>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
-) -> Result<cpal::Stream, cpal::BuildStreamError>
+    config: cpal::StreamConfig,
+) -> Result<cpal::Stream, cpal::Error>
 where
     T: SizedSample,
     f32: FromSample<T>,
