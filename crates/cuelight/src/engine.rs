@@ -69,11 +69,50 @@ enum Root {
     Scene(usize),
 }
 
+/// A host-provided outline font file (TrueType / OpenType), shared with
+/// renderers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontData {
+    /// The font file's bytes.
+    pub data: Arc<[u8]>,
+    revision: u64,
+}
+
+impl FontData {
+    /// Engine-unique per registration, so renderers can cache their font
+    /// object per upload instead of comparing bytes.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
+/// One glyph of a [`ResolvedShape::GlyphRun`]: its id in the font and the
+/// position of its origin on the baseline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlacedGlyph {
+    pub id: u32,
+    pub x: f64,
+    pub y: f64,
+}
+
 /// A host-registered bitmap font: its description and page pixels.
 #[derive(Debug)]
 struct RegisteredFont {
     font: BitmapFont,
     pages: Vec<Rgba>,
+}
+
+/// How a text layer gets drawn, see `Engine::text_draw`.
+enum TextDraw {
+    Bitmap(Arc<TextRaster>),
+    #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
+    Glyphs {
+        font: FontData,
+        size: f64,
+        /// Relative to the layer's box.
+        glyphs: Vec<PlacedGlyph>,
+        container: [f64; 2],
+    },
 }
 
 /// Rasterized text, placed relative to its layer's box.
@@ -148,6 +187,9 @@ pub struct Engine {
     images: BTreeMap<String, ImageData>,
     image_revision: u64,
     fonts: BTreeMap<String, RegisteredFont>,
+    outline_fonts: BTreeMap<String, FontData>,
+    #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
+    font_revision: u64,
     text_cache: Mutex<TextCache>,
     playing: Vec<Playhead>,
     active_scene: Option<usize>,
@@ -190,6 +232,22 @@ impl Engine {
                 .ok_or_else(|| Error::InvalidColor(output.tint.clone().unwrap_or_default()))?;
         }
         validate(&show)?;
+        for (name, style) in &show.fonts {
+            let problem = if self.outline_fonts.contains_key(&style.file) {
+                match style.size {
+                    Some(size) if size > 0.0 => None,
+                    Some(_) => Some("needs a size above 0"),
+                    None => Some("uses an outline font and needs a size"),
+                }
+            } else if self.fonts.contains_key(&style.file) && style.size.is_some() {
+                Some("uses a bitmap font, which has one fixed size: remove size")
+            } else {
+                None
+            };
+            if let Some(problem) = problem {
+                return Err(Error::InvalidShow(format!("font style {name:?} {problem}")));
+            }
+        }
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         self.load_warnings.clear();
         if let Ok(understood) = serde_json::to_value(&show) {
@@ -290,15 +348,42 @@ impl Engine {
                 })
             })
             .collect::<Result<_, _>>()?;
+        self.outline_fonts.remove(name);
         self.fonts
             .insert(name.to_owned(), RegisteredFont { font, pages });
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         Ok(())
     }
 
-    /// Whether a bitmap font is registered under `name`.
+    /// Register (or replace) a named outline font (TrueType / OpenType
+    /// file bytes) that font styles reference by `file`, with the em size
+    /// they set. Like images, fonts are host assets that survive
+    /// `load_show`. Registering a name replaces a bitmap font of that name.
+    #[cfg(feature = "outline-fonts")]
+    pub fn set_outline_font(
+        &mut self,
+        name: &str,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Result<(), Error> {
+        let data = bytes.into();
+        crate::outline::validate(&data)
+            .map_err(|e| Error::InvalidFont(format!("{name:?}: {e}")))?;
+        self.font_revision += 1;
+        self.fonts.remove(name);
+        self.outline_fonts.insert(
+            name.to_owned(),
+            FontData {
+                data,
+                revision: self.font_revision,
+            },
+        );
+        *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
+        Ok(())
+    }
+
+    /// Whether a font, bitmap or outline, is registered under `name`.
     pub fn has_font(&self, name: &str) -> bool {
-        self.fonts.contains_key(name)
+        self.fonts.contains_key(name) || self.outline_fonts.contains_key(name)
     }
 
     /// The pixels registered under `name`, if any.
@@ -603,13 +688,45 @@ impl Engine {
                     None => {
                         let text = self.text(root, layer, path, Property::Text);
                         let font = self.text(root, layer, path, Property::Font);
-                        self.text_raster(&font, &text, None, *align)?.container
+                        match self.text_draw(&font, &text, None, *align)? {
+                            TextDraw::Bitmap(raster) => raster.container,
+                            TextDraw::Glyphs { container, .. } => container,
+                        }
                     }
                 };
                 [0.0, 0.0, w, h]
             }
         };
         Some([x * scale, y * scale, w * scale, h * scale])
+    }
+
+    /// How `text` in font style `style_name` gets drawn: a glyph run for an
+    /// outline font, a raster for a bitmap font. `None` when the style's
+    /// font is not registered (or is an outline font without a `size`).
+    fn text_draw(
+        &self,
+        style_name: &str,
+        text: &str,
+        size: Option<[f64; 2]>,
+        align: Align,
+    ) -> Option<TextDraw> {
+        #[cfg(feature = "outline-fonts")]
+        if let Some((style, font)) = self
+            .show
+            .as_ref()
+            .and_then(|show| show.fonts.get(style_name))
+            .and_then(|style| Some((style, self.outline_fonts.get(&style.file)?)))
+        {
+            let layout = crate::outline::layout(font, text, style.size?, size, align)?;
+            return Some(TextDraw::Glyphs {
+                font: font.clone(),
+                size: style.size?,
+                glyphs: layout.glyphs,
+                container: layout.container,
+            });
+        }
+        self.text_raster(style_name, text, size, align)
+            .map(TextDraw::Bitmap)
     }
 
     /// Rasterize (or fetch from cache) `text` in font style `style`.
@@ -790,20 +907,54 @@ impl Engine {
                     LayerKind::Text { size, align, .. } => {
                         let text = self.text(root, layer, path, Property::Text);
                         let font = self.text(root, layer, path, Property::Font);
-                        if let Some(raster) = self.text_raster(&font, &text, *size, *align) {
-                            let [ox, oy] = raster.offset;
-                            out.push(ResolvedLayer {
-                                name: layer.name.clone(),
-                                shape: ResolvedShape::Bitmap {
-                                    x: x + f64::from(ox) * scale,
-                                    y: y + f64::from(oy) * scale,
-                                    width: f64::from(raster.image.width) * scale,
-                                    height: f64::from(raster.image.height) * scale,
-                                    image: raster.image.clone(),
-                                },
-                                color: [255, 255, 255, 255],
-                                opacity,
-                            });
+                        match self.text_draw(&font, &text, *size, *align) {
+                            Some(TextDraw::Bitmap(raster)) => {
+                                let [ox, oy] = raster.offset;
+                                out.push(ResolvedLayer {
+                                    name: layer.name.clone(),
+                                    shape: ResolvedShape::Bitmap {
+                                        x: x + f64::from(ox) * scale,
+                                        y: y + f64::from(oy) * scale,
+                                        width: f64::from(raster.image.width) * scale,
+                                        height: f64::from(raster.image.height) * scale,
+                                        image: raster.image.clone(),
+                                    },
+                                    color: [255, 255, 255, 255],
+                                    opacity,
+                                });
+                            }
+                            Some(TextDraw::Glyphs {
+                                font: data,
+                                size: em,
+                                glyphs,
+                                ..
+                            }) if !glyphs.is_empty() => {
+                                // Colors were validated at load.
+                                let style = self.show.as_ref().and_then(|s| s.fonts.get(&*font));
+                                let rgba = |c: &str| parse_color(c).unwrap_or([255; 4]);
+                                let border = style
+                                    .and_then(|s| s.border.as_ref())
+                                    .map(|b| (rgba(&b.color), f64::from(b.width) * scale));
+                                out.push(ResolvedLayer {
+                                    name: layer.name.clone(),
+                                    shape: ResolvedShape::GlyphRun {
+                                        font: data,
+                                        size: em * scale,
+                                        glyphs: glyphs
+                                            .into_iter()
+                                            .map(|g| PlacedGlyph {
+                                                id: g.id,
+                                                x: x + g.x * scale,
+                                                y: y + g.y * scale,
+                                            })
+                                            .collect(),
+                                        border,
+                                    },
+                                    color: style.map_or([255; 4], |s| rgba(&s.color)),
+                                    opacity,
+                                });
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -1035,6 +1186,17 @@ pub enum ResolvedShape {
         y: f64,
         width: f64,
         height: f64,
+    },
+    /// Text in an outline font: fill the outlines of `glyphs` from `font`
+    /// at `size` pixels per em with the layer's color, after drawing
+    /// `border` (color, width in pixels) around them when given. Hosts
+    /// drawing the list themselves need a font rasterizer for this; they
+    /// may skip it, bitmap fonts being the portable choice.
+    GlyphRun {
+        font: FontData,
+        size: f64,
+        glyphs: Vec<PlacedGlyph>,
+        border: Option<([u8; 4], f64)>,
     },
     /// Pixels the engine generated (rasterized text), drawn into the
     /// destination rectangle. `image.revision()` identifies the content.

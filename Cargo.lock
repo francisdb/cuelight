@@ -578,6 +578,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "skrifa",
  "thiserror 2.0.20",
  "vello",
  "winit",

@@ -14,7 +14,7 @@ use crate::model::{parse_color, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use std::collections::HashMap;
 use std::sync::Arc;
-use vello::kurbo::{Affine, BezPath, Circle, Rect};
+use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
 use vello::peniko::{Blob, Color, Fill, ImageAlphaType, ImageBrush, ImageFormat};
 use vello::wgpu;
 
@@ -52,6 +52,9 @@ pub struct ImageCache {
     bitmaps: ByteLru<u64, vello::peniko::ImageData>,
     /// See [`ImageCache::keepalive`].
     keepalive: Option<vello::peniko::ImageData>,
+    /// Outline fonts by registration revision: vello caches glyph outlines
+    /// per font blob, so the blob has to stay the same across frames.
+    fonts: HashMap<u64, vello::peniko::FontData>,
 }
 
 /// Budget for cached bitmap uploads; text that changes every frame would
@@ -66,6 +69,7 @@ impl Default for ImageCache {
             cells: HashMap::new(),
             bitmaps: ByteLru::new(MAX_BITMAP_BYTES),
             keepalive: None,
+            fonts: HashMap::new(),
         }
     }
 }
@@ -111,6 +115,15 @@ impl ImageCache {
                 alpha_type: ImageAlphaType::Alpha,
                 width: 1,
                 height: 1,
+            })
+            .clone()
+    }
+
+    fn font(&mut self, font: &crate::engine::FontData) -> vello::peniko::FontData {
+        self.fonts
+            .entry(font.revision())
+            .or_insert_with(|| {
+                vello::peniko::FontData::new(Blob::new(Arc::new(font.data.clone())), 0)
             })
             .clone()
     }
@@ -216,6 +229,36 @@ pub fn build_vello_scene(
                 }
             },
             ResolvedShape::ClipEnd => show.pop_layer(),
+            ResolvedShape::GlyphRun {
+                font,
+                size,
+                glyphs,
+                border,
+            } => {
+                let font = images.font(&font);
+                let run = || {
+                    glyphs.iter().map(|g| vello::Glyph {
+                        id: g.id,
+                        x: g.x as f32,
+                        y: g.y as f32,
+                    })
+                };
+                // The border first, as a stroke of twice its width, then the
+                // fill on top: what stays visible is a border outside the
+                // glyph.
+                if let Some(([r, g, b, a], width)) = border {
+                    let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
+                    let stroke = Stroke::new(width * 2.0).with_join(Join::Round);
+                    show.draw_glyphs(&font)
+                        .font_size(size as f32)
+                        .brush(Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8))
+                        .draw(&stroke, run());
+                }
+                show.draw_glyphs(&font)
+                    .font_size(size as f32)
+                    .brush(color)
+                    .draw(Fill::NonZero, run());
+            }
             ResolvedShape::Polygon { points } => {
                 let mut path = BezPath::new();
                 for (i, &[x, y]) in points.iter().enumerate() {
