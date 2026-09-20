@@ -288,6 +288,7 @@
       },
       "oneOf": [
         {
+          "description": "A container: children are positioned relative to the group and\npainted in order. With `clip`, children only show inside that\nshape, given in the group's local space like a shape layer's.",
           "type": "object",
           "properties": {
             "children": {
@@ -295,6 +296,17 @@
               "items": {
                 "$ref": "#/$defs/Layer"
               }
+            },
+            "clip": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Shape"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
             },
             "type": {
               "type": "string",

@@ -209,8 +209,13 @@ fn default_visible() -> bool {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[non_exhaustive]
 pub enum LayerKind {
+    /// A container: children are positioned relative to the group and
+    /// painted in order. With `clip`, children only show inside that
+    /// shape, given in the group's local space like a shape layer's.
     Group {
         children: Vec<Layer>,
+        #[serde(default)]
+        clip: Option<Shape>,
     },
     Shape {
         shape: Shape,
@@ -289,7 +294,7 @@ impl Layer {
     /// The layers nested in this one: a group's children, else none.
     pub fn children(&self) -> &[Layer] {
         match &self.kind {
-            LayerKind::Group { children } => children,
+            LayerKind::Group { children, .. } => children,
             _ => &[],
         }
     }

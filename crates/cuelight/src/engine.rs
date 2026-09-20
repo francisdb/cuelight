@@ -331,7 +331,9 @@ impl Engine {
     }
 
     /// Resolve the show into a flat draw list: visible shape layers in
-    /// paint order with absolute position and effective opacity.
+    /// paint order with absolute position and effective opacity. Clipped
+    /// groups bracket their children with [`ResolvedShape::ClipBegin`] and
+    /// [`ResolvedShape::ClipEnd`].
     ///
     /// Property precedence, strongest first: running timeline, binding,
     /// base value from the show description.
@@ -585,8 +587,26 @@ impl Engine {
                     None => (x, y),
                 };
                 match &layer.kind {
-                    LayerKind::Group { children } => {
+                    LayerKind::Group { children, clip } => {
+                        if let Some(clip) = clip {
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::ClipBegin {
+                                    shape: Box::new(resolve_shape(*clip, x, y, scale)),
+                                },
+                                color: [0; 4],
+                                opacity,
+                            });
+                        }
                         self.walk(root, children, path, x, y, opacity, out)?;
+                        if clip.is_some() {
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::ClipEnd,
+                                color: [0; 4],
+                                opacity,
+                            });
+                        }
                     }
                     LayerKind::Shape { shape, fill } => {
                         let color =
@@ -789,6 +809,13 @@ pub enum ResolvedShape {
         cy: f64,
         radius: f64,
     },
+    /// Start clipping: until the matching [`ResolvedShape::ClipEnd`],
+    /// items only show inside `shape` (a rect or circle). Clips nest.
+    ClipBegin {
+        shape: Box<ResolvedShape>,
+    },
+    /// End the innermost clip.
+    ClipEnd,
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle.
     Image {
