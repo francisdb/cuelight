@@ -33,6 +33,8 @@ A show exists in two forms:
     show.json           the show document (required)
     test-driver.json    optional driver script, hosts may pick it up
     assets/             images, registered by filename stem (PNG)
+      fonts/            bitmap fonts: .fnt plus its page PNGs, registered
+                        by .fnt filename stem
   ```
 
 Either way the engine only ever receives the single JSON document through
@@ -133,7 +135,7 @@ on the GPU for hosts rendering on their own device.
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, or `image` (see below).
+- `type`: `group`, `shape`, `image` or `text` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
@@ -154,6 +156,45 @@ Layer kinds:
   its natural pixel size. Images are host assets, not show content: a
   layer whose image is not (yet) registered is skipped, so hosts can
   stream assets in after `load_show`.
+- `text`: `text` (use `\n` for line breaks) drawn in `font`, a style
+  declared in the show's `fonts` (see [Fonts](#fonts)). Optional `size`
+  `[width, height]` is a box whose top-left corner sits at the layer's
+  x/y; `align` places the text in it (`top_left`, `top`, `top_right`,
+  `left`, `center` (default), `right`, `bottom_left`, `bottom`,
+  `bottom_right`). Without `size` the box is exactly the text's size.
+  Multi-line text aligns each line on its own within the box width.
+  The `text` property can be bound (see [Bindings](#bindings)) but not
+  keyframed.
+
+## Fonts
+
+```json
+{
+  "fonts": {
+    "score": { "file": "teeny_tiny_pixls-5", "color": "#808080" },
+    "title": { "file": "bm_army-12", "border": { "color": "#102C80", "width": 1 } }
+  }
+}
+```
+
+Text uses bitmap fonts in the [BMFont](https://www.angelcode.com/products/bmfont/doc/file_format.html)
+text format, a common format for pixel fonts. Fonts are host assets
+like images: the host parses the `.fnt` description with
+`BitmapFont::parse` and registers it with its page images through
+`Engine::set_font`, by convention under the `.fnt` file stem. A text
+layer whose font is not registered is skipped.
+
+A style in `fonts` names the registered font (`file`), a `color` that
+multiplies the glyph colors (default white, keeping the font's own), and
+an optional `border`: an outline of `width` pixels in `color` around every
+glyph, which also widens each character's advance by two widths.
+
+Text is rasterized on the CPU pixel for pixel from the font pages, never
+resampled, so pixel fonts stay exact on DMD-sized canvases. Layout: a
+line is as wide as its characters' advances plus kerning; a
+block is as tall as its line heights, except that the last line grows to
+fit its tallest glyph. Characters missing from the font fall back to their
+uppercase form, then to a space.
 
 ## Bindings
 
@@ -165,6 +206,15 @@ A binding wires a layer property to a variable, evaluated every frame:
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`.
+
+A text layer's `text` property can be bound too: the variable's text as
+is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
+per `format`: `plain` (default: `1500`, `2.5`) or `thousands` (rounded, with
+comma separators: `1,500`).
+
+```json
+{ "property": "text", "variable": "score", "format": "thousands" }
+```
 
 ## Timelines
 
