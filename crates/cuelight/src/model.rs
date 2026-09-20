@@ -21,6 +21,9 @@ pub struct Show {
     /// override it.
     #[serde(default)]
     pub output: Output,
+    /// Named text styles for text layers: a bitmap font plus colors.
+    #[serde(default)]
+    pub fonts: BTreeMap<String, FontStyle>,
     /// Declared variables and their initial values.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
@@ -75,6 +78,80 @@ pub enum OutputMode {
     Gray2,
     /// Luminance quantized to 16 levels (4 bits), times the tint.
     Gray4,
+}
+
+/// A text style: a bitmap font the host registered, tinted and optionally
+/// outlined.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct FontStyle {
+    /// Name of the bitmap font as registered by the host with
+    /// [`Engine::set_font`](crate::Engine::set_font) (by convention the
+    /// `.fnt` file stem).
+    pub file: String,
+    /// Glyph color multiplier, `#RRGGBB`; white keeps the font's colors.
+    #[serde(default = "default_font_color")]
+    pub color: String,
+    #[serde(default)]
+    pub border: Option<Border>,
+}
+
+/// An outline drawn around every glyph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Border {
+    /// `#RRGGBB`
+    pub color: String,
+    /// Outline width in pixels.
+    #[serde(default = "default_border_width")]
+    pub width: u32,
+}
+
+fn default_font_color() -> String {
+    "#FFFFFF".to_owned()
+}
+
+fn default_border_width() -> u32 {
+    1
+}
+
+/// Where content sits in a box: one of nine positions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum Align {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    #[default]
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    BottomRight,
+}
+
+impl Align {
+    /// Offset that places a `width` x `height` item in a container.
+    pub fn offset(self, width: f64, height: f64, container_w: f64, container_h: f64) -> (f64, f64) {
+        use Align::*;
+        let x = match self {
+            TopLeft | Left | BottomLeft => 0.0,
+            Top | Center | Bottom => (container_w - width) / 2.0,
+            TopRight | Right | BottomRight => container_w - width,
+        };
+        let y = match self {
+            TopLeft | Top | TopRight => 0.0,
+            Left | Center | Right => (container_h - height) / 2.0,
+            BottomLeft | Bottom | BottomRight => container_h - height,
+        };
+        (x, y)
+    }
+
+    pub(crate) fn is_left(self) -> bool {
+        matches!(self, Align::TopLeft | Align::Left | Align::BottomLeft)
+    }
 }
 
 fn default_background() -> String {
@@ -145,6 +222,19 @@ pub enum LayerKind {
         #[serde(default)]
         size: Option<[f64; 2]>,
     },
+    /// Text in a bitmap font style from the show's `fonts`. With `size` the
+    /// text is aligned inside that box (its top-left corner at the layer's
+    /// x/y); without, the box is the text's own size. Multi-line text
+    /// (`\n`) aligns each line on its own. Skipped while the style's font
+    /// is not registered.
+    Text {
+        text: String,
+        font: String,
+        #[serde(default)]
+        size: Option<[f64; 2]>,
+        #[serde(default)]
+        align: Align,
+    },
 }
 
 /// Vector shapes, in the layer's local coordinate space.
@@ -167,9 +257,15 @@ pub enum Property {
     Y,
     Opacity,
     Scale,
+    /// The text of a text layer; bindable, not animatable.
+    Text,
 }
 
 /// A permanent wiring of a property to a variable, evaluated every frame.
+///
+/// Numeric properties take `variable * scale + offset`. The `text`
+/// property takes the variable as text: numbers get `scale`/`offset`
+/// applied, then `format`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Binding {
@@ -179,6 +275,49 @@ pub struct Binding {
     pub scale: f64,
     #[serde(default)]
     pub offset: f64,
+    /// How a number becomes text (text bindings only).
+    #[serde(default)]
+    pub format: NumberFormat,
+}
+
+/// Number to text conversion for text bindings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum NumberFormat {
+    /// Shortest form: `1500`, `2.5`.
+    #[default]
+    Plain,
+    /// Rounded to an integer with comma thousands separators: `1,500`.
+    Thousands,
+}
+
+impl NumberFormat {
+    pub fn format(self, n: f64) -> String {
+        match self {
+            NumberFormat::Plain => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    format!("{}", n as i64)
+                } else {
+                    format!("{n}")
+                }
+            }
+            NumberFormat::Thousands => {
+                let digits = (n.round().abs() as u64).to_string();
+                let mut out = String::new();
+                for (i, d) in digits.chars().enumerate() {
+                    if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                        out.push(',');
+                    }
+                    out.push(d);
+                }
+                if n.round() < 0.0 {
+                    out.insert(0, '-');
+                }
+                out
+            }
+        }
+    }
 }
 
 fn default_scale() -> f64 {
