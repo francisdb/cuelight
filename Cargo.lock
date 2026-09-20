@@ -544,6 +544,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuelight-loader"
+version = "0.0.1"
+dependencies = [
+ "cuelight",
+ "png",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "cursor-icon"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

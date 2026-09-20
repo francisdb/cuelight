@@ -114,6 +114,15 @@ cargo test
 exercises the data model, bindings, triggers and timelines with no GPU
 required.
 
+## Crates
+
+- [`cuelight`](crates/cuelight): the engine, plus the optional vello
+  renderer. It does no I/O: hosts hand it a show document, images and fonts.
+- [`cuelight-loader`](crates/cuelight-loader): that host work, shared:
+  loading show folders from disk (or images and fonts from bytes, for hosts
+  without a filesystem) and playing `test-driver.json` scripts. Image
+  decoders are cargo features, for hosts that decode images themselves.
+
 ## Show format
 
 Shows are declarative JSON; see [docs/show-format.md](docs/show-format.md)
