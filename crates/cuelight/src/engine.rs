@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("no show loaded")]
     NoShow,
@@ -656,17 +657,11 @@ fn validate(show: &Show) -> Result<(), Error> {
                     }
                 }
             }
-            if let LayerKind::Group { children } = &layer.kind {
-                layers(show, children)?;
-            }
+            layers(show, layer.children())?;
         }
         Ok(())
     }
-    layers(show, &show.layers)?;
-    for scene in &show.scenes {
-        layers(show, &scene.layers)?;
-    }
-    Ok(())
+    show.layer_trees().try_for_each(|tree| layers(show, tree))
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
@@ -675,10 +670,7 @@ fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
     if rest.is_empty() {
         return Some(layer);
     }
-    match &layer.kind {
-        LayerKind::Group { children } => layer_at(children, rest),
-        _ => None,
-    }
+    layer_at(layer.children(), rest)
 }
 
 fn collect_timelines(
@@ -691,9 +683,7 @@ fn collect_timelines(
         for (idx, tl) in layer.timelines.iter().enumerate() {
             f(path, idx, tl);
         }
-        if let LayerKind::Group { children } = &layer.kind {
-            collect_timelines(children, path, f);
-        }
+        collect_timelines(layer.children(), path, f);
         path.pop();
     }
 }
@@ -718,6 +708,7 @@ fn resolve_shape(shape: Shape, x: f64, y: f64, scale: f64) -> ResolvedShape {
 
 /// One paintable item of the flattened show, in canvas coordinates.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ResolvedLayer {
     pub name: String,
     pub shape: ResolvedShape,
@@ -728,6 +719,7 @@ pub struct ResolvedLayer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ResolvedShape {
     Rect {
         x: f64,

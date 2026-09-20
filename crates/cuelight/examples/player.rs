@@ -113,21 +113,15 @@ impl DriverState {
 fn fmt_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("{text:?}"),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
+        other => other.to_text(),
     }
-}
-
-/// Every layer tree of the show: its own layers and each scene's.
-fn layer_trees(show: &Show) -> impl Iterator<Item = &[Layer]> {
-    std::iter::once(show.layers.as_slice()).chain(show.scenes.iter().map(|s| s.layers.as_slice()))
 }
 
 /// Collect every trigger name the show declares: scene triggers and
 /// timeline triggers in any layer tree.
 fn collect_show_actions(show: &Show, out: &mut BTreeSet<String>) {
     out.extend(show.scenes.iter().filter_map(|s| s.trigger.clone()));
-    for layers in layer_trees(show) {
+    for layers in show.layer_trees() {
         collect_actions(layers, out);
     }
 }
@@ -140,9 +134,7 @@ fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
                 out.insert(trigger.clone());
             }
         }
-        if let LayerKind::Group { children } = &layer.kind {
-            collect_actions(children, out);
-        }
+        collect_actions(layer.children(), out);
     }
 }
 
@@ -167,9 +159,9 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                     );
                 }
             }
-            LayerKind::Group { children } => warn_missing_images(engine, children),
             _ => {}
         }
+        warn_missing_images(engine, layer.children());
     }
 }
 
@@ -779,7 +771,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut actions = BTreeSet::new();
     let show = engine.show().expect("show loaded");
     collect_show_actions(show, &mut actions);
-    for layers in layer_trees(show) {
+    for layers in show.layer_trees() {
         warn_missing_images(&engine, layers);
     }
     let actions: Vec<String> = actions.into_iter().collect();

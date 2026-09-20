@@ -18,6 +18,7 @@ use vello::peniko::{Blob, Color, Fill, ImageAlphaType, ImageBrush, ImageFormat};
 use vello::wgpu;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum RenderError {
     #[error("engine error: {0}")]
     Engine(#[from] crate::engine::Error),
