@@ -1,0 +1,22 @@
+[package]
+name = "cuelight-loader"
+description = "Load cuelight shows from disk or memory: show folders, PNG images, bitmap fonts, driver scripts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "animation", "assets", "loader"]
+categories = ["multimedia", "rendering"]
+
+[dependencies]
+cuelight = { path = "../cuelight", version = "0.0.1", default-features = false }
+png = { version = "0.18", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[features]
+default = ["png"]
+# Image decoders. Hosts that decode images themselves (a browser, a game
+# engine) can turn them off and register pixels with Engine::set_image.
+png = ["dep:png"]
