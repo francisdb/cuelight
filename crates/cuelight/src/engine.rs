@@ -1,6 +1,6 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::model::{
-    parse_color, Align, Binding, Layer, LayerKind, Property, Shape, Show, Timeline,
+    parse_color, Align, Binding, Layer, LayerKind, Property, Shape, Sheet, Show, Timeline,
 };
 use crate::output::OutputColor;
 use crate::value::Value;
@@ -485,9 +485,15 @@ impl Engine {
                 Shape::Rect(rect) => rect,
                 Shape::Circle([cx, cy, r]) => [cx - r, cy - r, 2.0 * r, 2.0 * r],
             },
-            LayerKind::Image { image, size } => {
+            LayerKind::Image {
+                image, size, sheet, ..
+            } => {
                 let data = self.images.get(image)?;
-                let [w, h] = size.unwrap_or([f64::from(data.width), f64::from(data.height)]);
+                let natural = match sheet {
+                    Some(sheet) => sheet.cell.map(f64::from),
+                    None => [f64::from(data.width), f64::from(data.height)],
+                };
+                let [w, h] = size.unwrap_or(natural);
                 [0.0, 0.0, w, h]
             }
             // The text's box: its size, or the measured text.
@@ -618,16 +624,26 @@ impl Engine {
                             opacity,
                         });
                     }
-                    LayerKind::Image { image, size } => {
+                    LayerKind::Image {
+                        image, size, sheet, ..
+                    } => {
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
                         if let Some(data) = self.images.get(image) {
-                            let [width, height] =
-                                size.unwrap_or([f64::from(data.width), f64::from(data.height)]);
+                            let source = sheet.map(|sheet| {
+                                let frame = self.number(root, layer, path, Property::Frame);
+                                sheet_cell(sheet, data.width, data.height, frame)
+                            });
+                            let natural = match source {
+                                Some([_, _, w, h]) => [f64::from(w), f64::from(h)],
+                                None => [f64::from(data.width), f64::from(data.height)],
+                            };
+                            let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
+                                    source,
                                     x,
                                     y,
                                     width: width * scale,
@@ -741,6 +757,21 @@ fn validate(show: &Show) -> Result<(), Error> {
     show.layer_trees().try_for_each(|tree| layers(show, tree))
 }
 
+/// The pixel rectangle `[x, y, width, height]` of sheet cell `frame`
+/// (rounded down, clamped to the cells that fit the image).
+fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> [u32; 4] {
+    let [cw, ch] = sheet.cell.map(|c| c.max(1));
+    let columns = sheet.columns.clamp(1, (image_width / cw).max(1));
+    let rows = (image_height / ch).max(1);
+    let last = columns * rows - 1;
+    let index = if frame.is_finite() && frame > 0.0 {
+        (frame.floor() as u32).min(last)
+    } else {
+        0
+    };
+    [index % columns * cw, index / columns * ch, cw, ch]
+}
+
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {
     let (&first, rest) = path.split_first()?;
     let layer = layers.get(first)?;
@@ -817,9 +848,11 @@ pub enum ResolvedShape {
     /// End the innermost clip.
     ClipEnd,
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
-    /// the destination rectangle.
+    /// the destination rectangle: the whole image, or with `source` only
+    /// that pixel rectangle `[x, y, width, height]` of it (a sheet cell).
     Image {
         image: String,
+        source: Option<[u32; 4]>,
         x: f64,
         y: f64,
         width: f64,
