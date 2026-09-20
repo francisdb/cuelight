@@ -48,6 +48,72 @@ pub struct Show {
     pub scenes: Vec<Scene>,
 }
 
+/// The trigger names something listens to: in a show document one name
+/// (`"go"`), a list (`["turn_left", "hazard"]`), or nothing. Firing any of
+/// them has the same effect.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Triggers(pub Vec<String>);
+
+impl Triggers {
+    pub fn contains(&self, name: &str) -> bool {
+        self.0.iter().any(|t| t == name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Serialize for Triggers {
+    /// Written back the way it is usually authored: nothing, one name, or
+    /// a list.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [] => serializer.serialize_none(),
+            [one] => serializer.serialize_str(one),
+            many => many.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Triggers {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(Triggers(match Option::<Form>::deserialize(deserializer)? {
+            None => Vec::new(),
+            Some(Form::One(name)) => vec![name],
+            Some(Form::Many(names)) => names,
+        }))
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for Triggers {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Triggers".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "A trigger name, or a list of names; firing any of them has the same effect.",
+            "anyOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } },
+                { "type": "null" }
+            ]
+        })
+    }
+}
+
 /// A switchable view of the show: its layers render only while it is the
 /// active scene. Entering a scene (again) restarts it: timelines of the
 /// previous scene stop, the entered scene's autoplay timelines start at 0.
@@ -55,9 +121,9 @@ pub struct Show {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Scene {
     pub name: String,
-    /// Trigger name that enters this scene.
+    /// Trigger name, or list of names, that enters this scene.
     #[serde(default)]
-    pub trigger: Option<String>,
+    pub trigger: Triggers,
     /// Output color handling while this scene is active; the show's when
     /// omitted.
     #[serde(default)]
@@ -519,9 +585,9 @@ fn default_scale() -> f64 {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Timeline {
     pub name: String,
-    /// Trigger name that (re)starts this timeline.
+    /// Trigger name, or list of names, that (re)starts this timeline.
     #[serde(default)]
-    pub trigger: Option<String>,
+    pub trigger: Triggers,
     #[serde(default)]
     pub autoplay: bool,
     /// Repeat forever. Cannot be combined with `repeat`.

@@ -54,7 +54,11 @@ fn fmt_value(value: &Value) -> String {
 /// Collect every trigger name the show declares: scene triggers and
 /// timeline triggers in any layer tree.
 fn collect_show_actions(show: &Show, out: &mut BTreeSet<String>) {
-    out.extend(show.scenes.iter().filter_map(|s| s.trigger.clone()));
+    out.extend(
+        show.scenes
+            .iter()
+            .flat_map(|s| s.trigger.iter().map(str::to_owned)),
+    );
     for layers in show.layer_trees() {
         collect_actions(layers, out);
     }
@@ -64,9 +68,7 @@ fn collect_show_actions(show: &Show, out: &mut BTreeSet<String>) {
 fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
     for layer in layers {
         for timeline in &layer.timelines {
-            if let Some(trigger) = &timeline.trigger {
-                out.insert(trigger.clone());
-            }
+            out.extend(timeline.trigger.iter().map(str::to_owned));
         }
         collect_actions(layer.children(), out);
     }
