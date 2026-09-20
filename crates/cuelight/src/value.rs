@@ -28,6 +28,18 @@ impl Value {
     }
 }
 
+impl Value {
+    /// Text view of the value: text as is, booleans as `true`/`false`,
+    /// numbers in their shortest form (`2`, `2.5`).
+    pub fn to_text(&self) -> String {
+        match self {
+            Value::Bool(b) => b.to_string(),
+            Value::Number(n) => crate::model::NumberFormat::Plain.format(*n),
+            Value::Text(t) => t.clone(),
+        }
+    }
+}
+
 impl From<f64> for Value {
     fn from(v: f64) -> Self {
         Value::Number(v)

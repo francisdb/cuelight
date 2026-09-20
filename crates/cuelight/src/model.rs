@@ -259,13 +259,44 @@ pub enum Property {
     Scale,
     /// The text of a text layer; bindable, not animatable.
     Text,
+    /// The font style of a text layer; bindable, not animatable.
+    Font,
+}
+
+impl Property {
+    /// Whether the property holds a number; only those can be keyframed.
+    pub fn is_numeric(self) -> bool {
+        !matches!(self, Property::Text | Property::Font)
+    }
+}
+
+impl Layer {
+    /// The property's value as authored on this layer, or `None` when
+    /// this kind of layer does not have the property.
+    pub fn base_value(&self, property: Property) -> Option<Value> {
+        Some(match (property, &self.kind) {
+            (Property::X, _) => Value::Number(self.x),
+            (Property::Y, _) => Value::Number(self.y),
+            (Property::Opacity, _) => Value::Number(self.opacity),
+            (Property::Scale, _) => Value::Number(self.scale),
+            (Property::Text, LayerKind::Text { text, .. }) => Value::Text(text.clone()),
+            (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
+            (Property::Text | Property::Font, _) => return None,
+        })
+    }
 }
 
 /// A permanent wiring of a property to a variable, evaluated every frame.
 ///
 /// Numeric properties take `variable * scale + offset`. The `text`
 /// property takes the variable as text: numbers get `scale`/`offset`
-/// applied, then `format`.
+/// applied, then `format`. The `font` property takes the variable as a
+/// font style name.
+///
+/// With `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)
+/// is looked up first and the mapped value, or `default` when it is not
+/// listed, takes the variable's place. Without either, the binding does
+/// not apply and the property keeps its base value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Binding {
@@ -278,6 +309,12 @@ pub struct Binding {
     /// How a number becomes text (text bindings only).
     #[serde(default)]
     pub format: NumberFormat,
+    /// Replace the variable's value by looking it up here.
+    #[serde(default)]
+    pub map: Option<BTreeMap<String, Value>>,
+    /// Value for variable values `map` does not list.
+    #[serde(default)]
+    pub default: Option<Value>,
 }
 
 /// Number to text conversion for text bindings.

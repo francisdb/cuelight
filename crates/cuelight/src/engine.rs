@@ -1,5 +1,7 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
-use crate::model::{parse_color, Align, Layer, LayerKind, Property, Shape, Show, Timeline};
+use crate::model::{
+    parse_color, Align, Binding, Layer, LayerKind, Property, Shape, Show, Timeline,
+};
 use crate::output::OutputColor;
 use crate::value::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -392,58 +394,74 @@ impl Engine {
         }
     }
 
-    fn property(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> f64 {
-        // Base value from the show description.
-        let mut v = match prop {
-            Property::X => layer.x,
-            Property::Y => layer.y,
-            Property::Opacity => layer.opacity,
-            Property::Scale => layer.scale,
-            // Not numeric, see text_property.
-            Property::Text => return 0.0,
-        };
-        // Bindings override base.
-        for b in &layer.bindings {
-            if b.property == prop {
-                if let Some(value) = self.variables.get(&b.variable) {
-                    v = value.as_number() * b.scale + b.offset;
-                }
+    /// Resolve a layer property: its base value, overridden by bindings,
+    /// overridden by a running timeline (numeric properties only). `None`
+    /// when this kind of layer does not have the property.
+    fn resolve(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> Option<Value> {
+        let mut v = layer.base_value(prop)?;
+        for b in layer.bindings.iter().filter(|b| b.property == prop) {
+            if let Some(bound) = self
+                .binding_value(b)
+                .and_then(|value| self.convert(b, value))
+            {
+                v = bound;
             }
+        }
+        if !prop.is_numeric() {
+            return Some(v);
         }
         // A running timeline owns the property.
         for p in &self.playing {
             if p.root != root || p.layer_path != path {
                 continue;
             }
-            if let Some(tl) = layer.timelines.get(p.timeline) {
-                for track in &tl.tracks {
-                    if track.property == prop {
-                        if let Some(sampled) = track.sample(p.time) {
-                            v = sampled;
-                        }
-                    }
+            let tracks = layer.timelines.get(p.timeline).map(|tl| tl.tracks.iter());
+            for track in tracks.into_iter().flatten().filter(|t| t.property == prop) {
+                if let Some(sampled) = track.sample(p.time) {
+                    v = Value::Number(sampled);
                 }
             }
         }
-        v
+        Some(v)
     }
 
-    /// A text layer's text: its base text, overridden by text bindings.
-    fn text_property(&self, layer: &Layer, base: &str) -> String {
-        let mut text = base.to_owned();
-        for b in &layer.bindings {
-            if b.property != Property::Text {
-                continue;
-            }
-            if let Some(value) = self.variables.get(&b.variable) {
-                text = match value {
-                    Value::Text(t) => t.clone(),
-                    Value::Bool(v) => v.to_string(),
-                    Value::Number(n) => b.format.format(n * b.scale + b.offset),
-                };
-            }
+    fn number(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> f64 {
+        self.resolve(root, layer, path, prop)
+            .map_or(0.0, |v| v.as_number())
+    }
+
+    fn text(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> String {
+        self.resolve(root, layer, path, prop)
+            .map_or_else(String::new, |v| v.to_text())
+    }
+
+    /// The value a binding feeds its property: the variable's, or what
+    /// `map`/`default` turn it into. `None` when it does not apply.
+    fn binding_value(&self, b: &Binding) -> Option<Value> {
+        let value = self.variables.get(&b.variable)?;
+        match &b.map {
+            None => Some(value.clone()),
+            Some(map) => map.get(&value.to_text()).or(b.default.as_ref()).cloned(),
         }
-        text
+    }
+
+    /// Turn a bound value into what the binding's property holds. `None`
+    /// leaves the property as it was.
+    fn convert(&self, b: &Binding, value: Value) -> Option<Value> {
+        match b.property {
+            Property::Text => Some(Value::Text(match value {
+                Value::Number(n) => b.format.format(n * b.scale + b.offset),
+                other => other.to_text(),
+            })),
+            // Only declared font styles apply.
+            Property::Font => match value {
+                Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {
+                    Some(Value::Text(style))
+                }
+                _ => None,
+            },
+            _ => Some(Value::Number(value.as_number() * b.scale + b.offset)),
+        }
     }
 
     /// Rasterize (or fetch from cache) `text` in font style `style`.
@@ -509,11 +527,11 @@ impl Engine {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if layer.visible {
-                let x = ox + self.property(root, layer, path, Property::X);
-                let y = oy + self.property(root, layer, path, Property::Y);
+                let x = ox + self.number(root, layer, path, Property::X);
+                let y = oy + self.number(root, layer, path, Property::Y);
                 let opacity =
-                    (oa * self.property(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
-                let scale = self.property(root, layer, path, Property::Scale);
+                    (oa * self.number(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
+                let scale = self.number(root, layer, path, Property::Scale);
                 match &layer.kind {
                     LayerKind::Group { children } => {
                         self.walk(root, children, path, x, y, opacity, out)?;
@@ -548,14 +566,10 @@ impl Engine {
                             });
                         }
                     }
-                    LayerKind::Text {
-                        text,
-                        font,
-                        size,
-                        align,
-                    } => {
-                        let text = self.text_property(layer, text);
-                        if let Some(raster) = self.text_raster(font, &text, *size, *align) {
+                    LayerKind::Text { size, align, .. } => {
+                        let text = self.text(root, layer, path, Property::Text);
+                        let font = self.text(root, layer, path, Property::Font);
+                        if let Some(raster) = self.text_raster(&font, &text, *size, *align) {
                             let [ox, oy] = raster.offset;
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
@@ -604,12 +618,42 @@ fn validate(show: &Show) -> Result<(), Error> {
                     )));
                 }
             }
-            for timeline in &layer.timelines {
-                if timeline.tracks.iter().any(|t| t.property == Property::Text) {
+            // Properties must exist on this kind of layer; only numeric
+            // ones can be keyframed.
+            let tracks = layer.timelines.iter().flat_map(|tl| &tl.tracks);
+            let used = tracks
+                .map(|t| t.property)
+                .chain(layer.bindings.iter().map(|b| b.property));
+            for property in used {
+                if layer.base_value(property).is_none() {
                     return Err(Error::InvalidShow(format!(
-                        "timeline {:?} of layer {:?} animates text, which can only be bound",
-                        timeline.name, layer.name
+                        "layer {:?} has no {property:?} property",
+                        layer.name
                     )));
+                }
+            }
+            for timeline in &layer.timelines {
+                if let Some(track) = timeline.tracks.iter().find(|t| !t.property.is_numeric()) {
+                    return Err(Error::InvalidShow(format!(
+                        "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
+                        timeline.name, layer.name, track.property
+                    )));
+                }
+            }
+            for binding in &layer.bindings {
+                if binding.property != Property::Font {
+                    continue;
+                }
+                let mapped = binding.map.iter().flat_map(|m| m.values());
+                for value in mapped.chain(&binding.default) {
+                    let known =
+                        matches!(value, Value::Text(style) if show.fonts.contains_key(style));
+                    if !known {
+                        return Err(Error::InvalidShow(format!(
+                            "font binding of layer {:?} maps to {value:?}, not a declared font style",
+                            layer.name
+                        )));
+                    }
                 }
             }
             if let LayerKind::Group { children } = &layer.kind {
