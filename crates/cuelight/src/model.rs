@@ -283,6 +283,19 @@ pub enum LayerKind {
         #[serde(default)]
         align: Align,
     },
+    /// A row of `digits` equal cells across `size` `[width, height]`
+    /// (top-left at the layer's x/y) showing `text`, one character per
+    /// cell; how a cell is drawn is up to `display`. Text longer than the
+    /// row is cut at the far side of `justify`.
+    Digits {
+        digits: u32,
+        size: [f64; 2],
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        justify: Justify,
+        display: DigitDisplay,
+    },
 }
 
 /// A sprite sheet layout: cells of `cell` `[width, height]` pixels,
@@ -292,6 +305,48 @@ pub enum LayerKind {
 pub struct Sheet {
     pub cell: [u32; 2],
     pub columns: u32,
+}
+
+/// Which end of a digit row its text sits against.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Justify {
+    #[default]
+    Left,
+    /// As scores are shown: the last character in the last cell.
+    Right,
+}
+
+/// How the cells of a digit row are drawn.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum DigitDisplay {
+    /// A segment display: lit segments in `fill`, and the dark ones in
+    /// `unlit` when given. A `.` or `,` lights the dot of the cell before
+    /// it instead of taking a cell. Characters the style cannot show stay
+    /// dark.
+    Segments {
+        style: SegmentStyle,
+        fill: String,
+        #[serde(default)]
+        unlit: Option<String>,
+    },
+}
+
+/// Segment layout of a segment display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum SegmentStyle {
+    /// 14 segments plus dot: letters and digits.
+    Alpha14,
+    /// 7 segments plus dot: digits and `-`.
+    Numeric7,
 }
 
 /// Vector shapes, in the layer's local coordinate space.
@@ -357,7 +412,9 @@ impl Layer {
             (Property::Y, _) => Value::Number(self.y),
             (Property::Opacity, _) => Value::Number(self.opacity),
             (Property::Scale, _) => Value::Number(self.scale),
-            (Property::Text, LayerKind::Text { text, .. }) => Value::Text(text.clone()),
+            (Property::Text, LayerKind::Text { text, .. } | LayerKind::Digits { text, .. }) => {
+                Value::Text(text.clone())
+            }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
             (Property::Text | Property::Font | Property::Frame, _) => return None,

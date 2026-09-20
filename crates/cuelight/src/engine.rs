@@ -1,9 +1,10 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::model::{
-    parse_color, Align, Binding, Layer, LayerKind, Output, Property, Scaling, Shape, Sheet, Show,
-    Timeline,
+    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Property, Scaling, Shape,
+    Sheet, Show, Timeline,
 };
 use crate::output::OutputColor;
+use crate::segments;
 use crate::value::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -556,6 +557,7 @@ impl Engine {
                 let [w, h] = size.unwrap_or(natural);
                 [0.0, 0.0, w, h]
             }
+            LayerKind::Digits { size: [w, h], .. } => [0.0, 0.0, *w, *h],
             // The text's box: its size, or the measured text.
             LayerKind::Text { size, align, .. } => {
                 let [w, h] = match size {
@@ -712,6 +714,41 @@ impl Engine {
                                 color: [255, 255, 255, 255],
                                 opacity,
                             });
+                        }
+                    }
+                    LayerKind::Digits {
+                        digits,
+                        size: [width, height],
+                        justify,
+                        display,
+                        ..
+                    } => {
+                        let text = self.text(root, layer, path, Property::Text);
+                        let DigitDisplay::Segments { style, fill, unlit } = display;
+                        let lit =
+                            parse_color(fill).ok_or_else(|| Error::InvalidColor(fill.clone()))?;
+                        let unlit = unlit
+                            .as_ref()
+                            .map(|c| parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone())))
+                            .transpose()?;
+                        let masks = segments::masks(*style, &text, *digits as usize, *justify);
+                        let cell_w = width * scale / f64::from((*digits).max(1));
+                        for (i, mask) in masks.into_iter().enumerate() {
+                            let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
+                            let mut push = |mask: u16, color: [u8; 4]| {
+                                for points in segments::polygons(*style, mask, cell) {
+                                    out.push(ResolvedLayer {
+                                        name: layer.name.clone(),
+                                        shape: ResolvedShape::Polygon { points },
+                                        color,
+                                        opacity,
+                                    });
+                                }
+                            };
+                            if let Some(unlit) = unlit {
+                                push(!mask, unlit);
+                            }
+                            push(mask, lit);
                         }
                     }
                     LayerKind::Text { size, align, .. } => {
@@ -913,6 +950,11 @@ pub enum ResolvedShape {
     },
     /// End the innermost clip.
     ClipEnd,
+    /// A filled polygon (a segment of a segment display), closed
+    /// implicitly.
+    Polygon {
+        points: Vec<[f64; 2]>,
+    },
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle: the whole image, or with `source` only
     /// that pixel rectangle `[x, y, width, height]` of it (a sheet cell).

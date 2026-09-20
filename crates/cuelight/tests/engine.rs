@@ -653,3 +653,52 @@ fn on_end_can_enter_a_scene() {
     assert_eq!(engine.active_scene(), Some("menu"));
     assert_eq!(engine.drain_events(), [Event::Trigger("menu".into())]);
 }
+
+const DIGITS: &str = r##"{ "name": "d", "size": [32, 16], "variables": { "score": 1 }, "layers": [
+    { "name": "d", "type": "digits", "digits": 2, "size": [16, 16], "x": 4, "justify": "right",
+      "display": { "segments": { "style": "numeric7", "fill": "#FF0000", "unlit": "#200000" } },
+      "bindings": [{ "property": "text", "variable": "score" }] }
+] }"##;
+
+#[test]
+fn digit_row_draws_lit_and_unlit_segments() {
+    let mut engine = Engine::new();
+    engine.load_show(DIGITS).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let lit: Vec<_> = layers
+        .iter()
+        .filter(|l| l.color == [255, 0, 0, 255])
+        .collect();
+    let unlit = layers.iter().filter(|l| l.color == [32, 0, 0, 255]).count();
+    // "1" right-justified: b and c of the second cell; everything else in
+    // both cells (7 segments + dot each) is drawn unlit.
+    assert_eq!(lit.len(), 2);
+    assert_eq!(unlit, 8 + 6);
+    for l in lit {
+        let ResolvedShape::Polygon { points } = &l.shape else {
+            panic!("segments resolve to polygons");
+        };
+        // second 8px cell of a row starting at x = 4: its right side
+        assert!(
+            points.iter().all(|&[x, _]| (17.0..20.0).contains(&x)),
+            "{points:?}"
+        );
+    }
+}
+
+#[test]
+fn digit_row_text_is_bindable() {
+    let mut engine = Engine::new();
+    engine.load_show(DIGITS).unwrap();
+    let lit = |e: &Engine| {
+        let layers = e.resolved_layers().unwrap();
+        layers
+            .iter()
+            .filter(|l| l.color == [255, 0, 0, 255])
+            .count()
+    };
+    assert_eq!(lit(&engine), 2);
+    // "38": 5 + 7 segments
+    engine.set_variable("score", 38.0);
+    assert_eq!(lit(&engine), 12);
+}

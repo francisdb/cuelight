@@ -140,7 +140,7 @@ on the GPU for hosts rendering on their own device.
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `image` or `text` (see below).
+- `type`: `group`, `shape`, `image`, `text` or `digits` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
@@ -150,7 +150,7 @@ group children behind whatever follows the group. Every layer has:
   x/y: `top_left`, `top`, `top_right`, `left`, `center`, `right`,
   `bottom_left`, `bottom`, `bottom_right`. The content box is an image's
   drawn rectangle, a shape's bounding box or a text layer's box (its
-  `size`, or the measured text), after `scale`, so an image
+  `size`, or the measured text) or a digit row's `size`, after `scale`, so an image
   anchored at `center` stays centered while it scales (see the beacon
   show). Without an anchor, images put their top-left corner and shapes
   their local origin at x/y. Groups cannot be anchored.
@@ -182,6 +182,23 @@ Layer kinds:
   Multi-line text aligns each line on its own within the box width.
   The `text` property can be bound (see [Bindings](#bindings)) but not
   keyframed.
+- `digits`: a row of `digits` equal cells across `size` `[width, height]`
+  (top-left at the layer's x/y) showing `text`, one character per cell.
+  `justify` is `left` (default) or `right`, as scores are shown; text that
+  does not fit is cut at the other side. `text` can be bound like a text
+  layer's. How a cell is drawn is up to `display`:
+
+  ```json
+  { "type": "digits", "digits": 16, "size": [128, 16], "text": "HELLO",
+    "display": { "segments": { "style": "alpha14", "fill": "#FF5820", "unlit": "#2A0E05" } } }
+  ```
+
+  `segments` is a segment display, as on pre-DMD pinball machines: lit
+  segments in `fill`, the dark ones in `unlit` when given. `style` is
+  `alpha14` (14 segments plus dot: letters, digits, `- + * / \ = _ '`) or
+  `numeric7` (7 segments plus dot: digits and `-`). A `.` or `,` lights
+  the dot of the cell before it instead of taking a cell, so `1,250`
+  needs four cells. Characters the style cannot show stay dark.
 
 ## Fonts
 
@@ -236,7 +253,7 @@ A binding wires a layer property to a variable, evaluated every frame:
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`, and `frame` for sprite sheet images.
 
-A text layer's `text` property can be bound too: the variable's text as
+A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
 per `format`: `plain` (default: `1500`, `2.5`) or `thousands` (rounded, with
 comma separators: `1,500`).
