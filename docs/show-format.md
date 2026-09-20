@@ -13,7 +13,23 @@ Point your editor at the schema for autocomplete and validation:
 { "$schema": "../../schemas/show.schema.json", "name": "my_show", ... }
 ```
 
-Unknown fields (like `$schema` itself) are ignored by the engine.
+## Format version
+
+```json
+{ "format": 1, "name": "my_show", ... }
+```
+
+`format` is the version of the show format the document was written for;
+a show without it is format 1. It goes up whenever a change could make an
+older engine misread a show, and an engine refuses a show of a newer
+format (`Error::UnsupportedFormat`) rather than play it wrongly. The
+version this engine reads is the `FORMAT` constant.
+
+Within a format, fields the engine does not know are ignored, so additions
+stay compatible, but they are not silent: `Engine::load_warnings()` lists
+their paths (`layers[2].colour`), which is how a typo shows up. Keys
+starting with `$`, like `$schema`, are never reported. The player logs the
+warnings at load.
 
 Naming note: a **show** is the whole loaded document; **scenes** are the
 switchable views inside it (see [Scenes](#scenes)).
@@ -48,6 +64,7 @@ distribution form.
 
 ```json
 {
+  "format": 1,
   "name": "minigolf",
   "size": [512, 128],
   "background": "#101018",

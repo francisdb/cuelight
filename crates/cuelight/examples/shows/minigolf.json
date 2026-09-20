@@ -1,5 +1,6 @@
 {
   "$schema": "../../schemas/show.schema.json",
+  "format": 1,
   "name": "minigolf",
   "size": [512, 128],
   "background": "#0B2410",

@@ -1,5 +1,6 @@
 {
   "$schema": "../../schemas/show.schema.json",
+  "format": 1,
   "name": "slideshow",
   "size": [480, 270],
   "background": "#000000",
