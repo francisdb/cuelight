@@ -1,4 +1,5 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
+use crate::lru::ByteLru;
 use crate::model::{
     parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Property, Scaling, Shape,
     Sheet, Show, Timeline, FORMAT,
@@ -85,18 +86,28 @@ struct TextRaster {
 }
 
 /// Caches for text rendering, filled lazily while resolving layers.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TextCache {
     /// Styled fonts by style name.
     styled: HashMap<String, Arc<StyledFont>>,
     /// Rasters by style, text, box and alignment; `None` for text that
     /// draws nothing.
-    rasters: HashMap<String, Option<Arc<TextRaster>>>,
+    rasters: ByteLru<String, Option<Arc<TextRaster>>>,
 }
 
-/// Bound on cached text rasters: changing texts (scores) would otherwise
-/// grow the cache forever. Clearing it only costs re-rasterizing.
-const MAX_CACHED_RASTERS: usize = 512;
+impl Default for TextCache {
+    fn default() -> Self {
+        Self {
+            styled: HashMap::new(),
+            rasters: ByteLru::new(MAX_RASTER_BYTES),
+        }
+    }
+}
+
+/// Budget for cached text rasters. Every distinct string is its own
+/// bitmap, so a changing number in a large font adds up quickly; the least
+/// recently used rasters go first, which keeps static labels cached.
+const MAX_RASTER_BYTES: usize = 32 * 1024 * 1024;
 
 /// A running timeline instance.
 #[derive(Debug, Clone)]
@@ -645,10 +656,8 @@ impl Engine {
                     container,
                 })
             });
-        if cache.rasters.len() >= MAX_CACHED_RASTERS {
-            cache.rasters.clear();
-        }
-        cache.rasters.insert(key, raster.clone());
+        let bytes = key.len() + raster.as_ref().map_or(0, |r| r.image.pixels.len());
+        cache.rasters.insert(key, raster.clone(), bytes);
         raster
     }
 

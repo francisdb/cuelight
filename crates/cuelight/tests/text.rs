@@ -210,3 +210,34 @@ fn anchor_places_the_text_box() {
     let (x, y, w, h, _) = bitmap(&engine, "label");
     assert_eq!((x, y, w, h), (26.0, 4.0, 5.0, 3.0));
 }
+
+#[test]
+fn a_changing_number_does_not_re_rasterize_static_text() {
+    let mut engine = engine();
+    let revision = |e: &Engine, name: &str| {
+        let layers = e.resolved_layers().unwrap();
+        match &layers.iter().find(|l| l.name == name).unwrap().shape {
+            ResolvedShape::Bitmap { image, .. } => image.revision(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let label = revision(&engine, "label");
+    // Far more distinct strings than the old entry-count bound allowed.
+    for n in 0..2000u32 {
+        // The test font only has the glyphs 0, 1 and 5: count in base 3.
+        let digits = |mut n: u32| {
+            let mut out = String::new();
+            loop {
+                out.insert(0, ['0', '1', '5'][(n % 3) as usize]);
+                n /= 3;
+                if n == 0 {
+                    break out;
+                }
+            }
+        };
+        engine.set_variable("score", digits(n).as_str());
+        revision(&engine, "score");
+        revision(&engine, "label");
+    }
+    assert_eq!(revision(&engine, "label"), label);
+}
