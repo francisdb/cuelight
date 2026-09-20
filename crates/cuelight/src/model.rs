@@ -70,6 +70,7 @@ pub struct Output {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum OutputMode {
     /// Full color, unchanged.
     #[default]
@@ -203,6 +204,7 @@ fn default_visible() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum LayerKind {
     Group {
         children: Vec<Layer>,
@@ -241,6 +243,7 @@ pub enum LayerKind {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum Shape {
     /// `[x, y, width, height]`
     Rect([f64; 4]),
@@ -252,6 +255,7 @@ pub enum Shape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum Property {
     X,
     Y,
@@ -270,7 +274,23 @@ impl Property {
     }
 }
 
+impl Show {
+    /// Every layer tree of the show: its own layers, then each scene's.
+    pub fn layer_trees(&self) -> impl Iterator<Item = &[Layer]> {
+        std::iter::once(self.layers.as_slice())
+            .chain(self.scenes.iter().map(|s| s.layers.as_slice()))
+    }
+}
+
 impl Layer {
+    /// The layers nested in this one: a group's children, else none.
+    pub fn children(&self) -> &[Layer] {
+        match &self.kind {
+            LayerKind::Group { children } => children,
+            _ => &[],
+        }
+    }
+
     /// The property's value as authored on this layer, or `None` when
     /// this kind of layer does not have the property.
     pub fn base_value(&self, property: Property) -> Option<Value> {
@@ -321,6 +341,7 @@ pub struct Binding {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
 pub enum NumberFormat {
     /// Shortest form: `1500`, `2.5`.
     #[default]
