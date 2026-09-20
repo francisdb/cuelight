@@ -10,7 +10,7 @@
 
 use crate::engine::{Engine, ResolvedShape};
 use crate::lru::ByteLru;
-use crate::model::{parse_color, Scaling};
+use crate::model::{parse_color, OutputMode, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -634,6 +634,162 @@ impl OutputPass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+    }
+}
+
+/// What [`Presenter::present`] hands back for the host to draw.
+pub struct Presented {
+    /// The engine's frame, placed and scaled for the target: embed it in
+    /// the host's own scene, or render it as is.
+    pub scene: vello::Scene,
+    /// Color for the area around the show (its background, after the
+    /// show's output conversion): use it as the render's base color.
+    pub base_color: Color,
+}
+
+/// Brings an engine's frames onto a host surface the way the show asks
+/// for: fitted into the target (see [`fit`]), with the show's output mode
+/// applied and its scaling honored.
+///
+/// Full-color shows with smooth scaling are handed back as vector content
+/// under the fit transform, so they render at the target's resolution and
+/// stay sharp at any size. Everything else (gray output modes,
+/// pixel-perfect scaling) is first rendered at the show's own size, run
+/// through the output pass on the GPU and then drawn as an image, because
+/// there the pixel grid is the point. That native-size frame is also where
+/// post-processing passes belong.
+///
+/// Keep one per engine and surface; it caches image uploads and GPU
+/// targets across frames.
+#[derive(Default)]
+pub struct Presenter {
+    images: ImageCache,
+    native: Option<NativeTarget>,
+}
+
+/// The show rendered at its own size, and its converted copy that vello
+/// draws from.
+struct NativeTarget {
+    size: [u32; 2],
+    render: wgpu::TextureView,
+    converted: wgpu::TextureView,
+    image: vello::peniko::ImageData,
+    pass: OutputPass,
+}
+
+impl NativeTarget {
+    fn new(device: &wgpu::Device, renderer: &mut vello::Renderer, size: [u32; 2]) -> Self {
+        let texture = |label, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage,
+                view_formats: &[],
+            })
+        };
+        let render = texture(
+            "cuelight-native",
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let converted = texture(
+            "cuelight-native-output",
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        );
+        Self {
+            size,
+            render: render.create_view(&wgpu::TextureViewDescriptor::default()),
+            converted: converted.create_view(&wgpu::TextureViewDescriptor::default()),
+            image: renderer.register_texture(converted),
+            pass: OutputPass::new(device),
+        }
+    }
+}
+
+impl Presenter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build what shows `engine`'s current frame in a `target` sized
+    /// surface. `renderer` must be the one the host renders the returned
+    /// scene with: GPU textures get registered with it.
+    pub fn present(
+        &mut self,
+        engine: &Engine,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut vello::Renderer,
+        target: [u32; 2],
+    ) -> Result<Presented, RenderError> {
+        let show = engine.show().ok_or(crate::engine::Error::NoShow)?;
+        let size = show.size;
+        let (output, scaling) = (engine.output(), engine.scaling());
+        let (scale, x, y) = fit(size, target, scaling);
+        let placement = Affine::translate((x, y)) * Affine::scale(scale);
+        let content = build_vello_scene(engine, &mut self.images)?;
+        let background = background_color(engine);
+
+        let mut scene = vello::Scene::new();
+        if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth {
+            scene.append(&content, Some(placement));
+        } else {
+            if self.native.as_ref().is_some_and(|n| n.size != size) {
+                if let Some(old) = self.native.take() {
+                    renderer.unregister_texture(old.image);
+                }
+            }
+            let native = self
+                .native
+                .get_or_insert_with(|| NativeTarget::new(device, renderer, size));
+            renderer
+                .render_to_texture(
+                    device,
+                    queue,
+                    &content,
+                    &native.render,
+                    &vello::RenderParams {
+                        base_color: background,
+                        width: size[0],
+                        height: size[1],
+                        antialiasing_method: vello::AaConfig::Area,
+                    },
+                )
+                .map_err(|e| RenderError::Vello(e.to_string()))?;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("cuelight-present"),
+            });
+            native.pass.encode(
+                device,
+                &mut encoder,
+                &native.render,
+                &native.converted,
+                size[0],
+                size[1],
+                output,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.mark_override_image_dirty(&native.image);
+            let mut brush = ImageBrush::new(native.image.clone());
+            if scaling == Scaling::PixelPerfect {
+                // Nearest neighbor: every canvas pixel becomes a crisp block.
+                brush = brush.with_quality(vello::peniko::ImageQuality::Low);
+            }
+            scene.draw_image(&brush, placement);
+        }
+
+        let [r, g, b, a] = output.apply_pixel(background.to_rgba8().to_u8_array());
+        Ok(Presented {
+            scene,
+            base_color: Color::from_rgba8(r, g, b, a),
+        })
     }
 }
 

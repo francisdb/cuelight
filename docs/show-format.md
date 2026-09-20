@@ -141,15 +141,18 @@ so white is full brightness, pure green lands at about 72 %, pure red at
 `scaling` tells hosts how to bring the frame up to their surface:
 `smooth` (default: any factor, filtered) or `pixel_perfect` (whole-number
 factors with nearest-neighbor sampling, so every canvas pixel becomes a
-crisp square block, which is what DMD-resolution content wants). Hosts
-read it with `Engine::scaling()`, and `render::fit` computes the placement.
+crisp square block, which is what DMD-resolution content wants).
+`render::Presenter` honors it; hosts doing their own presentation read it
+with `Engine::scaling()` and place the frame with `render::fit`.
 
 A scene may declare its own `output`; while it is active, the fields it
 sets override the show's and the rest still come from the show. The conversion happens on the whole frame after
 compositing, so antialiased edges and opacity quantize like everything
 else. Hosts read the active mode with `Engine::output()`; the offscreen
-renderer applies it after readback, and `render::OutputPass` does the same
-on the GPU for hosts rendering on their own device.
+renderer applies it after readback. Hosts rendering on their own device
+use `render::Presenter`, which fits the show into their surface, applies
+the output mode on the GPU and honors `scaling` (`render::OutputPass` is
+the conversion alone, for hosts that want to do the rest themselves).
 
 ## Layers
 
