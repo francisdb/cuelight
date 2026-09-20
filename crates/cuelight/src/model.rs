@@ -3,10 +3,22 @@ use crate::value::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// The show format version this engine reads and writes. It goes up when a
+/// change could make an older engine misread a show; engines refuse shows
+/// of a newer format instead of playing them wrongly.
+pub const FORMAT: u32 = 1;
+
+fn default_format() -> u32 {
+    1
+}
+
 /// A declarative show description: what a `.json` show file deserializes into.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Show {
+    /// Show format version, see [`FORMAT`]. A show without it is format 1.
+    #[serde(default = "default_format")]
+    pub format: u32,
     pub name: String,
     /// Logical canvas size in pixels `[width, height]`. Hosts scale the
     /// rendered texture; content is authored against this space.

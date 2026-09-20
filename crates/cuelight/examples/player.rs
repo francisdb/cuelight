@@ -772,6 +772,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     engine
         .load_show(&json)
         .map_err(|e| format!("cannot load show {show_path:?}: {e}"))?;
+    for field in engine.load_warnings() {
+        log::warn!("show field {field:?} is not understood and was ignored");
+    }
 
     let driver = match std::env::args().nth(2).or(folder_driver) {
         Some(driver_path) => Some(load_driver(&driver_path)?),

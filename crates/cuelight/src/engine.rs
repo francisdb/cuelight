@@ -1,7 +1,7 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::model::{
     parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Property, Scaling, Shape,
-    Sheet, Show, Timeline,
+    Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::segments;
@@ -17,6 +17,8 @@ pub enum Error {
     NoShow,
     #[error("invalid show: {0}")]
     InvalidShow(String),
+    #[error("show format {found} is newer than this engine supports (up to {supported})")]
+    UnsupportedFormat { found: u64, supported: u32 },
     #[error("invalid color literal {0:?}")]
     InvalidColor(String),
     #[error("invalid image: {0}")]
@@ -139,6 +141,7 @@ pub struct Engine {
     playing: Vec<Playhead>,
     active_scene: Option<usize>,
     events: std::collections::VecDeque<Event>,
+    load_warnings: Vec<String>,
     time: f64,
 }
 
@@ -151,8 +154,22 @@ impl Engine {
     /// and resetting all runtime state. The first scene (if any) becomes
     /// active; autoplay timelines start at 0.
     pub fn load_show(&mut self, json: &str) -> Result<(), Error> {
-        let show: Show =
-            serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
+        let invalid = |e: serde_json::Error| Error::InvalidShow(e.to_string());
+        let raw: serde_json::Value = serde_json::from_str(json).map_err(invalid)?;
+        // Refuse newer formats before interpreting anything else: their
+        // fields may mean something this engine would get wrong.
+        if let Some(found) = raw.get("format").and_then(|f| f.as_u64()) {
+            if found > u64::from(FORMAT) {
+                return Err(Error::UnsupportedFormat {
+                    found,
+                    supported: FORMAT,
+                });
+            }
+        }
+        let show: Show = serde_json::from_value(raw.clone()).map_err(invalid)?;
+        if show.format == 0 {
+            return Err(Error::InvalidShow("format 0 does not exist".into()));
+        }
         parse_color(&show.background)
             .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
         for output in std::iter::once(&show.output)
@@ -163,6 +180,10 @@ impl Engine {
         }
         validate(&show)?;
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
+        self.load_warnings.clear();
+        if let Ok(understood) = serde_json::to_value(&show) {
+            ignored_fields(&raw, &understood, "", &mut self.load_warnings);
+        }
         self.variables = show.variables.clone();
         self.playing.clear();
         self.events.clear();
@@ -174,6 +195,13 @@ impl Engine {
             self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
         }
         Ok(())
+    }
+
+    /// Fields of the loaded show document that the engine did not
+    /// understand and ignored, as JSON paths (`layers[2].colour`): usually
+    /// typos. Keys starting with `$` (like `$schema`) are never reported.
+    pub fn load_warnings(&self) -> &[String] {
+        &self.load_warnings
     }
 
     /// Push a named value from the host. Unknown names are accepted:
@@ -873,6 +901,40 @@ fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> 
         0
     };
     [index % columns * cw, index / columns * ch, cw, ch]
+}
+
+/// Collect the paths of object keys present in `given` but absent from
+/// `understood` (the same document after a round trip through the model),
+/// which are the fields deserialization silently dropped.
+fn ignored_fields(
+    given: &serde_json::Value,
+    understood: &serde_json::Value,
+    path: &str,
+    out: &mut Vec<String>,
+) {
+    use serde_json::Value as Json;
+    match (given, understood) {
+        (Json::Object(given), Json::Object(understood)) => {
+            for (key, value) in given {
+                let here = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                match understood.get(key) {
+                    Some(kept) => ignored_fields(value, kept, &here, out),
+                    None if key.starts_with('$') => {}
+                    None => out.push(here),
+                }
+            }
+        }
+        (Json::Array(given), Json::Array(understood)) => {
+            for (i, (value, kept)) in given.iter().zip(understood).enumerate() {
+                ignored_fields(value, kept, &format!("{path}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn layer_at<'a>(layers: &'a [Layer], path: &[usize]) -> Option<&'a Layer> {

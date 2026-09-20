@@ -1,5 +1,6 @@
 {
   "$schema": "../../schemas/show.schema.json",
+  "format": 1,
   "name": "mic_pop",
   "size": [480, 480],
   "background": "#101018",

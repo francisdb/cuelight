@@ -1,5 +1,6 @@
 {
   "$schema": "../../../schemas/show.schema.json",
+  "format": 1,
   "name": "beacon",
   "size": [256, 256],
   "background": "#0A0F14",

@@ -17,6 +17,13 @@
       },
       "default": {}
     },
+    "format": {
+      "description": "Show format version, see [`FORMAT`]. A show without it is format 1.",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    },
     "layers": {
       "description": "Layers that are always present, painted behind the active scene.",
       "type": "array",
