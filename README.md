@@ -116,7 +116,8 @@ required.
 - [`cuelight-loader`](crates/cuelight-loader): that host work, shared:
   loading show folders from disk (or images and fonts from bytes, for hosts
   without a filesystem) and playing `test-driver.json` scripts. Image
-  decoders are cargo features, for hosts that decode images themselves.
+  decoders and outline fonts are cargo features, for hosts that bring
+  their own.
 - [`cuelight-player`](crates/cuelight-player): a windowed player for show
   folders, driven from the console, the keyboard or a driver script.
 
