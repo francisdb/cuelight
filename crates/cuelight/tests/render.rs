@@ -94,3 +94,26 @@ fn sheet_cell_lands_on_the_destination() {
     assert_eq!(pixel(&frame, 1, 3), [0, 0, 0, 255]);
     assert_eq!(pixel(&frame, 6, 3), [0, 0, 0, 255]);
 }
+
+#[test]
+fn images_survive_frames_without_images() {
+    let show = r##"{ "name": "s", "size": [8, 8], "background": "#000000", "scenes": [
+        { "name": "picture", "trigger": "picture", "layers": [
+            { "name": "img", "type": "image", "image": "white", "size": [8, 8] } ] },
+        { "name": "plain", "trigger": "plain", "layers": [
+            { "name": "box", "type": "shape", "shape": { "rect": [0, 0, 2, 2] }, "fill": "#FF0000" } ] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.set_image("white", 1, 1, vec![255u8; 4]).unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 6, 6), [255, 255, 255, 255]);
+    // A frame that draws no image at all...
+    engine.trigger("plain");
+    let frame = render(&engine).unwrap();
+    assert_eq!(pixel(&frame, 6, 6), [0, 0, 0, 255]);
+    // ...must not lose the images for the frames after it.
+    engine.trigger("picture");
+    let frame = render(&engine).unwrap();
+    assert_eq!(pixel(&frame, 6, 6), [255, 255, 255, 255]);
+}

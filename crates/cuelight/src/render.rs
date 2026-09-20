@@ -50,6 +50,8 @@ pub struct ImageCache {
     cells: HashMap<(String, [u32; 4]), (u64, vello::peniko::ImageData)>,
     /// Engine-generated bitmaps (text) by revision.
     bitmaps: HashMap<u64, vello::peniko::ImageData>,
+    /// See [`ImageCache::keepalive`].
+    keepalive: Option<vello::peniko::ImageData>,
 }
 
 /// Bound on cached bitmap uploads; text that changes every frame would
@@ -81,6 +83,24 @@ impl ImageCache {
                 image
             }
         }
+    }
+
+    /// One transparent pixel that every scene draws. vello 0.10 keeps its
+    /// image atlas across frames but throws it away on a frame without any
+    /// image, while still believing the images it uploaded earlier are in
+    /// it: from then on they render as nothing. Never handing it an
+    /// image-less scene avoids that. Remove once vello ships
+    /// <https://github.com/linebender/vello/pull/1664>.
+    fn keepalive(&mut self) -> vello::peniko::ImageData {
+        self.keepalive
+            .get_or_insert_with(|| vello::peniko::ImageData {
+                data: Blob::new(Arc::new([0u8; 4])),
+                format: ImageFormat::Rgba8,
+                alpha_type: ImageAlphaType::Alpha,
+                width: 1,
+                height: 1,
+            })
+            .clone()
     }
 
     fn bitmap(&mut self, data: &crate::engine::ImageData) -> vello::peniko::ImageData {
@@ -135,11 +155,18 @@ impl ImageCache {
 /// app, see `examples/render_to_window.rs`) can reuse the translation instead of
 /// going through the offscreen [`Renderer`]. `images` interns pixel uploads
 /// across frames; pass the same cache every frame.
+///
+/// The scene always contains one invisible pixel-sized image, working around
+/// vello losing uploaded images after a frame without any (see
+/// `ImageCache::keepalive`). Hosts rendering scenes of their own through
+/// the same `vello::Renderer` should likewise never submit one without an
+/// image.
 pub fn build_vello_scene(
     engine: &Engine,
     images: &mut ImageCache,
 ) -> Result<vello::Scene, RenderError> {
     let mut show = vello::Scene::new();
+    show.draw_image(&ImageBrush::new(images.keepalive()), Affine::IDENTITY);
     for layer in engine.resolved_layers()? {
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
