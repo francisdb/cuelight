@@ -1,0 +1,19 @@
+[package]
+name = "cuelight-player"
+description = "Play cuelight shows in a window: load a show folder, fire its triggers and set its variables from the console or a driver script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "animation", "player"]
+categories = ["multimedia", "command-line-utilities"]
+
+[dependencies]
+cuelight = { path = "../cuelight", version = "0.0.1" }
+cuelight-loader = { path = "../cuelight-loader", version = "0.0.1" }
+clap = { version = "4", features = ["derive"] }
+winit = "0.30"
+pollster = "0.4"
+ctrlc = "3"
+log = "0.4"
+env_logger = "0.11"

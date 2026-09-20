@@ -71,34 +71,29 @@ ring pops outward on noise spikes/beats (a timeline fired by `trigger`).
 Space pops manually, useful without a microphone.
 
 ```sh
-cargo run --example player -- path/to/show.json
+cargo run -p cuelight-player -- path/to/show
 ```
 
-opens any show file (the bundled minigolf show when no path is given),
-lists its actions (trigger names) and variables on the console, and lets
-you drive it: type an action number or name to fire it (digit keys in the
-window work too), `name=value` to set a variable, `q` to quit. Image
-layers whose pixels the host never registered are logged as warnings and
-skipped.
+is the player (`cargo install --path crates/cuelight-player` puts
+`cuelight-player` on your path). It opens a show folder or a loose show
+file (a built-in demo when no path is given), lists its actions (trigger
+names) and variables on the console, and lets you drive it: type an action
+number or name to fire it (digit keys in the window work too),
+`name=value` to set a variable, `q` to quit. See `--help` for the options.
 
-An optional second argument plays a driver file: a scripted sequence of
-the same commands with delays, standing in for a live host, optionally
-looping, conventionally `<show>.test-driver.json` next to its show:
-
-```sh
-cargo run --example player -- \
-  crates/cuelight/examples/shows/minigolf.json \
-  crates/cuelight/examples/shows/minigolf.test-driver.json
-```
-
-A show can also be a folder: `show.json` plus an optional
-`test-driver.json` (picked up automatically) and `assets/` with PNGs
-registered as images by filename stem. The bundled beacon show
+A show folder holds `show.json` plus an optional `test-driver.json` and
+`assets/` with images and bitmap fonts; the bundled beacon show
 demonstrates it:
 
 ```sh
-cargo run --example player -- crates/cuelight/examples/shows/beacon
+cargo run -p cuelight-player -- crates/cuelight/examples/shows/beacon
 ```
+
+A driver file is a scripted sequence of the same commands with delays,
+standing in for a live host, optionally looping. The one next to the show
+(`test-driver.json` in a folder, `<show>.test-driver.json` beside a loose
+file) plays automatically; a second argument names another one, and
+`--no-driver` plays none.
 
 More shows live in the
 [cuelight-examples](https://github.com/francisdb/cuelight-examples)
@@ -122,6 +117,8 @@ required.
   loading show folders from disk (or images and fonts from bytes, for hosts
   without a filesystem) and playing `test-driver.json` scripts. Image
   decoders are cargo features, for hosts that decode images themselves.
+- [`cuelight-player`](crates/cuelight-player): a windowed player for show
+  folders, driven from the console, the keyboard or a driver script.
 
 ## Show format
 

@@ -47,7 +47,3 @@ required-features = ["render"]
 [[example]]
 name = "mic_pop"
 required-features = ["render"]
-
-[[example]]
-name = "player"
-required-features = ["render"]

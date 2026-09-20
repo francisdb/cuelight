@@ -28,7 +28,9 @@ jobs:
       - name: Test (all features, includes schema drift check)
         run: cargo test --workspace --all-features
       - name: Test (no default features)
-        run: cargo test --workspace --no-default-features
+        # without the player: it needs the renderer, and cargo would unify
+        # that feature back into cuelight for the whole build
+        run: cargo test --workspace --exclude cuelight-player --no-default-features
 
   lint:
     name: fmt, clippy, docs
@@ -47,7 +49,7 @@ jobs:
       - name: clippy (all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: clippy (no default features)
-        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+        run: cargo clippy --workspace --exclude cuelight-player --all-targets --no-default-features -- -D warnings
       - name: docs
         run: cargo doc --workspace --no-deps
         env:
