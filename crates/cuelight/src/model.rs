@@ -54,16 +54,47 @@ pub struct Scene {
     pub layers: Vec<Layer>,
 }
 
-/// Output color handling, applied to the finished frame.
+/// How the finished frame reaches the display. Every field is optional: a
+/// scene's output overrides only the fields it sets, the rest come from
+/// the show's, then from the defaults.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Output {
+    /// Color conversion; `rgb` by default.
     #[serde(default)]
-    pub mode: OutputMode,
+    pub mode: Option<OutputMode>,
     /// Color that full luminance maps to in the gray modes, `#RRGGBB`
-    /// (white when omitted). Ignored in `rgb` mode.
+    /// (white by default). Ignored in `rgb` mode.
     #[serde(default)]
     pub tint: Option<String>,
+    /// How hosts scale the frame up to their surface; `smooth` by default.
+    #[serde(default)]
+    pub scaling: Option<Scaling>,
+}
+
+impl Output {
+    /// This output with its unset fields taken from `base`.
+    pub fn over(&self, base: &Output) -> Output {
+        Output {
+            mode: self.mode.or(base.mode),
+            tint: self.tint.clone().or_else(|| base.tint.clone()),
+            scaling: self.scaling.or(base.scaling),
+        }
+    }
+}
+
+/// How hosts should scale the rendered frame up to their surface.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Scaling {
+    /// Any factor, smoothly filtered.
+    #[default]
+    Smooth,
+    /// Whole-number factors with nearest-neighbor sampling, so every
+    /// canvas pixel becomes a crisp square block (DMD-resolution content).
+    PixelPerfect,
 }
 
 /// How the finished frame's colors are converted for the display.

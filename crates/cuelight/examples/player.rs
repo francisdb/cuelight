@@ -49,11 +49,11 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cuelight::render::{background_color, build_vello_scene, ImageCache, OutputPass};
+use cuelight::render::{background_color, build_vello_scene, fit, ImageCache, OutputPass};
 use cuelight::vello;
-use cuelight::{BitmapFont, Engine, Layer, LayerKind, OutputMode, Show, Value};
+use cuelight::{BitmapFont, Engine, Layer, LayerKind, OutputMode, Scaling, Show, Value};
 use vello::kurbo::Affine;
-use vello::peniko::{Color, ImageBrush};
+use vello::peniko::{Color, ImageBrush, ImageQuality};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wgpu::CurrentSurfaceTexture;
@@ -381,9 +381,8 @@ impl App {
         let [show_w, show_h] = self.engine.show().expect("show loaded").size;
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
-        let tx = (f64::from(sw) - f64::from(show_w) * scale) / 2.0;
-        let ty = (f64::from(sh) - f64::from(show_h) * scale) / 2.0;
+        let scaling = self.engine.scaling();
+        let (scale, tx, ty) = fit([show_w, show_h], [sw, sh], scaling);
         let placement = Affine::translate((tx, ty)) * Affine::scale(scale);
         let show_scene =
             build_vello_scene(&self.engine, &mut self.images).expect("build vello scene");
@@ -394,11 +393,12 @@ impl App {
             .expect("renderer for surface device");
 
         let mut frame = vello::Scene::new();
-        if output.mode == OutputMode::Rgb {
+        if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth {
             frame.append(&show_scene, Some(placement));
         } else {
             // Render at show resolution, convert on the GPU, then draw the
-            // converted texture scaled into the window.
+            // converted texture scaled into the window (pixel perfect:
+            // nearest-neighbor, so each canvas pixel is a crisp block).
             let native = self.native.get_or_insert_with(|| {
                 NativeFrame::new(&device_handle.device, renderer, [show_w, show_h])
             });
@@ -433,7 +433,11 @@ impl App {
             );
             device_handle.queue.submit([encoder.finish()]);
             renderer.mark_override_image_dirty(&native.image);
-            frame.draw_image(&ImageBrush::new(native.image.clone()), placement);
+            let mut brush = ImageBrush::new(native.image.clone());
+            if scaling == Scaling::PixelPerfect {
+                brush = brush.with_quality(ImageQuality::Low);
+            }
+            frame.draw_image(&brush, placement);
         }
         self.fps.tick();
         self.fps.draw(&mut frame, state.window.scale_factor());

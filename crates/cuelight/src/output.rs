@@ -38,9 +38,10 @@ impl OutputColor {
             }
             None => [255, 255, 255],
         };
-        Some(Self {
-            mode: output.mode,
-            tint,
+        Some(match output.mode.unwrap_or_default() {
+            // The tint plays no part in full color.
+            OutputMode::Rgb => Self::RGB,
+            mode => Self { mode, tint },
         })
     }
 
@@ -140,24 +141,27 @@ mod tests {
     #[test]
     fn tint_parses_and_defaults_to_white() {
         let output = Output {
-            mode: OutputMode::Gray4,
+            mode: Some(OutputMode::Gray4),
             tint: Some("#FF5820".into()),
+            scaling: None,
         };
         assert_eq!(
             OutputColor::from_output(&output),
             Some(gray4([255, 88, 32]))
         );
         let output = Output {
-            mode: OutputMode::Gray4,
+            mode: Some(OutputMode::Gray4),
             tint: None,
+            scaling: None,
         };
         assert_eq!(
             OutputColor::from_output(&output),
             Some(gray4([255, 255, 255]))
         );
         let output = Output {
-            mode: OutputMode::Gray4,
+            mode: Some(OutputMode::Gray4),
             tint: Some("orange".into()),
+            scaling: None,
         };
         assert_eq!(OutputColor::from_output(&output), None);
     }

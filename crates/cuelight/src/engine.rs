@@ -1,6 +1,7 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::model::{
-    parse_color, Align, Binding, Layer, LayerKind, Property, Shape, Sheet, Show, Timeline,
+    parse_color, Align, Binding, Layer, LayerKind, Output, Property, Scaling, Shape, Sheet, Show,
+    Timeline,
 };
 use crate::output::OutputColor;
 use crate::value::Value;
@@ -270,19 +271,35 @@ impl Engine {
         Some(show.scenes.get(self.active_scene?)?.name.as_str())
     }
 
-    /// Output color handling for the current frame: the active scene's
-    /// when it declares one, otherwise the show's. Full color when no
-    /// show is loaded. Renderers apply it to the finished frame.
-    pub fn output(&self) -> OutputColor {
+    /// The output in effect: what the active scene sets, over the show's.
+    fn effective_output(&self) -> Output {
         let Some(show) = &self.show else {
-            return OutputColor::RGB;
+            return Output::default();
         };
         let scene_output = self
             .active_scene
             .and_then(|i| show.scenes.get(i))
             .and_then(|s| s.output.as_ref());
+        match scene_output {
+            Some(output) => output.over(&show.output),
+            None => show.output.clone(),
+        }
+    }
+
+    /// Output color handling for the current frame (the active scene's
+    /// settings over the show's). Full color when no show is loaded.
+    /// Renderers apply it to the finished frame.
+    pub fn output(&self) -> OutputColor {
         // Tints were validated at load.
-        OutputColor::from_output(scene_output.unwrap_or(&show.output)).unwrap_or_default()
+        OutputColor::from_output(&self.effective_output()).unwrap_or_default()
+    }
+
+    /// How hosts should scale the current frame up to their surface (the
+    /// active scene's setting over the show's); see [`render::fit`].
+    ///
+    /// [`render::fit`]: crate::render::fit
+    pub fn scaling(&self) -> Scaling {
+        self.effective_output().scaling.unwrap_or_default()
     }
 
     fn enter_scene(&mut self, scene: usize) {
