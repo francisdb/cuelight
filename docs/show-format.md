@@ -49,8 +49,8 @@ A show exists in two forms:
     show.json           the show document (required)
     test-driver.json    optional driver script, hosts may pick it up
     assets/             images, registered by filename stem (PNG)
-      fonts/            bitmap fonts: .fnt plus its page PNGs, registered
-                        by .fnt filename stem
+      fonts/            fonts, registered by filename stem: bitmap (.fnt
+                        plus its page PNGs) or outline (.ttf, .otf)
   ```
 
 Either way the engine only ever receives the single JSON document through
@@ -228,36 +228,39 @@ Layer kinds:
 }
 ```
 
-Text uses bitmap fonts in the [BMFont](https://www.angelcode.com/products/bmfont/doc/file_format.html)
-text format, a common format for pixel fonts. Fonts are host assets
-like images: the host parses the `.fnt` description with
+A style names a font the host registered (`file`, by convention the font
+file's stem), a `color`, and an optional `border` of `width` pixels in
+`color` outside every glyph. Fonts are host assets like images: a text
+layer whose font is not registered is skipped. There are two kinds, and
+which one a style uses is decided by what was registered under that name,
+so the layers using it do not change.
+
+**Bitmap fonts**, in the [BMFont](https://www.angelcode.com/products/bmfont/doc/file_format.html)
+text format common for pixel fonts: the host parses the `.fnt` with
 `BitmapFont::parse` and registers it with its page images through
-`Engine::set_font`, by convention under the `.fnt` file stem. A text
-layer whose font is not registered is skipped.
+`Engine::set_font`. They have one fixed size (setting `size` is an error),
+`color` multiplies the glyph colors (white keeps the font's own), and a
+border also widens each character's advance by two widths. Text is
+rasterized on the CPU pixel for pixel from the font pages, never
+resampled, so pixel fonts stay exact on DMD-sized canvases. A line is as
+wide as its characters' advances plus kerning; a block is as tall as its
+line heights, except that the last line grows to fit its tallest glyph.
+Characters missing from the font fall back to their uppercase form, then
+to a space.
 
-A style in `fonts` names the registered font (`file`), a `color` that
-multiplies the glyph colors (default white, keeping the font's own), and
-an optional `border`: an outline of `width` pixels in `color` around every
-glyph, which also widens each character's advance by two widths.
+**Outline fonts** (TrueType / OpenType), for text that stays sharp at any
+size: the host registers the file's bytes with `Engine::set_outline_font`
+(cargo feature `outline-fonts`), and the style sets `size`, the em size in
+canvas pixels (required). Text resolves to a glyph run the renderer draws
+from the font's outlines, so nothing is rasterized or cached per string.
+Line height and the baseline come from the font's metrics. Glyphs are
+placed by their advance width alone: there is no kerning, ligatures or
+complex shaping yet, so text sets slightly looser than in a browser. A
+character the font lacks shows as the font's "missing" box.
 
-Text is rasterized on the CPU pixel for pixel from the font pages, never
-resampled, so pixel fonts stay exact on DMD-sized canvases. Layout: a
-line is as wide as its characters' advances plus kerning; a
-block is as tall as its line heights, except that the last line grows to
-fit its tallest glyph. Characters missing from the font fall back to their
-uppercase form, then to a space.
-
-  With `sheet: { "cell": [width, height], "columns": n }` the image is a
-  sprite sheet: a grid of equal cells numbered row by row from the
-  top-left, and the layer draws the single cell its `frame` property
-  selects (base value `frame`, default 0). Without `size` a cell draws at
-  its own pixel size. `frame` is rounded down and clamped to the cells
-  that fit the image, so a linear key from 0 to 8 over 0.128 s plays eight
-  cells 16 ms each; loop it for a run cycle:
-
-  ```json
-  { "property": "frame", "keys": [{ "t": 0, "v": 0 }, { "t": 0.128, "v": 8 }] }
-  ```
+```json
+{ "fonts": { "speed": { "file": "inter_bold", "size": 180, "color": "#FFFFFF" } } }
+```
 
 ## Bindings
 

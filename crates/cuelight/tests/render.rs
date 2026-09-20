@@ -117,3 +117,28 @@ fn images_survive_frames_without_images() {
     let frame = render(&engine).unwrap();
     assert_eq!(pixel(&frame, 6, 6), [255, 255, 255, 255]);
 }
+
+#[cfg(feature = "outline-fonts")]
+#[test]
+fn outline_text_fills_its_glyphs_and_borders_them() {
+    let show = r##"{ "name": "t", "size": [96, 96], "background": "#000000",
+      "fonts": { "big": { "file": "sans", "size": 120, "color": "#FFFFFF",
+                          "border": { "color": "#FF0000", "width": 3 } } },
+      "layers": [ { "name": "l", "type": "text", "font": "big", "text": "l", "size": [96, 96] } ] }"##;
+    let mut engine = Engine::new();
+    engine
+        .set_outline_font(
+            "sans",
+            include_bytes!("fonts/cuelight_test_sans.ttf").as_slice(),
+        )
+        .unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // A lowercase l is a vertical bar through the middle of the canvas:
+    // white inside, a red border beside it, background further out.
+    assert_eq!(pixel(&frame, 48, 48), [255, 255, 255, 255]);
+    let row: Vec<[u8; 4]> = (0..96).map(|x| pixel(&frame, x, 48)).collect();
+    assert!(row.contains(&[255, 0, 0, 255]), "no border: {row:?}");
+    assert_eq!(row[4], [0, 0, 0, 255]);
+    assert_eq!(row[91], [0, 0, 0, 255]);
+}

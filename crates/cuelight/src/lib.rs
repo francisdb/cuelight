@@ -23,12 +23,16 @@ mod engine;
 mod font;
 mod lru;
 mod model;
+#[cfg(feature = "outline-fonts")]
+mod outline;
 mod output;
 mod segments;
 mod value;
 
 pub use easing::Easing;
-pub use engine::{Engine, Error, Event, ImageData, ResolvedLayer, ResolvedShape};
+pub use engine::{
+    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape,
+};
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, DigitDisplay, FontStyle, Justify, Key, Layer, LayerKind, NumberFormat,

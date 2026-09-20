@@ -195,18 +195,25 @@ pub enum OutputMode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FontStyle {
-    /// Name of the bitmap font as registered by the host with
-    /// [`Engine::set_font`](crate::Engine::set_font) (by convention the
-    /// `.fnt` file stem).
+    /// Name of the font as registered by the host, by convention the font
+    /// file's stem: a bitmap font ([`Engine::set_font`](crate::Engine::set_font))
+    /// or an outline font (`Engine::set_outline_font`). Which kind it is
+    /// decides how the text is drawn; the layers using the style do not
+    /// change.
     pub file: String,
-    /// Glyph color multiplier, `#RRGGBB`; white keeps the font's colors.
+    /// Em size in canvas pixels. Required for outline fonts; not allowed
+    /// for bitmap fonts, which have one fixed size.
+    #[serde(default)]
+    pub size: Option<f64>,
+    /// Text color, `#RRGGBB`. For bitmap fonts it multiplies the glyph
+    /// colors, so white keeps the font's own.
     #[serde(default = "default_font_color")]
     pub color: String,
     #[serde(default)]
     pub border: Option<Border>,
 }
 
-/// An outline drawn around every glyph.
+/// A border of `width` pixels drawn outside every glyph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Border {

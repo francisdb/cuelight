@@ -147,7 +147,7 @@
       ]
     },
     "Border": {
-      "description": "An outline drawn around every glyph.",
+      "description": "A border of `width` pixels drawn outside every glyph.",
       "type": "object",
       "properties": {
         "color": {
@@ -233,13 +233,22 @@
           "default": null
         },
         "color": {
-          "description": "Glyph color multiplier, `#RRGGBB`; white keeps the font's colors.",
+          "description": "Text color, `#RRGGBB`. For bitmap fonts it multiplies the glyph\ncolors, so white keeps the font's own.",
           "type": "string",
           "default": "#FFFFFF"
         },
         "file": {
-          "description": "Name of the bitmap font as registered by the host with\n[`Engine::set_font`](crate::Engine::set_font) (by convention the\n`.fnt` file stem).",
+          "description": "Name of the font as registered by the host, by convention the font\nfile's stem: a bitmap font ([`Engine::set_font`](crate::Engine::set_font))\nor an outline font (`Engine::set_outline_font`). Which kind it is\ndecides how the text is drawn; the layers using the style do not\nchange.",
           "type": "string"
+        },
+        "size": {
+          "description": "Em size in canvas pixels. Required for outline fonts; not allowed\nfor bitmap fonts, which have one fixed size.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
         }
       },
       "required": [
