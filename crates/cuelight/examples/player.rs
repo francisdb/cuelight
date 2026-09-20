@@ -11,7 +11,8 @@
 //! myshow/
 //!   show.json           the show document (required)
 //!   test-driver.json    optional driver, picked up automatically
-//!   assets/             PNGs registered as images by filename stem
+//!   assets/             PNGs (any color type or bit depth) registered as
+//!                       images by filename stem
 //!     fonts/            bitmap fonts (.fnt plus page PNGs), registered by
 //!                       .fnt filename stem
 //! ```
@@ -614,10 +615,12 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-/// Decode a PNG into tightly packed RGBA8 (RGB gets an opaque alpha).
+/// Decode a PNG into tightly packed RGBA8: any bit depth, palette and
+/// grayscale images are converted (missing alpha becomes opaque).
 fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
     let mut buf = vec![
         0;
@@ -635,15 +638,15 @@ fn load_png(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), String> {
             .iter()
             .flat_map(|&[r, g, b]| [r, g, b, 255])
             .collect(),
-        other => {
-            return Err(format!(
-                "unsupported color type {other:?} (use RGB or RGBA)"
-            ))
-        }
+        png::ColorType::GrayscaleAlpha => buf
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[l, a]| [l, l, l, a])
+            .collect(),
+        png::ColorType::Grayscale => buf.iter().flat_map(|&l| [l, l, l, 255]).collect(),
+        other => return Err(format!("unsupported color type {other:?}")),
     };
-    if info.bit_depth != png::BitDepth::Eight {
-        return Err(format!("unsupported bit depth {:?}", info.bit_depth));
-    }
     Ok((info.width, info.height, rgba))
 }
 
