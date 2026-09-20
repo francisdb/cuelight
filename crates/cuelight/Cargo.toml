@@ -23,7 +23,7 @@ skrifa = { version = "0.44", optional = true }
 # examples only: windowed demos
 winit = "0.30"
 ctrlc = "3"
-cpal = "0.15"
+cpal = "0.18"
 log = "0.4"
 env_logger = "0.11"
 
