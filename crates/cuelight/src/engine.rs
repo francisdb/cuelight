@@ -76,6 +76,8 @@ struct RegisteredFont {
 struct TextRaster {
     image: ImageData,
     offset: [i32; 2],
+    /// The box the text was laid out in.
+    container: [f64; 2],
 }
 
 /// Caches for text rendering, filled lazily while resolving layers.
@@ -465,6 +467,43 @@ impl Engine {
         }
     }
 
+    /// A layer's content box `[x, y, width, height]` in its local space,
+    /// scaled; `None` for groups, unregistered images and text whose font
+    /// is not registered.
+    fn content_box(
+        &self,
+        root: Root,
+        layer: &Layer,
+        path: &[usize],
+        scale: f64,
+    ) -> Option<[f64; 4]> {
+        let [x, y, w, h] = match &layer.kind {
+            LayerKind::Group { .. } => return None,
+            LayerKind::Shape { shape, .. } => match *shape {
+                Shape::Rect(rect) => rect,
+                Shape::Circle([cx, cy, r]) => [cx - r, cy - r, 2.0 * r, 2.0 * r],
+            },
+            LayerKind::Image { image, size } => {
+                let data = self.images.get(image)?;
+                let [w, h] = size.unwrap_or([f64::from(data.width), f64::from(data.height)]);
+                [0.0, 0.0, w, h]
+            }
+            // The text's box: its size, or the measured text.
+            LayerKind::Text { size, align, .. } => {
+                let [w, h] = match size {
+                    Some(size) => *size,
+                    None => {
+                        let text = self.text(root, layer, path, Property::Text);
+                        let font = self.text(root, layer, path, Property::Font);
+                        self.text_raster(&font, &text, None, *align)?.container
+                    }
+                };
+                [0.0, 0.0, w, h]
+            }
+        };
+        Some([x * scale, y * scale, w * scale, h * scale])
+    }
+
     /// Rasterize (or fetch from cache) `text` in font style `style`.
     /// `None` when the style's font is not registered or nothing draws.
     fn text_raster(
@@ -501,10 +540,11 @@ impl Engine {
             .clone();
         let raster = styled
             .rasterize(text, size, align)
-            .map(|(rgba, offset, _)| {
+            .map(|(rgba, offset, container)| {
                 Arc::new(TextRaster {
                     image: ImageData::generated(rgba),
                     offset,
+                    container,
                 })
             });
         if cache.rasters.len() >= MAX_CACHED_RASTERS {
@@ -533,6 +573,17 @@ impl Engine {
                 let opacity =
                     (oa * self.number(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
                 let scale = self.number(root, layer, path, Property::Scale);
+                // Shift the layer so its anchor point lands on x/y.
+                let content_box = layer
+                    .anchor
+                    .and_then(|anchor| Some((anchor, self.content_box(root, layer, path, scale)?)));
+                let (x, y) = match content_box {
+                    Some((anchor, [bx, by, bw, bh])) => {
+                        let (ax, ay) = anchor.offset(bw, bh, 0.0, 0.0);
+                        (x + ax - bx, y + ay - by)
+                    }
+                    None => (x, y),
+                };
                 match &layer.kind {
                     LayerKind::Group { children } => {
                         self.walk(root, children, path, x, y, opacity, out)?;
@@ -656,6 +707,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                         )));
                     }
                 }
+            }
+            if matches!(layer.kind, LayerKind::Group { .. }) && layer.anchor.is_some() {
+                return Err(Error::InvalidShow(format!(
+                    "group {:?} has an anchor; groups have no content box",
+                    layer.name
+                )));
             }
             layers(show, layer.children())?;
         }

@@ -197,3 +197,16 @@ fn properties_a_layer_does_not_have_are_rejected() {
         assert!(engine.load_show(&show).is_err(), "{binding} on a shape");
     }
 }
+
+#[test]
+fn anchor_places_the_text_box() {
+    let show = SHOW.replace(
+        r#""x": 2, "y": 1, "align": "top_left" }"#,
+        r#""x": 32, "y": 8, "anchor": "bottom_right" }"#,
+    );
+    let mut engine = engine();
+    engine.load_show(&show).unwrap();
+    // "10" measures 6x4: its box's bottom-right corner lands on (32, 8).
+    let (x, y, w, h, _) = bitmap(&engine, "label");
+    assert_eq!((x, y, w, h), (26.0, 4.0, 5.0, 3.0));
+}
