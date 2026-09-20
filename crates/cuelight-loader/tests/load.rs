@@ -105,3 +105,57 @@ fn unknown_image_formats_are_reported() {
     let err = cuelight_loader::decode_image("TIFF", &[]).unwrap_err();
     assert!(err.contains(".tiff"), "{err}");
 }
+
+/// A throwaway show folder holding the engine's test font as `sans.ttf`.
+fn outline_show(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-{tag}-{}", std::process::id()));
+    let fonts = dir.join("assets/fonts");
+    std::fs::create_dir_all(&fonts).unwrap();
+    let font = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cuelight/tests/fonts/cuelight_test_sans.ttf"
+    );
+    std::fs::copy(font, fonts.join("sans.ttf")).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "o", "size": [200, 100],
+             "fonts": { "big": { "file": "sans", "size": 40 } },
+             "layers": [{ "name": "t", "type": "text", "font": "big", "text": "A1" }] }"##,
+    )
+    .unwrap();
+    dir
+}
+
+#[cfg(feature = "outline-fonts")]
+#[test]
+fn registers_outline_fonts_by_stem() {
+    let dir = outline_show("ttf");
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+    assert_eq!(loaded.fonts, ["sans"]);
+    assert!(loaded.skipped.is_empty());
+    assert!(matches!(
+        engine.resolved_layers().unwrap()[0].shape,
+        cuelight::ResolvedShape::GlyphRun { .. }
+    ));
+    // a second font with the same stem makes the style ambiguous
+    std::fs::copy(
+        dir.join("assets/fonts/sans.ttf"),
+        dir.join("assets/fonts/sans.otf"),
+    )
+    .unwrap();
+    let err = load(&mut Engine::new(), &dir).unwrap_err();
+    assert!(err.to_string().contains("already named"), "{err}");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(not(feature = "outline-fonts"))]
+#[test]
+fn without_the_feature_outline_fonts_are_skipped() {
+    let dir = outline_show("skip");
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+    assert!(loaded.fonts.is_empty());
+    assert_eq!(loaded.skipped.len(), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}

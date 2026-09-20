@@ -17,14 +17,15 @@
 //!   show.json           the show document (required)
 //!   test-driver.json    optional driver script
 //!   assets/             images, registered by filename stem
-//!     fonts/            bitmap fonts: .fnt plus its page images,
-//!                       registered by .fnt filename stem
+//!     fonts/            fonts, registered by filename stem: bitmap (.fnt
+//!                       plus its page images) or outline (.ttf, .otf)
 //! ```
 //!
 //! Where bytes come from and how they become pixels are separate concerns.
 //! Image formats are decoded by extension in [`decode_image`], each behind
 //! a cargo feature (`png`, on by default); a host that decodes images
 //! itself can turn them off and still use the folder and driver handling.
+//! Outline fonts are a feature too (`outline-fonts`, on by default).
 
 mod driver;
 
@@ -67,8 +68,9 @@ pub struct Loaded {
     /// Names of the images and fonts that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
-    /// Files under `assets/` that were left alone because no decoder for
-    /// their extension is compiled in; hosts may want to log them.
+    /// Image and font files under `assets/` that were left alone because
+    /// support for their format is not compiled in; hosts may want to log
+    /// them.
     pub skipped: Vec<PathBuf>,
 }
 
@@ -94,7 +96,9 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
             (loaded.images, loaded.skipped) = register_image_dir(engine, &assets)?;
             let font_dir = assets.join("fonts");
             if font_dir.is_dir() {
-                loaded.fonts = register_font_dir(engine, &font_dir)?;
+                let (fonts, skipped) = register_font_dir(engine, &font_dir)?;
+                loaded.fonts = fonts;
+                loaded.skipped.extend(skipped);
             }
         }
         loaded.driver = Some(path.join("test-driver.json")).filter(|p| p.is_file());
@@ -137,27 +141,54 @@ pub fn register_image_dir(
     Ok((names, skipped))
 }
 
-/// Register every `*.fnt` directly in `dir` as a bitmap font named by its
-/// filename stem; page images are read from `dir` as the description
-/// names them. Returns the names.
-pub fn register_font_dir(engine: &mut Engine, dir: &Path) -> Result<Vec<String>, LoadError> {
-    let mut names = Vec::new();
+/// Register every font directly in `dir` under its filename stem: `*.fnt`
+/// bitmap fonts (page images are read from `dir` as the description names
+/// them) and `*.ttf` / `*.otf` outline fonts. Returns the names, and the
+/// outline font files skipped because the `outline-fonts` feature is off.
+/// Two fonts sharing a stem are an error: a style could mean either.
+pub fn register_font_dir(
+    engine: &mut Engine,
+    dir: &Path,
+) -> Result<(Vec<String>, Vec<PathBuf>), LoadError> {
+    let mut names: Vec<String> = Vec::new();
+    // Only filled when outline font support is compiled out.
+    #[cfg_attr(feature = "outline-fonts", allow(unused_mut))]
+    let mut skipped: Vec<PathBuf> = Vec::new();
     for path in files_in(dir)? {
-        if extension(&path) != "fnt" {
+        let extension = extension(&path);
+        if !matches!(extension.as_str(), "fnt" | "ttf" | "otf") {
             continue;
         }
         let name = stem(&path);
-        let fnt = read_to_string(&path)?;
-        register_font(engine, &name, &fnt, |page| {
-            std::fs::read(dir.join(page)).ok()
-        })
-        .map_err(|message| LoadError::Asset {
+        let asset_error = |message: String| LoadError::Asset {
             path: path.clone(),
             message,
-        })?;
+        };
+        if names.contains(&name) {
+            return Err(asset_error(format!(
+                "another font in this folder is already named {name:?}"
+            )));
+        }
+        if extension == "fnt" {
+            let fnt = read_to_string(&path)?;
+            register_font(engine, &name, &fnt, |page| {
+                std::fs::read(dir.join(page)).ok()
+            })
+            .map_err(asset_error)?;
+        } else {
+            #[cfg(feature = "outline-fonts")]
+            engine
+                .set_outline_font(&name, read(&path)?)
+                .map_err(|e| asset_error(e.to_string()))?;
+            #[cfg(not(feature = "outline-fonts"))]
+            {
+                skipped.push(path);
+                continue;
+            }
+        }
         names.push(name);
     }
-    Ok(names)
+    Ok((names, skipped))
 }
 
 /// Decode image `bytes` of the format `extension` names (`"png"`) and
