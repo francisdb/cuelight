@@ -56,8 +56,8 @@ A show exists in two forms:
 Either way the engine only ever receives the single JSON document through
 `load_show` plus `set_image` calls; it does no file I/O itself. Resolving
 a folder (reading the manifest, decoding and registering `assets/`,
-picking up the driver) is host-side convention, implemented today by the
-`player` example. A zipped folder is the natural future single-file
+picking up the driver) is host-side convention, implemented by the
+`cuelight-loader` crate. A zipped folder is the natural future single-file
 distribution form.
 
 ## Top level
@@ -362,7 +362,7 @@ can tell the host that something finished. Output is either
 `resolved_layers()` (a flat, GPU-free draw list) or the `render` feature's
 vello rasterizer. Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
-host's business — see the `player` and `mic_pop` examples.
+host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
 ## Regenerating the schema
 
