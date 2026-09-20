@@ -113,8 +113,8 @@ impl Fps {
         }
         digits.reverse();
 
-        let (dw, dh, t, gap) = (9.0 * scale, 16.0 * scale, 2.0 * scale, 4.0 * scale);
-        let (margin, pad) = (8.0 * scale, 6.0 * scale);
+        let (dw, dh, t, gap) = (5.0 * scale, 9.0 * scale, 1.0 * scale, 2.0 * scale);
+        let (margin, pad) = (2.0 * scale, 3.0 * scale);
         let total_w = digits.len() as f64 * (dw + gap) - gap;
         scene.fill(
             Fill::NonZero,
@@ -126,7 +126,7 @@ impl Fps {
                 margin,
                 margin + total_w + 2.0 * pad,
                 margin + dh + 2.0 * pad,
-                4.0 * scale,
+                2.0 * scale,
             ),
         );
         let color = Color::from_rgba8(255, 255, 255, 230);
