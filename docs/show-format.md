@@ -290,6 +290,16 @@ A timeline is a keyframed animation owned by its layer:
   it stops and its properties fall back (see precedence); with `loop`
   the playhead wraps instead. For a seamless loop, author each track's
   value at the end equal to its value at 0.
+- `delay` (seconds) postpones the first key after the timeline starts;
+  meanwhile it does not own its properties. A loop or repeat does not
+  wait again, so `delay` plus `loop` is "wait, then repeat forever".
+- `repeat` plays it that many times (fractions stop partway: `2.5` ends
+  halfway through the third play); `loop` repeats forever. The two cannot
+  be combined.
+- `on_end` names a trigger fired when the timeline finishes (after its
+  last repeat; loops never finish). It behaves exactly like a host firing
+  the trigger, so it can start other timelines or restart a sequence, and
+  it is reported to the host as an event (see [Host contract](#host-contract)).
 
 ## Property precedence
 
@@ -306,7 +316,9 @@ visible jump, make base values match the timeline's endpoints.
 ## Host contract
 
 The engine is driven exclusively through four calls: `load_show` (JSON in),
-`set_variable`, `trigger`, and `advance_frame(dt)`. Output is either
+`set_variable`, `trigger`, and `advance_frame(dt)`. What the show itself
+fires (`on_end` triggers) comes back through `drain_events()`, so content
+can tell the host that something finished. Output is either
 `resolved_layers()` (a flat, GPU-free draw list) or the `render` feature's
 vello rasterizer. Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the

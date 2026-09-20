@@ -424,8 +424,21 @@ pub struct Timeline {
     pub trigger: Option<String>,
     #[serde(default)]
     pub autoplay: bool,
+    /// Repeat forever. Cannot be combined with `repeat`.
     #[serde(default, rename = "loop")]
     pub looping: bool,
+    /// Seconds to wait after starting before the first key plays; the
+    /// timeline does not own its properties meanwhile. Loops and repeats
+    /// do not wait again.
+    #[serde(default)]
+    pub delay: f64,
+    /// Number of plays (fractions allowed: 2.5 stops halfway through the
+    /// third); once when omitted.
+    #[serde(default)]
+    pub repeat: Option<f64>,
+    /// Trigger fired when the timeline finishes (never for loops).
+    #[serde(default)]
+    pub on_end: Option<String>,
     pub tracks: Vec<Track>,
 }
 
@@ -477,12 +490,30 @@ impl Track {
 }
 
 impl Timeline {
-    /// Duration of the longest track.
+    /// Duration of the longest track: one play.
     pub fn duration(&self) -> f64 {
         self.tracks
             .iter()
             .map(Track::duration)
             .fold(0.0_f64, f64::max)
+    }
+
+    /// Time after its delay at which a non-looping timeline finishes.
+    pub fn play_time(&self) -> f64 {
+        self.duration() * self.repeat.unwrap_or(1.0).max(0.0)
+    }
+
+    /// Where within one play the tracks are sampled, `elapsed` seconds
+    /// after the delay; `None` while still delayed.
+    pub fn local_time(&self, elapsed: f64) -> Option<f64> {
+        if elapsed < 0.0 {
+            return None;
+        }
+        let duration = self.duration();
+        if self.repeat.is_some() && duration > 0.0 && elapsed < self.play_time() {
+            return Some(elapsed % duration);
+        }
+        Some(elapsed)
     }
 }
 

@@ -102,8 +102,23 @@ struct Playhead {
     layer_path: Vec<usize>,
     /// Timeline index within that layer.
     timeline: usize,
+    /// Seconds since the delay ended: negative while delayed.
     time: f64,
 }
+
+/// Something the show did that hosts may want to react to; collect them
+/// with [`Engine::drain_events`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Event {
+    /// The show fired this trigger itself (a timeline's `on_end`). Triggers
+    /// the host fires are not echoed back.
+    Trigger(String),
+}
+
+/// Events kept while the host does not drain them; the oldest are dropped
+/// beyond this so an uninterested host costs nothing.
+const MAX_PENDING_EVENTS: usize = 256;
 
 /// The engine: owns the loaded show and all runtime state.
 ///
@@ -121,6 +136,7 @@ pub struct Engine {
     text_cache: Mutex<TextCache>,
     playing: Vec<Playhead>,
     active_scene: Option<usize>,
+    events: std::collections::VecDeque<Event>,
     time: f64,
 }
 
@@ -147,6 +163,7 @@ impl Engine {
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         self.variables = show.variables.clone();
         self.playing.clear();
+        self.events.clear();
         self.time = 0.0;
         self.active_scene = (!show.scenes.is_empty()).then_some(0);
         self.show = Some(show);
@@ -293,11 +310,13 @@ impl Engine {
 
     /// Advance time by `dt` seconds: running timelines progress, looping
     /// ones wrap, finished ones stop (their properties fall back to
-    /// bindings/base values).
+    /// bindings/base values) and fire their `on_end` trigger, which is
+    /// also reported through [`drain_events`](Engine::drain_events).
     pub fn advance_frame(&mut self, dt: f64) {
         self.time += dt;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
+        let mut on_end: Vec<String> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
             p.time += dt;
             let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
@@ -305,20 +324,34 @@ impl Engine {
                 finished.push(i);
                 continue;
             };
+            if p.time < 0.0 {
+                continue;
+            }
             let duration = tl.duration();
-            if duration <= 0.0 {
+            if tl.looping && duration > 0.0 {
+                p.time %= duration;
+            } else if duration <= 0.0 || p.time >= tl.play_time() {
                 finished.push(i);
-            } else if p.time >= duration {
-                if tl.looping {
-                    p.time %= duration;
-                } else {
-                    finished.push(i);
-                }
+                on_end.extend(tl.on_end.clone());
             }
         }
         for i in finished.into_iter().rev() {
             self.playing.remove(i);
         }
+        for name in on_end {
+            self.trigger(&name);
+            if self.events.len() == MAX_PENDING_EVENTS {
+                self.events.pop_front();
+            }
+            self.events.push_back(Event::Trigger(name));
+        }
+    }
+
+    /// Take the events raised since the last call, oldest first. This is
+    /// how content talks back to the host: a show can end a sequence with
+    /// `on_end` and the host reacts (award points, switch hardware, ...).
+    pub fn drain_events(&mut self) -> Vec<Event> {
+        self.events.drain(..).collect()
     }
 
     /// Seconds advanced since the show loaded.
@@ -390,11 +423,15 @@ impl Engine {
             self.playing.retain(|p| {
                 !(p.root == root && p.layer_path == layer_path && p.timeline == timeline)
             });
+            let delay = root_layers(show, root)
+                .and_then(|layers| layer_at(layers, &layer_path))
+                .and_then(|l| l.timelines.get(timeline))
+                .map_or(0.0, |tl| tl.delay.max(0.0));
             self.playing.push(Playhead {
                 root,
                 layer_path,
                 timeline,
-                time: 0.0,
+                time: -delay,
             });
         }
     }
@@ -420,9 +457,15 @@ impl Engine {
             if p.root != root || p.layer_path != path {
                 continue;
             }
-            let tracks = layer.timelines.get(p.timeline).map(|tl| tl.tracks.iter());
-            for track in tracks.into_iter().flatten().filter(|t| t.property == prop) {
-                if let Some(sampled) = track.sample(p.time) {
+            let Some(tl) = layer.timelines.get(p.timeline) else {
+                continue;
+            };
+            // Still waiting out its delay: it does not own anything yet.
+            let Some(time) = tl.local_time(p.time) else {
+                continue;
+            };
+            for track in tl.tracks.iter().filter(|t| t.property == prop) {
+                if let Some(sampled) = track.sample(time) {
                     v = Value::Number(sampled);
                 }
             }
@@ -721,6 +764,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
             }
             for timeline in &layer.timelines {
+                if timeline.looping && timeline.repeat.is_some() {
+                    return Err(Error::InvalidShow(format!(
+                        "timeline {:?} of layer {:?} sets both loop and repeat",
+                        timeline.name, layer.name
+                    )));
+                }
                 if let Some(track) = timeline.tracks.iter().find(|t| !t.property.is_numeric()) {
                     return Err(Error::InvalidShow(format!(
                         "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
