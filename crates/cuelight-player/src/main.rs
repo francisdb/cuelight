@@ -133,6 +133,8 @@ struct App {
     // One vello renderer per wgpu device the context hands out.
     renderers: Vec<Option<vello::Renderer>>,
     state: Option<RenderState>,
+    /// The window's newest size, waiting for the next redraw.
+    pending_size: Option<(u32, u32)>,
     occluded: bool,
     last_frame: Instant,
     fps: common::Fps,
@@ -202,15 +204,31 @@ impl App {
 
     fn redraw(&mut self) {
         let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f64().min(0.1);
+        let elapsed = now.duration_since(self.last_frame).as_secs_f64();
+        if elapsed > 0.034 {
+            log::debug!("long frame: {:.0} ms since the last one", elapsed * 1000.0);
+        }
+        let dt = elapsed.min(0.1);
         self.last_frame = now;
         self.advance_driver(dt);
-        let Some(state) = &self.state else { return };
+        let Some(state) = &mut self.state else { return };
         self.engine.advance_frame(dt);
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
         }
 
+        if let Some((width, height)) = self.pending_size.take() {
+            let config = &state.surface.config;
+            if (width, height) != (config.width, config.height) {
+                let started = Instant::now();
+                self.context
+                    .resize_surface(&mut state.surface, width, height);
+                log::debug!(
+                    "surface resized to {width}x{height} physical in {:.1} ms",
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+            }
+        }
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
         let device_handle = &self.context.devices[surface.dev_id];
@@ -344,13 +362,12 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
             }
+            // Only noted here: a drag can deliver several sizes per frame,
+            // and each reconfiguration of the surface costs milliseconds.
+            // The next redraw applies the last one.
             WindowEvent::Resized(size) => {
-                log::debug!("resized to {}x{} physical", size.width, size.height);
-                if let Some(state) = &mut self.state {
-                    if size.width > 0 && size.height > 0 {
-                        self.context
-                            .resize_surface(&mut state.surface, size.width, size.height);
-                    }
+                if size.width > 0 && size.height > 0 {
+                    self.pending_size = Some((size.width, size.height));
                 }
             }
             WindowEvent::Occluded(occluded) => {
@@ -474,6 +491,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         context: RenderContext::new(),
         renderers: Vec::new(),
         state: None,
+        pending_size: None,
         occluded: false,
         last_frame: Instant::now(),
         fps: common::Fps::new(),
