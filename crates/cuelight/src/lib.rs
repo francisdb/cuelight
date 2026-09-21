@@ -12,9 +12,13 @@
 //! - [`Engine::trigger`]: fire a named event
 //! - [`Engine::advance_frame`]: advance time by `dt` seconds
 //!
-//! plus obtaining the rendered output: with the `render` feature enabled,
-//! [`render::Renderer`] rasterizes the engine's resolved show into an
-//! offscreen wgpu texture via vello and can read it back as RGBA pixels.
+//! plus obtaining the output. [`Engine::resolved_layers`] is a flat draw
+//! list for hosts that draw themselves: the engine only describes what to
+//! draw and never touches the GPU. With the `render`
+//! feature, [`render::Renderer`] renders offscreen to RGBA pixels and
+//! [`render::Presenter`] puts the show on a host surface, fitted and with
+//! its output mode applied. [`Engine::drain_events`] hands back what the
+//! show itself fired.
 //!
 //! Everything else belongs to hosts and adapters, not this crate.
 
