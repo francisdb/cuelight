@@ -260,6 +260,15 @@ fn wrapped_values_pick_their_way_round() {
     assert!((reel.value_at(9.0, 0.0, 0.5) - 9.5).abs() < 1e-9);
     assert_eq!(reel.value_at(9.0, 0.0, 1.0), 0.0);
     assert_eq!(reel.value_at(9.0, 0.0, 5.0), 0.0);
+    // An ease that overshoots: the reel swings past the digit, through the
+    // wrap if it has to, and still lands exactly.
+    let snap = Transition {
+        ease: Easing::BackOut,
+        ..reel
+    };
+    let peak = snap.value_at(9.0, 0.0, 0.6);
+    assert!(peak > 0.0 && peak < 0.2, "past 0 on the far side: {peak}");
+    assert_eq!(snap.value_at(9.0, 0.0, 1.0), 0.0);
     // Not moving is not a full turn.
     assert_eq!(t(Some(Direction::Backward)).value_at(90.0, 90.0, 0.5), 90.0);
     assert_eq!(t(Some(Direction::Forward)).value_at(90.0, 450.0, 0.5), 90.0);

@@ -609,6 +609,9 @@ pub enum Direction {
 impl Transition {
     /// The value `elapsed` seconds into a change from `start` to `target`.
     pub fn value_at(&self, start: f64, target: f64, elapsed: f64) -> f64 {
+        // Decided by time, not by progress: an ease that overshoots passes
+        // 1 on the way.
+        let done = elapsed >= self.duration;
         let progress = self.ease.apply(elapsed / self.duration);
         let Some(wrap) = self.wrap else {
             return start + (target - start) * progress;
@@ -620,7 +623,7 @@ impl Transition {
             Direction::Backward if forward == 0.0 => 0.0,
             Direction::Backward => forward - wrap,
         };
-        if progress >= 1.0 {
+        if done {
             // Exactly the target, not a rounding step away from it.
             return target.rem_euclid(wrap);
         }
