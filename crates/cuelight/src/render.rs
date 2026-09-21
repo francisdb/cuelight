@@ -10,12 +10,12 @@
 
 use crate::engine::{Engine, ResolvedShape};
 use crate::lru::ByteLru;
-use crate::model::{parse_color, OutputMode, Scaling};
+use crate::model::{parse_color, DotShape, OutputMode, Pass, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
-use vello::peniko::{Blob, Color, Fill, ImageAlphaType, ImageBrush, ImageFormat};
+use vello::peniko::{Blob, Color, Extend, Fill, ImageAlphaType, ImageBrush, ImageFormat, Mix};
 use vello::wgpu;
 
 #[derive(Debug, thiserror::Error)]
@@ -665,6 +665,43 @@ pub struct Presented {
 pub struct Presenter {
     images: ImageCache,
     native: Option<NativeTarget>,
+    /// The grille of the dots pass, for the dot size and shape it was made.
+    grille: Option<(f64, DotShape, vello::peniko::ImageData)>,
+}
+
+/// Pixels across one tile of the dots grille: one dot with its surround.
+const GRILLE_TILE: u32 = 64;
+
+/// One tile of the grille a dots pass lays over the frame: black with a
+/// transparent dot-shaped hole, its edge softened over a sixteenth of the
+/// pitch so dots stay round at a few surface pixels each.
+fn grille_tile(size: f64, shape: DotShape) -> vello::peniko::ImageData {
+    let n = GRILLE_TILE;
+    let radius = size * f64::from(n) / 2.0;
+    let mut pixels = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let (dx, dy) = (
+                f64::from(x) + 0.5 - f64::from(n) / 2.0,
+                f64::from(y) + 0.5 - f64::from(n) / 2.0,
+            );
+            let distance = match shape {
+                DotShape::Square => dx.abs().max(dy.abs()),
+                _ => dx.hypot(dy),
+            };
+            // 0 inside the dot, 1 outside, a soft step in between.
+            let soft = f64::from(n) / 16.0;
+            let cover = ((distance - radius) / soft + 0.5).clamp(0.0, 1.0);
+            pixels.extend([0, 0, 0, (cover * 255.0).round() as u8]);
+        }
+    }
+    vello::peniko::ImageData {
+        data: Blob::new(Arc::new(pixels)),
+        format: ImageFormat::Rgba8,
+        alpha_type: ImageAlphaType::Alpha,
+        width: n,
+        height: n,
+    }
 }
 
 /// The show rendered at its own size, and its converted copy that vello
@@ -737,8 +774,15 @@ impl Presenter {
         let content = build_vello_scene(engine, &mut self.images)?;
         let background = background_color(engine);
 
+        let dots = engine
+            .passes()
+            .into_iter()
+            .map(|Pass::Dots(dots)| dots)
+            .next();
         let mut scene = vello::Scene::new();
-        if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth {
+        // Dots are made of canvas pixels, so they need the frame at its own
+        // size as well.
+        if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth && dots.is_none() {
             scene.append(&content, Some(placement));
         } else {
             if self.native.as_ref().is_some_and(|n| n.size != size) {
@@ -778,11 +822,59 @@ impl Presenter {
             queue.submit([encoder.finish()]);
             renderer.mark_override_image_dirty(&native.image);
             let mut brush = ImageBrush::new(native.image.clone());
-            if scaling == Scaling::PixelPerfect {
+            // A dot needs a few surface pixels to be one.
+            let dots = dots.filter(|_| scale >= 3.0);
+            if scaling == Scaling::PixelPerfect || dots.is_some() {
                 // Nearest neighbor: every canvas pixel becomes a crisp block.
                 brush = brush.with_quality(vello::peniko::ImageQuality::Low);
             }
-            scene.draw_image(&brush, placement);
+            match dots {
+                None => scene.draw_image(&brush, placement),
+                Some(dots) => {
+                    let [w, h] = size.map(f64::from);
+                    let frame = Rect::new(0.0, 0.0, w, h);
+                    let smooth = ImageBrush::new(native.image.clone());
+                    // Dots that are off still show: nothing gets darker
+                    // than their color.
+                    let unlit = dots.unlit.as_deref().and_then(parse_color);
+                    if let Some([r, g, b, _]) = unlit {
+                        let color = Color::from_rgba8(r, g, b, 255);
+                        scene.fill(Fill::NonZero, placement, color, None, &frame);
+                        scene.push_layer(Fill::NonZero, Mix::Lighten, 1.0, placement, &frame);
+                    }
+                    scene.draw_image(&brush, placement);
+                    if unlit.is_some() {
+                        scene.pop_layer();
+                    }
+                    // The grille: one tile per canvas pixel, repeated.
+                    let grille = match &self.grille {
+                        Some((s, shape, tile)) if *s == dots.size && *shape == dots.shape => {
+                            tile.clone()
+                        }
+                        _ => {
+                            let tile = grille_tile(dots.size, dots.shape);
+                            self.grille = Some((dots.size, dots.shape, tile.clone()));
+                            tile
+                        }
+                    };
+                    let tiles = ImageBrush::new(grille).with_extend(Extend::Repeat);
+                    let per_pixel = Affine::scale(1.0 / f64::from(GRILLE_TILE));
+                    scene.fill(Fill::NonZero, placement, &tiles, Some(per_pixel), &frame);
+                    // Glow: the frame once more, smoothly scaled so every
+                    // pixel spreads into its neighbors, added on top.
+                    if dots.glow > 0.0 {
+                        scene.push_layer(
+                            Fill::NonZero,
+                            Mix::Screen,
+                            dots.glow as f32,
+                            placement,
+                            &frame,
+                        );
+                        scene.draw_image(&smooth, placement);
+                        scene.pop_layer();
+                    }
+                }
+            }
         }
 
         let [r, g, b, a] = output.apply_pixel(background.to_rgba8().to_u8_array());

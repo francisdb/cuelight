@@ -234,6 +234,50 @@
         }
       ]
     },
+    "DotShape": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "round"
+          ]
+        },
+        {
+          "description": "Square dots with gaps: an LED matrix.",
+          "type": "string",
+          "const": "square"
+        }
+      ]
+    },
+    "Dots": {
+      "description": "The dot matrix look: canvas pixels shown as separate dots on black.\nBelow three surface pixels per dot there is no room for it and the frame\nis shown plain.",
+      "type": "object",
+      "properties": {
+        "glow": {
+          "description": "How much lit dots bleed into the dark around them, 0 (not at all,\nthe default) to 1.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "shape": {
+          "$ref": "#/$defs/DotShape",
+          "default": "round"
+        },
+        "size": {
+          "description": "Dot diameter as a share of the pixel pitch, above 0 up to 1.",
+          "type": "number",
+          "format": "double",
+          "default": 0.8
+        },
+        "unlit": {
+          "description": "Color of a dot that is off, `#RRGGBB`: the faint dots of a real\npanel. Dots never get darker than this. None by default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "Easing": {
       "description": "Easing applied to the segment that ends at the keyframe carrying it.",
       "oneOf": [
@@ -628,6 +672,16 @@
           ],
           "default": null
         },
+        "passes": {
+          "description": "Effects applied to the finished frame as it is shown, in order. A\nscene's list replaces the show's; an empty list turns them off.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Pass"
+          }
+        },
         "scaling": {
           "description": "How hosts scale the frame up to their surface; `smooth` by default.",
           "anyOf": [
@@ -667,6 +721,24 @@
           "description": "Luminance quantized to 16 levels (4 bits), times the tint.",
           "type": "string",
           "const": "gray4"
+        }
+      ]
+    },
+    "Pass": {
+      "description": "An effect on the finished frame, applied where it is shown (windows, the\nweb player), not by the offscreen renderer: it works at the surface's\nresolution, which a frame at canvas size does not have.",
+      "oneOf": [
+        {
+          "description": "Every canvas pixel becomes a dot, as on a dot matrix display.",
+          "type": "object",
+          "properties": {
+            "dots": {
+              "$ref": "#/$defs/Dots"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "dots"
+          ]
         }
       ]
     },

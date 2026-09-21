@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Property, Scaling, Shape,
-    Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Pass, Property, Scaling,
+    Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::segments;
@@ -248,6 +248,22 @@ impl Engine {
         {
             OutputColor::from_output(output)
                 .ok_or_else(|| Error::InvalidColor(output.tint.clone().unwrap_or_default()))?;
+            for pass in output.passes.iter().flatten() {
+                let Pass::Dots(dots) = pass;
+                if !(dots.size > 0.0 && dots.size <= 1.0) {
+                    return Err(Error::InvalidShow(
+                        "a dots pass needs a size above 0, up to 1".into(),
+                    ));
+                }
+                if !(0.0..=1.0).contains(&dots.glow) {
+                    return Err(Error::InvalidShow(
+                        "a dots pass needs a glow from 0 to 1".into(),
+                    ));
+                }
+                if let Some(unlit) = &dots.unlit {
+                    parse_color(unlit).ok_or_else(|| Error::InvalidColor(unlit.clone()))?;
+                }
+            }
         }
         validate(&show)?;
         for (name, style) in &show.fonts {
@@ -453,6 +469,13 @@ impl Engine {
     pub fn output(&self) -> OutputColor {
         // Tints were validated at load.
         OutputColor::from_output(&self.effective_output()).unwrap_or_default()
+    }
+
+    /// Effects hosts apply to the current frame as they show it (the active
+    /// scene's list, else the show's), in order. The presenter of the
+    /// `render` feature does.
+    pub fn passes(&self) -> Vec<Pass> {
+        self.effective_output().passes.unwrap_or_default()
     }
 
     /// How hosts should scale the current frame up to their surface (the

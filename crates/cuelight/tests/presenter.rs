@@ -217,3 +217,42 @@ fn pixel_perfect_scaling_never_blends_canvas_pixels() {
     assert_eq!(at(left - 1, 20), [0, 0, 0, 255]);
     assert_eq!(at(left + 192, 20), [0, 0, 0, 255]);
 }
+
+#[test]
+fn dots_pass_shows_canvas_pixels_as_dots_on_black() {
+    // 8x4 canvas, left half lit, shown at 10 surface pixels per dot.
+    const DOTS: &str = r##"{ "name": "d", "size": [8, 4], "background": "#000000",
+      "output": { "mode": "gray4", "tint": "#FF8000",
+                  "passes": [ { "dots": { "size": 0.8, "unlit": "#301000" } } ] },
+      "layers": [
+        { "name": "lit", "type": "shape", "shape": { "rect": [0, 0, 4, 4] }, "fill": "#FFFFFF" }
+      ],
+      "scenes": [ { "name": "on", "trigger": "on" },
+                  { "name": "plain", "trigger": "plain", "output": { "passes": [] } } ] }"##;
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(DOTS).unwrap();
+    let mut presenter = Presenter::new();
+    let (w, h) = (80u32, 40u32);
+    let pixels = present(&mut gpu, &mut presenter, &engine, [w, h]);
+    if let Some(path) = std::env::var_os("CUELIGHT_DUMP_DOTS") {
+        let frame = cuelight::render::RgbaFrame {
+            width: w,
+            height: h,
+            pixels: pixels.iter().flatten().copied().collect(),
+        };
+        frame.write_png(path).unwrap();
+    }
+    let at = |x: u32, y: u32| pixels[(y * w + x) as usize];
+    let near = |a: [u8; 4], b: [u8; 4]| a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2);
+    // The middle of a lit dot, the dark between four dots, the middle of a
+    // dot that is off.
+    assert!(near(at(5, 5), [255, 128, 0, 255]), "{:?}", at(5, 5));
+    assert!(near(at(10, 10), [0, 0, 0, 255]), "{:?}", at(10, 10));
+    assert!(near(at(75, 5), [0x30, 0x10, 0, 255]), "{:?}", at(75, 5));
+
+    // A scene can turn the passes off again.
+    engine.trigger("plain");
+    let plain = present(&mut gpu, &mut presenter, &engine, [w, h]);
+    assert!(near(plain[(10 * w + 10) as usize], [255, 128, 0, 255]));
+}
