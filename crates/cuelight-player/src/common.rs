@@ -54,6 +54,15 @@ pub fn log_window_info(window: &winit::window::Window) {
     );
 }
 
+/// Whether the window lives on a Wayland compositor.
+pub fn is_wayland(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    matches!(
+        window.window_handle().map(|h| h.as_raw()),
+        Ok(RawWindowHandle::Wayland(_))
+    )
+}
+
 /// Log which GPU and wgpu backend the surface's device runs on.
 pub fn log_adapter(context: &vello::util::RenderContext, dev_id: usize) {
     let info = context.devices[dev_id].adapter().get_info();
@@ -92,6 +101,7 @@ impl Fps {
         let elapsed = self.since.elapsed().as_secs_f64();
         if elapsed >= 0.5 {
             self.value = f64::from(self.frames) / elapsed;
+            log::trace!("{:.0} frames per second", self.value);
             self.frames = 0;
             self.since = Instant::now();
         }
