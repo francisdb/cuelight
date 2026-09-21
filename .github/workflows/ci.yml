@@ -40,6 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Install ALSA headers (for cpal, examples only)
         if: runner.os == 'Linux'
@@ -50,6 +51,9 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: clippy (no default features)
         run: cargo clippy --workspace --exclude cuelight-player --all-targets --no-default-features -- -D warnings
+      - name: clippy (web player, wasm32)
+        # the crate is empty on other targets, so this is its only check
+        run: cargo clippy -p cuelight-web --target wasm32-unknown-unknown -- -D warnings
       - name: docs
         run: cargo doc --workspace --no-deps
         env:

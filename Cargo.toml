@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/cuelight", "crates/cuelight-loader", "crates/cuelight-player"]
+members = [
+    "crates/cuelight",
+    "crates/cuelight-loader",
+    "crates/cuelight-player",
+    "crates/cuelight-web",
+]
 
 [workspace.package]
 version = "0.0.1"

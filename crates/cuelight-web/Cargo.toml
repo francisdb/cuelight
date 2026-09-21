@@ -1,0 +1,33 @@
+[package]
+name = "cuelight-web"
+description = "Play cuelight shows in a browser: a WebGPU canvas player with a small JavaScript API"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "animation", "player", "wasm", "webgpu"]
+categories = ["multimedia", "wasm", "web-programming"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Everything is wasm32 only: on other targets the crate is empty, so the
+# workspace still builds and tests natively without the web stack.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cuelight = { path = "../cuelight", version = "0.0.1" }
+cuelight-loader = { path = "../cuelight-loader", version = "0.0.1" }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+serde_json = "1"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "CssStyleDeclaration",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "Navigator",
+    "Response",
+    "Window",
+    "console",
+] }
