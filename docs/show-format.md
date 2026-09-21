@@ -322,6 +322,29 @@ By default a bound property jumps when its variable changes. With a
   a sheet with one frame per digit. `direction` picks the way round:
   `shortest` (default), `forward` (a reel: 9 to 0 rolls on) or `backward`.
 
+- `step`: the size of one move. A larger change plays as several moves in
+  a row, each taking `duration` with the `ease` applied per move, the last
+  one shorter when the change is no whole number of steps: a reel kicked
+  digit by digit.
+- `offset`: motion added on top of a move, along its direction of travel.
+  Keys like a timeline track's: `t` in seconds from the start of the move,
+  `v` in the units of the binding's result, optional `ease`. It has to
+  start and end at 0. Unlike an overshooting ease, which swings by a share
+  of the distance, an offset is the same size however far the move goes.
+  With `step` every move gets it, and a move lasts as long as the longer of
+  `duration` and the offset.
+
+A score reel from a sheet with one frame per digit: kicked one digit at a
+time, there in 0.12 s, settling against its stop by an eighth of a digit:
+
+```json
+{ "property": "frame", "variable": "credits",
+  "transition": { "duration": 0.12, "ease": "quad_in", "step": 1,
+                  "wrap": 10, "direction": "forward",
+                  "offset": [ { "t": 0.12, "v": 0 }, { "t": 0.17, "v": 0.12 },
+                              { "t": 0.22, "v": 0 } ] } }
+```
+
 What is eased is the binding's result, after `map`, `scale` and `offset`,
 so a map from states to opacities fades between them. On a `text` binding
 a number counts up or down before it is formatted, in whole numbers when
