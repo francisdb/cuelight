@@ -43,6 +43,8 @@ struct App {
     // One vello renderer per wgpu device the context hands out.
     renderers: Vec<Option<vello::Renderer>>,
     state: Option<RenderState>,
+    /// The window's newest size, waiting for the next redraw.
+    pending_size: Option<(u32, u32)>,
     occluded: bool,
     started: Instant,
     last_frame: Instant,
@@ -53,7 +55,7 @@ struct App {
 
 impl App {
     fn redraw(&mut self) {
-        let Some(state) = &self.state else { return };
+        let Some(state) = &mut self.state else { return };
 
         // Drive the engine: measured dt, a pulsing score and a periodic
         // trigger so the window keeps animating.
@@ -72,6 +74,13 @@ impl App {
 
         // Fit the show into the window: uniform scale, centered.
         let [show_w, show_h] = self.engine.show().expect("show loaded").size;
+        if let Some((width, height)) = self.pending_size.take() {
+            let config = &state.surface.config;
+            if (width, height) != (config.width, config.height) {
+                self.context
+                    .resize_surface(&mut state.surface, width, height);
+            }
+        }
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
         let scale = (f64::from(sw) / f64::from(show_w)).min(f64::from(sh) / f64::from(show_h));
@@ -199,13 +208,12 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
             }
+            // Only noted here: a drag can deliver several sizes per frame
+            // and reconfiguring the surface costs milliseconds each time.
+            // The next redraw applies the last one.
             WindowEvent::Resized(size) => {
-                log::debug!("resized to {}x{} physical", size.width, size.height);
-                if let Some(state) = &mut self.state {
-                    if size.width > 0 && size.height > 0 {
-                        self.context
-                            .resize_surface(&mut state.surface, size.width, size.height);
-                    }
+                if size.width > 0 && size.height > 0 {
+                    self.pending_size = Some((size.width, size.height));
                 }
             }
             WindowEvent::Occluded(occluded) => {
@@ -266,6 +274,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         context: RenderContext::new(),
         renderers: Vec::new(),
         state: None,
+        pending_size: None,
         occluded: false,
         started: now,
         last_frame: now,
