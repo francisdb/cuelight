@@ -179,3 +179,41 @@ fn a_scene_can_switch_to_full_color_and_back() {
     let back = present(&mut gpu, &mut presenter, &engine, [16, 8]);
     assert_eq!(center_right(&back), [136, 68, 0, 255]);
 }
+
+#[test]
+fn pixel_perfect_scaling_never_blends_canvas_pixels() {
+    // Anti-aliased content (a circle, segment digits) on a 64x16 canvas,
+    // shown in a target that is no multiple of it: every canvas pixel has
+    // to come out as one uniform block, none stretched or blended.
+    const DMD: &str = r##"{ "name": "d", "size": [64, 16], "background": "#000000",
+      "output": { "mode": "gray4", "tint": "#FF8000", "scaling": "pixel_perfect" },
+      "layers": [
+        { "name": "dot", "type": "shape", "shape": { "circle": [52.3, 8.4, 5.5] }, "fill": "#FFFFFF" },
+        { "name": "score", "type": "digits", "digits": 3, "size": [36, 14], "x": 2, "y": 1,
+          "text": "128",
+          "display": { "segments": { "style": "numeric7", "fill": "#FFFFFF", "unlit": "#303030" } } }
+      ] }"##;
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(DMD).unwrap();
+    let mut presenter = Presenter::new();
+    // 3x fits (192x48), letterboxed at (11, 4) in 215x57.
+    let (w, h, k, left, top) = (215u32, 57u32, 3u32, 11u32, 4u32);
+    let pixels = present(&mut gpu, &mut presenter, &engine, [w, h]);
+    let at = |x: u32, y: u32| pixels[(y * w + x) as usize];
+    let mut lit = 0;
+    for by in 0..16 {
+        for bx in 0..64 {
+            let (x0, y0) = (left + bx * k, top + by * k);
+            let block = at(x0, y0);
+            lit += u32::from(block != [0, 0, 0, 255]);
+            for (dx, dy) in [(1, 0), (2, 0), (0, 1), (0, 2), (2, 2)] {
+                assert_eq!(at(x0 + dx, y0 + dy), block, "canvas pixel ({bx}, {by})");
+            }
+        }
+    }
+    assert!(lit > 50, "the content should be there: {lit} lit pixels");
+    // And nothing outside the 192x48 picture.
+    assert_eq!(at(left - 1, 20), [0, 0, 0, 255]);
+    assert_eq!(at(left + 192, 20), [0, 0, 0, 255]);
+}
