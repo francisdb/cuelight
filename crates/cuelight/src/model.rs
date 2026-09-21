@@ -473,6 +473,28 @@ impl Property {
 }
 
 impl Show {
+    /// Every trigger name the show listens to: what enters its scenes and
+    /// what starts its timelines, in any layer tree. What a host can offer
+    /// as the show's actions.
+    pub fn triggers(&self) -> std::collections::BTreeSet<String> {
+        fn timelines(layers: &[Layer], out: &mut std::collections::BTreeSet<String>) {
+            for layer in layers {
+                for timeline in &layer.timelines {
+                    out.extend(timeline.trigger.iter().map(str::to_owned));
+                }
+                timelines(layer.children(), out);
+            }
+        }
+        let mut out = std::collections::BTreeSet::new();
+        for scene in &self.scenes {
+            out.extend(scene.trigger.iter().map(str::to_owned));
+        }
+        for layers in self.layer_trees() {
+            timelines(layers, &mut out);
+        }
+        out
+    }
+
     /// Every layer tree of the show: its own layers, then each scene's.
     pub fn layer_trees(&self) -> impl Iterator<Item = &[Layer]> {
         std::iter::once(self.layers.as_slice())

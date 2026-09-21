@@ -117,7 +117,9 @@ required.
   loading show folders from disk (or images and fonts from bytes, for hosts
   without a filesystem) and playing `test-driver.json` scripts. Image
   decoders and outline fonts are cargo features, for hosts that bring
-  their own.
+  their own. Hosts without a filesystem load the same folders from
+  memory; the `cuelight-manifest` tool writes the `manifest.json` that
+  tells a browser which files a show folder has.
 - [`cuelight-player`](crates/cuelight-player): a windowed player for show
   folders, driven from the console, the keyboard or a driver script.
 

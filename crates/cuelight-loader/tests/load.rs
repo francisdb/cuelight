@@ -159,3 +159,65 @@ fn without_the_feature_outline_fonts_are_skipped() {
     assert_eq!(loaded.skipped.len(), 1);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Read a show folder into memory the way a web host would: the manifest
+/// first, then the files it lists.
+#[cfg_attr(not(any(feature = "png", feature = "outline-fonts")), allow(dead_code))]
+fn fetch(dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let manifest = cuelight_loader::Manifest::for_dir(dir).unwrap();
+    let round_trip = cuelight_loader::Manifest::from_json(&manifest.to_json()).unwrap();
+    assert_eq!(round_trip, manifest);
+    manifest
+        .files
+        .iter()
+        .map(|f| (f.clone(), std::fs::read(dir.join(f)).unwrap()))
+        .collect()
+}
+
+#[test]
+fn manifest_lists_what_loading_looks_at() {
+    let manifest = cuelight_loader::Manifest::for_dir(shows().join("beacon")).unwrap();
+    assert_eq!(
+        manifest.files,
+        ["show.json", "test-driver.json", "assets/orb.png"]
+    );
+    assert!(cuelight_loader::Manifest::for_dir(shows()).is_err());
+}
+
+#[cfg(feature = "png")]
+#[test]
+fn loading_from_memory_matches_loading_from_disk() {
+    let dir = shows().join("beacon");
+    let (mut from_disk, mut from_memory) = (Engine::new(), Engine::new());
+    let on_disk = load(&mut from_disk, &dir).unwrap();
+    let in_memory = cuelight_loader::load_from_memory(&mut from_memory, &fetch(&dir)).unwrap();
+    assert_eq!(in_memory.images, on_disk.images);
+    assert_eq!(in_memory.fonts, on_disk.fonts);
+    assert!(in_memory.skipped.is_empty());
+    assert_eq!(
+        in_memory.driver,
+        Some(Driver::from_file(on_disk.driver.unwrap()).unwrap())
+    );
+    assert_eq!(
+        from_memory.resolved_layers().unwrap(),
+        from_disk.resolved_layers().unwrap()
+    );
+}
+
+#[cfg(feature = "outline-fonts")]
+#[test]
+fn outline_fonts_load_from_memory_too() {
+    let dir = outline_show("memory");
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &fetch(&dir)).unwrap();
+    assert_eq!(loaded.fonts, ["sans"]);
+    assert_eq!(loaded.driver, None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn memory_without_a_show_document_is_an_error() {
+    let files = std::collections::BTreeMap::from([("assets/x.png".to_owned(), vec![])]);
+    let err = cuelight_loader::load_from_memory(&mut Engine::new(), &files).unwrap_err();
+    assert!(matches!(err, LoadError::NoShowDocument(_)), "{err}");
+}

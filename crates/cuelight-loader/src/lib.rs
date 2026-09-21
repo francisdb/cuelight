@@ -5,8 +5,10 @@
 //! not write it again:
 //!
 //! - [`load`]: a show folder (or a loose show file) from disk into an engine.
-//! - [`register_image`] / [`register_font`]: the same from bytes, for hosts
-//!   without a filesystem (web, embedded assets).
+//! - [`load_from_memory`]: the same folder conventions over files held in
+//!   memory, for hosts without a filesystem (web, embedded assets), with
+//!   [`Manifest`] telling them which files a show folder has.
+//! - [`register_image`] / [`register_font`]: single assets from bytes.
 //! - [`Driver`]: scripted triggers and variable changes with delays, the
 //!   `test-driver.json` convention, standing in for a live host.
 //!
@@ -28,8 +30,10 @@
 //! Outline fonts are a feature too (`outline-fonts`, on by default).
 
 mod driver;
+mod manifest;
 
 pub use driver::{Driver, DriverPlayer, Step};
+pub use manifest::{load_from_memory, LoadedFiles, Manifest, MANIFEST_FILE};
 
 use cuelight::{BitmapFont, Engine};
 use std::path::{Path, PathBuf};
@@ -285,7 +289,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 }
 
 /// The files directly in `dir`, in name order.
-fn files_in(dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
+pub(crate) fn files_in(dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
     let entries = std::fs::read_dir(dir).map_err(|source| LoadError::Io {
         path: dir.to_owned(),
         source,
