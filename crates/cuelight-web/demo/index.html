@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cuelight web player</title>
+<style>
+  body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, sans-serif; background: #16181d; color: #d8dbe2; }
+  main { max-width: 960px; margin: 0 auto; }
+  canvas { display: block; width: 100%; background: #000; }
+  section { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select, input { font: inherit; padding: 4px 10px; }
+  label { display: flex; gap: 6px; align-items: center; }
+  #log { margin-top: 12px; padding: 8px; min-height: 5em; max-height: 12em; overflow: auto; background: #0d0f12; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+  .error { color: #ff8080; }
+</style>
+</head>
+<body>
+<main>
+  <canvas id="canvas"></canvas>
+  <section><label>show <select id="shows"></select></label> <button id="driver" hidden></button> <span id="scene"></span></section>
+  <section id="actions"></section>
+  <section id="variables"></section>
+  <div id="log"></div>
+</main>
+<script type="module">
+import init, { CuelightPlayer } from "./pkg/cuelight_web.js";
+
+const $ = (id) => document.getElementById(id);
+const log = (text, error) => {
+  const line = document.createElement("div");
+  line.textContent = text;
+  if (error) line.className = "error";
+  $("log").prepend(line);
+};
+
+let player;
+
+async function play(name) {
+  player?.free();
+  player = undefined;
+  for (const id of ["actions", "variables"]) $(id).replaceChildren();
+  player = await CuelightPlayer.create($("canvas"), `shows/${name}/`);
+  $("canvas").style.aspectRatio = `${player.width} / ${player.height}`;
+  player.warnings().forEach((w) => log(w, true));
+  player.onEvent((event) => log(`event: ${JSON.stringify(event)}`));
+
+  for (const action of player.actions()) {
+    const button = document.createElement("button");
+    button.textContent = action;
+    button.onclick = () => player.trigger(action);
+    $("actions").append(button);
+  }
+  for (const [name, value] of Object.entries(player.variables())) {
+    const input = document.createElement("input");
+    input.type = typeof value === "boolean" ? "checkbox" : typeof value === "number" ? "number" : "text";
+    input[input.type === "checkbox" ? "checked" : "value"] = value;
+    input.oninput = () => {
+      const next = input.type === "checkbox" ? input.checked : input.type === "number" ? input.valueAsNumber : input.value;
+      if (!Number.isNaN(next)) player.set(name, next);
+    };
+    input.dataset.variable = name;
+    const label = document.createElement("label");
+    label.append(name, input);
+    $("variables").append(label);
+  }
+  $("driver").hidden = !player.hasDriver;
+}
+
+// The driver changes variables too: show what the show currently holds.
+setInterval(() => {
+  if (!player) return;
+  $("scene").textContent = player.activeScene ? `scene: ${player.activeScene}` : "";
+  $("driver").textContent = player.driverPlaying ? "pause driver" : "play driver";
+  for (const input of $("variables").querySelectorAll("input")) {
+    if (input === document.activeElement) continue;
+    const value = player.get(input.dataset.variable);
+    if (input.type === "checkbox") input.checked = value; else input.value = value;
+  }
+}, 200);
+
+$("driver").onclick = () => (player.driverPlaying ? player.driverPause() : player.driverPlay());
+$("shows").onchange = () => play($("shows").value).catch((e) => log(e.message ?? e, true));
+
+try {
+  await init();
+  const shows = await (await fetch("shows/index.json")).json();
+  for (const name of shows) $("shows").append(new Option(name));
+  // ?show=name picks the show to start with.
+  const wanted = new URLSearchParams(location.search).get("show");
+  $("shows").value = shows.includes(wanted) ? wanted : shows[0];
+  await play($("shows").value);
+} catch (e) {
+  log(e.message ?? String(e), true);
+}
+</script>
+</body>
+</html>

@@ -122,6 +122,10 @@ required.
   tells a browser which files a show folder has.
 - [`cuelight-player`](crates/cuelight-player): a windowed player for show
   folders, driven from the console, the keyboard or a driver script.
+- [`cuelight-web`](crates/cuelight-web): the player for browsers: a show
+  folder fetched over HTTP, rendered into a canvas with WebGPU, driven
+  through a small JavaScript API. `crates/cuelight-web/demo/build.sh`
+  builds a demo page around it.
 
 ## Show format
 
