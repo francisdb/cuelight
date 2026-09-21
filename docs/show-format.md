@@ -306,6 +306,39 @@ Font bindings may only map to declared font styles; `text` and `font`
 can be bound but not keyframed. Binding or keyframing a property the
 layer's kind does not have (`font` on a shape) is rejected at load.
 
+### Transitions
+
+By default a bound property jumps when its variable changes. With a
+`transition` it moves there instead:
+
+```json
+{ "property": "x", "variable": "speed", "scale": 2.4,
+  "transition": { "duration": 0.4, "ease": "cubic_out" } }
+```
+
+- `duration`: seconds a change takes, from the value the property has now.
+- `ease` (default `linear`): any easing timelines know.
+- `wrap`: the value lives on a ring of this size: 360 for an angle, 10 for
+  a sheet with one frame per digit. `direction` picks the way round:
+  `shortest` (default), `forward` (a reel: 9 to 0 rolls on) or `backward`.
+
+What is eased is the binding's result, after `map`, `scale` and `offset`,
+so a map from states to opacities fades between them. On a `text` binding
+a number counts up or down before it is formatted, in whole numbers when
+it goes from one whole number to another; text that is not a number
+jumps. `font` bindings cannot have a transition.
+
+A change while a transition runs starts a new one from the value reached
+so far, with the full duration. When a show loads or a scene is entered,
+properties start at their value: nothing eases in from the base. The value
+is a function of time only, so it does not depend on the frame rate.
+
+A transition also smooths a variable the host updates less often than the
+display refreshes, at the price of showing the value late by about the
+duration. For a regular feed use a `linear` ease with the feed's interval
+as `duration`: the value then moves continuously, one interval behind. An
+ease that slows down at the end pauses before every update.
+
 ## Timelines
 
 A timeline is a keyframed animation owned by its layer:
@@ -362,7 +395,9 @@ Each frame a property resolves to, strongest first:
 
 So a timeline temporarily owns whatever it animates; when it finishes the
 property falls back to its binding or base value instantly. To avoid a
-visible jump, make base values match the timeline's endpoints.
+visible jump, make base values match the timeline's endpoints. A binding's
+transition keeps following its variable underneath a timeline, so the
+property falls back to where the transition is by then.
 
 ## Host contract
 

@@ -60,8 +60,21 @@ impl ImageData {
     }
 }
 
+/// A binding that has a transition: layer tree, layer path, binding index.
+type TransitionSite = (Root, Vec<usize>, usize);
+
+/// A bound value on its way from `start` to `target` since engine time
+/// `started`. The value in between is computed from this, never stepped,
+/// so it does not depend on the frame rate.
+#[derive(Debug, Clone, Copy)]
+struct Change {
+    start: f64,
+    target: f64,
+    started: f64,
+}
+
 /// Which layer tree a layer path is rooted in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Root {
     /// The show's own, always present layers.
     Show,
@@ -192,6 +205,11 @@ pub struct Engine {
     font_revision: u64,
     text_cache: Mutex<TextCache>,
     playing: Vec<Playhead>,
+    /// Every binding with a transition, found once at load.
+    transition_sites: Vec<TransitionSite>,
+    /// The change each of them is making; absent until its first frame,
+    /// so a property starts at its value instead of easing in.
+    transitions: HashMap<TransitionSite, Change>,
     active_scene: Option<usize>,
     events: std::collections::VecDeque<Event>,
     load_warnings: Vec<String>,
@@ -255,6 +273,8 @@ impl Engine {
         }
         self.variables = show.variables.clone();
         self.playing.clear();
+        self.transitions.clear();
+        self.transition_sites = transition_sites(&show);
         self.events.clear();
         self.time = 0.0;
         self.active_scene = (!show.scenes.is_empty()).then_some(0);
@@ -445,6 +465,8 @@ impl Engine {
 
     fn enter_scene(&mut self, scene: usize) {
         self.playing.retain(|p| p.root == Root::Show);
+        // A scene's properties start at their values, like at load.
+        self.transitions.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
         self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
     }
@@ -454,6 +476,7 @@ impl Engine {
     /// bindings/base values) and fire their `on_end` trigger, which is
     /// also reported through [`drain_events`](Engine::drain_events).
     pub fn advance_frame(&mut self, dt: f64) {
+        self.follow_transitions();
         self.time += dt;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
@@ -577,16 +600,80 @@ impl Engine {
         }
     }
 
-    /// Resolve a layer property: its base value, overridden by bindings,
-    /// overridden by a running timeline (numeric properties only). `None`
-    /// when this kind of layer does not have the property.
+    /// Note where every binding with a transition is heading, as of now
+    /// (inputs arrive between frames): a first look starts the property at
+    /// its value, a new target starts a change from the value reached.
+    fn follow_transitions(&mut self) {
+        let Some(show) = &self.show else { return };
+        let mut transitions = std::mem::take(&mut self.transitions);
+        for site in &self.transition_sites {
+            let (root, path, index) = site;
+            if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
+                continue;
+            }
+            let binding = root_layers(show, *root)
+                .and_then(|layers| layer_at(layers, path))
+                .and_then(|layer| layer.bindings.get(*index));
+            let Some((binding, transition)) = binding.and_then(|b| Some((b, b.transition?))) else {
+                continue;
+            };
+            let Some(target) = self.binding_number(binding) else {
+                transitions.remove(site);
+                continue;
+            };
+            let change = transitions.entry(site.clone()).or_insert(Change {
+                start: target,
+                target,
+                started: self.time,
+            });
+            if change.target != target {
+                let reached =
+                    transition.value_at(change.start, change.target, self.time - change.started);
+                *change = Change {
+                    start: reached,
+                    target,
+                    started: self.time,
+                };
+            }
+        }
+        self.transitions = transitions;
+    }
+
+    /// What binding `index` of the layer at `path` holds while its
+    /// transition is under way; `None` without one.
+    fn in_transition(
+        &self,
+        root: Root,
+        path: &[usize],
+        index: usize,
+        b: &Binding,
+    ) -> Option<Value> {
+        let transition = b.transition?;
+        let change = self.transitions.get(&(root, path.to_vec(), index))?;
+        let mut n = transition.value_at(change.start, change.target, self.time - change.started);
+        if b.property != Property::Text {
+            return Some(Value::Number(n));
+        }
+        // A counter between whole numbers shows whole numbers.
+        if change.start.fract() == 0.0 && change.target.fract() == 0.0 {
+            n = n.round();
+        }
+        Some(Value::Text(b.format.format(n)))
+    }
+
+    /// Resolve a layer property: its base value, overridden by bindings
+    /// (eased by their transitions), overridden by a running timeline
+    /// (numeric properties only). `None` when this kind of layer does not
+    /// have the property.
     fn resolve(&self, root: Root, layer: &Layer, path: &[usize], prop: Property) -> Option<Value> {
         let mut v = layer.base_value(prop)?;
-        for b in layer.bindings.iter().filter(|b| b.property == prop) {
-            if let Some(bound) = self
-                .binding_value(b)
-                .and_then(|value| self.convert(b, value))
-            {
+        let bindings = layer.bindings.iter().enumerate();
+        for (index, b) in bindings.filter(|(_, b)| b.property == prop) {
+            let bound = self.in_transition(root, path, index, b).or_else(|| {
+                self.binding_value(b)
+                    .and_then(|value| self.convert(b, value))
+            });
+            if let Some(bound) = bound {
                 v = bound;
             }
         }
@@ -632,6 +719,19 @@ impl Engine {
             None => Some(value.clone()),
             Some(map) => map.get(&value.to_text()).or(b.default.as_ref()).cloned(),
         }
+    }
+
+    /// The number a binding's transition eases toward: its value after
+    /// `map`, `scale` and `offset`. `None` when that is not a number.
+    fn binding_number(&self, b: &Binding) -> Option<f64> {
+        let value = self.binding_value(b)?;
+        let n = match (b.property, &value) {
+            (Property::Font, _) => return None,
+            (Property::Text, Value::Number(n)) => *n,
+            (Property::Text, _) => return None,
+            _ => value.as_number(),
+        };
+        Some(n * b.scale + b.offset)
     }
 
     /// Turn a bound value into what the binding's property holds. `None`
@@ -978,6 +1078,28 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
     }
 }
 
+/// Where the show's bindings with a transition are.
+fn transition_sites(show: &Show) -> Vec<TransitionSite> {
+    fn walk(root: Root, layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<TransitionSite>) {
+        for (i, layer) in layers.iter().enumerate() {
+            path.push(i);
+            for (index, binding) in layer.bindings.iter().enumerate() {
+                if binding.transition.is_some() {
+                    out.push((root, path.clone(), index));
+                }
+            }
+            walk(root, layer.children(), path, out);
+            path.pop();
+        }
+    }
+    let mut out = Vec::new();
+    walk(Root::Show, &show.layers, &mut Vec::new(), &mut out);
+    for (i, scene) in show.scenes.iter().enumerate() {
+        walk(Root::Scene(i), &scene.layers, &mut Vec::new(), &mut out);
+    }
+    out
+}
+
 /// Checks `load_show` does beyond parsing: colors parse, text layers use
 /// declared font styles, only numeric properties are keyframed.
 fn validate(show: &Show) -> Result<(), Error> {
@@ -1025,6 +1147,26 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
             }
             for binding in &layer.bindings {
+                if let Some(transition) = &binding.transition {
+                    let positive = |n: f64| n.is_finite() && n > 0.0;
+                    let problem = if binding.property == Property::Font {
+                        Some("is on a font binding, which cannot be eased")
+                    } else if !positive(transition.duration) {
+                        Some("needs a duration above 0")
+                    } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {
+                        Some("needs a wrap above 0")
+                    } else if transition.direction.is_some() && transition.wrap.is_none() {
+                        Some("sets a direction, which needs wrap")
+                    } else {
+                        None
+                    };
+                    if let Some(problem) = problem {
+                        return Err(Error::InvalidShow(format!(
+                            "transition of the {:?} binding of layer {:?} {problem}",
+                            binding.property, layer.name
+                        )));
+                    }
+                }
                 if binding.property != Property::Font {
                     continue;
                 }

@@ -29,7 +29,8 @@
       "shape": { "rect": [16, 100, 200, 12] },
       "fill": "#E5D48F",
       "bindings": [
-        { "property": "opacity", "variable": "score", "scale": 0.001, "offset": 0.2 }
+        { "property": "opacity", "variable": "score", "scale": 0.001, "offset": 0.2,
+          "transition": { "duration": 0.4, "ease": "cubic_out" } }
       ]
     },
     {
