@@ -41,6 +41,21 @@ use winit::window::{Window, WindowId};
 
 mod common;
 
+/// A workaround for KDE: on Plasma 6.7 (KWin) with Mesa 26.2 (RADV) a
+/// vsynced (FIFO) swapchain leaves a frame waiting up to a second for an
+/// image while the window is being resized, freezing the picture. Mailbox
+/// never waits, but it does not pace frames either, so it is only used
+/// while the size keeps changing and for this long after, with redraws
+/// held to the display's refresh rate meanwhile.
+///
+/// Not needed on COSMIC 1.8 (same machine and driver: smooth without it);
+/// GNOME is untested. It is applied on every Wayland compositor that offers
+/// mailbox all the same, since it costs nothing where it is not needed and
+/// the compositor cannot be told apart reliably. Slow Wayland resizing of
+/// Vulkan windows is reported elsewhere too
+/// (<https://github.com/glfw/glfw/issues/2493>).
+const VSYNC_AFTER_RESIZE: Duration = Duration::from_millis(250);
+
 fn fmt_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("{text:?}"),
@@ -135,6 +150,12 @@ struct App {
     state: Option<RenderState>,
     /// The window's newest size, waiting for the next redraw.
     pending_size: Option<(u32, u32)>,
+    mailbox_while_resizing: bool,
+    /// When the surface last changed size, while it still presents with
+    /// mailbox because of that.
+    resized_at: Option<Instant>,
+    /// When to draw the next frame while mailbox leaves that to us.
+    redraw_at: Option<Instant>,
     occluded: bool,
     last_frame: Instant,
     fps: common::Fps,
@@ -204,6 +225,12 @@ impl App {
 
     fn redraw(&mut self) {
         let now = Instant::now();
+        // While we pace the frames ourselves (see the end of this function)
+        // a redraw the windowing system asks for, one per resize event, has
+        // to wait its turn too.
+        if self.redraw_at.is_some_and(|at| now < at) {
+            return;
+        }
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         if elapsed > 0.034 {
             log::debug!("long frame: {:.0} ms since the last one", elapsed * 1000.0);
@@ -218,9 +245,13 @@ impl App {
         }
 
         if let Some((width, height)) = self.pending_size.take() {
-            let config = &state.surface.config;
+            let config = &mut state.surface.config;
             if (width, height) != (config.width, config.height) {
                 let started = Instant::now();
+                if self.mailbox_while_resizing {
+                    config.present_mode = wgpu::PresentMode::Mailbox;
+                    self.resized_at = Some(started);
+                }
                 self.context
                     .resize_surface(&mut state.surface, width, height);
                 log::debug!(
@@ -228,6 +259,14 @@ impl App {
                     started.elapsed().as_secs_f64() * 1000.0
                 );
             }
+        }
+        if self
+            .resized_at
+            .is_some_and(|at| at.elapsed() > VSYNC_AFTER_RESIZE)
+        {
+            self.resized_at = None;
+            self.context
+                .set_present_mode(&mut state.surface, wgpu::PresentMode::AutoVsync);
         }
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
@@ -266,7 +305,22 @@ impl App {
             .expect("vello render");
 
         // Blit the intermediate target to the window surface and present.
-        let surface_texture = match surface.surface.get_current_texture() {
+        let acquiring = Instant::now();
+        let acquired = surface.surface.get_current_texture();
+        let waited = acquiring.elapsed().as_secs_f64() * 1000.0;
+        if waited > 20.0 {
+            let outcome = match &acquired {
+                CurrentSurfaceTexture::Success(_) => "success",
+                CurrentSurfaceTexture::Suboptimal(_) => "suboptimal",
+                CurrentSurfaceTexture::Outdated => "outdated",
+                CurrentSurfaceTexture::Lost => "lost",
+                CurrentSurfaceTexture::Timeout => "timeout",
+                CurrentSurfaceTexture::Occluded => "occluded",
+                CurrentSurfaceTexture::Validation => "validation",
+            };
+            log::debug!("waited {waited:.0} ms for the surface texture: {outcome}");
+        }
+        let surface_texture = match acquired {
             CurrentSurfaceTexture::Success(t) | CurrentSurfaceTexture::Suboptimal(t) => t,
             CurrentSurfaceTexture::Outdated | CurrentSurfaceTexture::Lost => {
                 // Reconfigure and skip this frame; the next redraw retries.
@@ -299,9 +353,30 @@ impl App {
                 .create_view(&wgpu::TextureViewDescriptor::default()),
         );
         device_handle.queue.submit([encoder.finish()]);
+        let presenting = Instant::now();
         surface_texture.present();
+        let waited = presenting.elapsed().as_secs_f64() * 1000.0;
+        // Two frames of a 60 Hz display queue up behind vsync as a matter
+        // of course.
+        if waited > 50.0 {
+            log::debug!("present took {waited:.0} ms");
+        }
 
-        state.window.request_redraw();
+        if self.resized_at.is_some() {
+            // Mailbox does not pace anything: without this a drag draws
+            // thousands of frames per second. Come back at the display's
+            // pace instead.
+            let hertz = state
+                .window
+                .current_monitor()
+                .and_then(|monitor| monitor.refresh_rate_millihertz())
+                .map_or(60.0, |millihertz| f64::from(millihertz) / 1000.0);
+            // Counted from this frame's start, so drawing time is not added
+            // on top of every interval.
+            self.redraw_at = Some(now + Duration::from_secs_f64(1.0 / hertz));
+        } else {
+            state.window.request_redraw();
+        }
     }
 }
 
@@ -330,6 +405,12 @@ impl ApplicationHandler for App {
         ))
         .expect("create surface");
         common::log_adapter(&self.context, surface.dev_id);
+        // See `VSYNC_AFTER_RESIZE`.
+        self.mailbox_while_resizing = common::is_wayland(&window) && {
+            let adapter = self.context.devices[surface.dev_id].adapter();
+            let modes = surface.surface.get_capabilities(adapter).present_modes;
+            modes.contains(&wgpu::PresentMode::Mailbox)
+        };
         self.renderers
             .resize_with(self.context.devices.len(), || None);
         self.renderers[surface.dev_id].get_or_insert_with(|| {
@@ -395,6 +476,16 @@ impl ApplicationHandler for App {
             if !self.handle_command(&command) {
                 event_loop.exit();
                 return;
+            }
+        }
+        if let Some(at) = self.redraw_at {
+            if Instant::now() < at {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(at));
+                return;
+            }
+            self.redraw_at = None;
+            if let Some(state) = &self.state {
+                state.window.request_redraw();
             }
         }
         event_loop.set_control_flow(if self.occluded {
@@ -492,6 +583,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         renderers: Vec::new(),
         state: None,
         pending_size: None,
+        mailbox_while_resizing: false,
+        resized_at: None,
+        redraw_at: None,
         occluded: false,
         last_frame: Instant::now(),
         fps: common::Fps::new(),
