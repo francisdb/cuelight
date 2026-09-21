@@ -6,6 +6,9 @@ that into frames. Written in Rust, rendering with
 [vello](https://github.com/linebender/vello) and
 [wgpu](https://github.com/gfx-rs/wgpu).
 
+See it running: the [examples website](https://francisdb.github.io/cuelight-examples/)
+plays the example shows live in the browser (needs WebGPU).
+
 > Status: early. The engine, the show format and the players work, but
 > nothing here is stable yet.
 
@@ -132,7 +135,9 @@ file) plays automatically; a second argument names another one, and
 
 More shows live in the
 [cuelight-examples](https://github.com/francisdb/cuelight-examples)
-repository, one show folder each, playable directly with the player.
+repository, one show folder each, playable directly with the player and
+running live on the
+[examples website](https://francisdb.github.io/cuelight-examples/).
 
 The windowed examples log startup info (render backend, windowing system,
 window size and scale) and events; set `RUST_LOG=debug` for more detail.
