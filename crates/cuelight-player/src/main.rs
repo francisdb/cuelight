@@ -19,7 +19,6 @@
 //! Images and fonts a show references but nobody registered are logged as
 //! warnings at load and skipped.
 
-use std::collections::BTreeSet;
 use std::io::BufRead;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
@@ -28,7 +27,7 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use cuelight::render::Presenter;
 use cuelight::vello;
-use cuelight::{Engine, Layer, LayerKind, Show, Value};
+use cuelight::{Engine, Layer, LayerKind, Value};
 use cuelight_loader::{Driver, DriverPlayer, Step};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
@@ -46,29 +45,6 @@ fn fmt_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("{text:?}"),
         other => other.to_text(),
-    }
-}
-
-/// Collect every trigger name the show declares: scene triggers and
-/// timeline triggers in any layer tree.
-fn collect_show_actions(show: &Show, out: &mut BTreeSet<String>) {
-    out.extend(
-        show.scenes
-            .iter()
-            .flat_map(|s| s.trigger.iter().map(str::to_owned)),
-    );
-    for layers in show.layer_trees() {
-        collect_actions(layers, out);
-    }
-}
-
-/// Collect every trigger name declared by timelines in the layer tree.
-fn collect_actions(layers: &[Layer], out: &mut BTreeSet<String>) {
-    for layer in layers {
-        for timeline in &layer.timelines {
-            out.extend(timeline.trigger.iter().map(str::to_owned));
-        }
-        collect_actions(layer.children(), out);
     }
 }
 
@@ -480,13 +456,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         DriverPlayer::new(driver)
     });
 
-    let mut actions = BTreeSet::new();
     let show = engine.show().expect("show loaded");
-    collect_show_actions(show, &mut actions);
     for layers in show.layer_trees() {
         warn_missing_images(&engine, layers);
     }
-    let actions: Vec<String> = actions.into_iter().collect();
+    let actions: Vec<String> = show.triggers().into_iter().collect();
     print_menu(&engine, &actions);
 
     let (tx, rx) = std::sync::mpsc::channel();

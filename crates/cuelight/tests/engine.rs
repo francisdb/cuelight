@@ -746,3 +746,19 @@ fn triggers_serialize_the_way_they_are_authored() {
     let back: Triggers = serde_json::from_str(r#"["a","b"]"#).unwrap();
     assert!(back.contains("b") && !back.contains("c"));
 }
+
+#[test]
+fn a_show_lists_its_triggers() {
+    let show = r##"{ "name": "s", "size": [8, 8],
+      "layers": [ { "name": "g", "type": "group", "children": [
+          { "name": "a", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+            "timelines": [ { "name": "t", "trigger": ["flash", "hazard"], "tracks": [] },
+                           { "name": "auto", "autoplay": true, "tracks": [] } ] } ] } ],
+      "scenes": [ { "name": "one", "trigger": "start", "layers": [
+          { "name": "b", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+            "timelines": [ { "name": "t", "trigger": "flash", "tracks": [] } ] } ] } ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let triggers: Vec<String> = engine.show().unwrap().triggers().into_iter().collect();
+    assert_eq!(triggers, ["flash", "hazard", "start"]);
+}
