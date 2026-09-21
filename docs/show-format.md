@@ -218,7 +218,10 @@ Layer kinds:
   `alpha14` (14 segments plus dot: letters, digits, `- + * / \ = _ '`) or
   `numeric7` (7 segments plus dot: digits and `-`). A `.` or `,` lights
   the dot of the cell before it instead of taking a cell, so `1,250`
-  needs four cells. Characters the style cannot show stay dark.
+  needs four cells. Characters the style cannot show stay dark. In shows
+  that are rendered on their own pixel grid (a gray `output.mode`, or
+  `pixel_perfect` scaling) the straight bars are a whole number of pixels
+  thick, lie on pixel boundaries and end flat, so small displays stay crisp.
 
 ## Fonts
 
