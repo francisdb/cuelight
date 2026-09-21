@@ -13,8 +13,9 @@
 //!
 //! The player prints the show's actions (trigger names) and variables: type
 //! an action's number or name to fire it, `name=value` to set a variable,
-//! `q` to quit. Digit keys in the window fire actions too, escape quits.
-//! All of it keeps working while a driver runs.
+//! `q` to quit. Digit keys in the window fire actions too, `f` or F11
+//! switches fullscreen (as does starting with `--fullscreen`), escape
+//! leaves fullscreen or quits. All of it keeps working while a driver runs.
 //!
 //! Images and fonts a show references but nobody registered are logged as
 //! warnings at load and skipped.
@@ -37,7 +38,7 @@ use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 mod common;
 
@@ -148,6 +149,7 @@ struct App {
     // One vello renderer per wgpu device the context hands out.
     renderers: Vec<Option<vello::Renderer>>,
     state: Option<RenderState>,
+    fullscreen: bool,
     /// The window's newest size, waiting for the next redraw.
     pending_size: Option<(u32, u32)>,
     mailbox_while_resizing: bool,
@@ -172,6 +174,20 @@ impl App {
             }
             None => log::warn!("no action number {}", index + 1),
         }
+    }
+
+    /// Fill the monitor the window is on, without decorations or pointer,
+    /// or go back to a window. Borderless rather than exclusive fullscreen:
+    /// it is what Wayland offers, and it leaves the display's mode alone
+    /// everywhere else.
+    fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.fullscreen = fullscreen;
+        let Some(state) = &self.state else { return };
+        log::info!("fullscreen: {fullscreen}");
+        state
+            .window
+            .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+        state.window.set_cursor_visible(!fullscreen);
     }
 
     /// Apply one console command; returns false when the player should quit.
@@ -421,6 +437,9 @@ impl ApplicationHandler for App {
             .expect("create vello renderer")
         });
         self.state = Some(RenderState { window, surface });
+        if self.fullscreen {
+            self.set_fullscreen(true);
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -431,9 +450,14 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
                 match &event.logical_key {
+                    Key::Named(NamedKey::Escape) if self.fullscreen => self.set_fullscreen(false),
                     Key::Named(NamedKey::Escape) => {
                         log::info!("escape pressed, exiting");
                         event_loop.exit();
+                    }
+                    Key::Named(NamedKey::F11) => self.set_fullscreen(!self.fullscreen),
+                    Key::Character(c) if c.eq_ignore_ascii_case("f") => {
+                        self.set_fullscreen(!self.fullscreen);
                     }
                     Key::Character(c) => {
                         if let Ok(digit) = c.as_str().parse::<usize>() {
@@ -521,6 +545,9 @@ struct Cli {
     /// Do not play any driver script.
     #[arg(long, conflicts_with = "driver")]
     no_driver: bool,
+    /// Start fullscreen on the monitor the window opens on.
+    #[arg(long)]
+    fullscreen: bool,
 }
 
 const DEMO_SHOW: &str = include_str!("../demo/show.json");
@@ -582,6 +609,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         context: RenderContext::new(),
         renderers: Vec::new(),
         state: None,
+        fullscreen: cli.fullscreen,
         pending_size: None,
         mailbox_while_resizing: false,
         resized_at: None,
