@@ -369,7 +369,11 @@ A timeline is a keyframed animation owned by its layer:
   using the **later** key's `ease` (before the first key it holds the
   first value, after the last it holds the last). Easings: `linear`
   (default), `quad_in`, `quad_out`, `quad_in_out`, `cubic_in`,
-  `cubic_out`, `cubic_in_out`, `step`.
+  `cubic_out`, `cubic_in_out`, `step`, and three kinds that do not go
+  straight there: `back_in`, `back_out`, `back_in_out` swing about 10%
+  past an end (`back_out` overshoots and comes back: a reel snapping
+  against its stop), `elastic_out` arrives fast and rings around the end,
+  `bounce_out` hits the end and bounces off it without passing it.
 - The timeline's duration is its longest track's last key. When it ends
   it stops and its properties fall back (see precedence); with `loop`
   the playhead wraps instead. For a seamless loop, author each track's

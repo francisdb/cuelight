@@ -236,16 +236,41 @@
     },
     "Easing": {
       "description": "Easing applied to the segment that ends at the keyframe carrying it.",
-      "type": "string",
-      "enum": [
-        "linear",
-        "quad_in",
-        "quad_out",
-        "quad_in_out",
-        "cubic_in",
-        "cubic_out",
-        "cubic_in_out",
-        "step"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "linear",
+            "quad_in",
+            "quad_out",
+            "quad_in_out",
+            "cubic_in",
+            "cubic_out",
+            "cubic_in_out",
+            "step",
+            "back_in_out"
+          ]
+        },
+        {
+          "description": "Pulls back below the start before going.",
+          "type": "string",
+          "const": "back_in"
+        },
+        {
+          "description": "Overshoots the end and comes back to it.",
+          "type": "string",
+          "const": "back_out"
+        },
+        {
+          "description": "Arrives fast, then swings around the end a few times, settling.",
+          "type": "string",
+          "const": "elastic_out"
+        },
+        {
+          "description": "Hits the end and bounces off it a few times, never passing it.",
+          "type": "string",
+          "const": "bounce_out"
+        }
       ]
     },
     "FontStyle": {
