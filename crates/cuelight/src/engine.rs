@@ -885,11 +885,17 @@ impl Engine {
                             .map(|c| parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone())))
                             .transpose()?;
                         let masks = segments::masks(*style, &text, *digits as usize, *justify);
+                        // Where the frame is made on the canvas's own pixel
+                        // grid (anything but smooth full color, see the
+                        // presenter), segments keep to it.
+                        let output = self.effective_output();
+                        let snap = output.mode.unwrap_or_default() != crate::model::OutputMode::Rgb
+                            || output.scaling.unwrap_or_default() == Scaling::PixelPerfect;
                         let cell_w = width * scale / f64::from((*digits).max(1));
                         for (i, mask) in masks.into_iter().enumerate() {
                             let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
                             let mut push = |mask: u16, color: [u8; 4]| {
-                                for points in segments::polygons(*style, mask, cell) {
+                                for points in segments::polygons(*style, mask, cell, snap) {
                                     out.push(ResolvedLayer {
                                         name: layer.name.clone(),
                                         shape: ResolvedShape::Polygon { points },

@@ -118,11 +118,30 @@ pub fn masks(style: SegmentStyle, text: &str, digits: usize, justify: Justify) -
 }
 
 /// Polygons of the lit segments of one digit cell `[x, y, w, h]`.
-pub fn polygons(style: SegmentStyle, mask: u16, [x, y, w, h]: [f64; 4]) -> Vec<Vec<[f64; 2]>> {
+///
+/// With `snap` the bars are a whole number of pixels thick and their long
+/// edges lie on pixel boundaries. On a small canvas that decides how a
+/// display looks: a one pixel bar centered on a boundary (the middle bar of
+/// a cell with an even height) would otherwise be smeared over two rows at
+/// half brightness.
+pub fn polygons(
+    style: SegmentStyle,
+    mask: u16,
+    [x, y, w, h]: [f64; 4],
+    snap: bool,
+) -> Vec<Vec<[f64; 2]>> {
     let pad = w * 0.12;
-    let thickness = w * 0.1;
-    let (x0, x1, xm) = (x + pad, x + w - pad, x + w / 2.0);
-    let (y0, y1, ym) = (y + pad, y + h - pad, y + h / 2.0);
+    let mut thickness = w * 0.1;
+    if snap {
+        thickness = thickness.round().max(1.0);
+    }
+    // A centerline whose bar has its edges on pixel boundaries.
+    let on_grid = |c: f64| match snap {
+        true => (c - thickness / 2.0).round() + thickness / 2.0,
+        false => c,
+    };
+    let (x0, x1, xm) = (on_grid(x + pad), on_grid(x + w - pad), on_grid(x + w / 2.0));
+    let (y0, y1, ym) = (on_grid(y + pad), on_grid(y + h - pad), on_grid(y + h / 2.0));
     // Segment centerlines by bit.
     let lines: &[(u16, [f64; 2], [f64; 2])] = match style {
         SegmentStyle::Alpha14 => &[
@@ -154,11 +173,11 @@ pub fn polygons(style: SegmentStyle, mask: u16, [x, y, w, h]: [f64; 4]) -> Vec<V
     let mut out: Vec<Vec<[f64; 2]>> = lines
         .iter()
         .filter(|(bit, _, _)| mask & (1 << bit) != 0)
-        .map(|&(_, from, to)| bar(from, to, thickness))
+        .map(|&(_, from, to)| bar(from, to, thickness, snap))
         .collect();
     if mask & DOT != 0 {
         // The dot sits in the bottom-right padding.
-        let (cx, cy, r) = (x + w - pad / 2.0, y1, thickness / 2.0);
+        let (cx, cy, r) = (on_grid(x + w - pad / 2.0), y1, thickness / 2.0);
         out.push(vec![
             [cx - r, cy - r],
             [cx + r, cy - r],
@@ -170,16 +189,21 @@ pub fn polygons(style: SegmentStyle, mask: u16, [x, y, w, h]: [f64; 4]) -> Vec<V
 }
 
 /// A segment of `thickness` along `from`-`to`, ends shortened and pointed
-/// so touching segments stay visibly apart.
-fn bar(from: [f64; 2], to: [f64; 2], thickness: f64) -> Vec<[f64; 2]> {
+/// so touching segments stay visibly apart. With `snap`, straight bars end
+/// flat, half a thickness short of their centerline's ends: on the pixel
+/// grid too, leaving the corner where bars meet dark.
+fn bar(from: [f64; 2], to: [f64; 2], thickness: f64, snap: bool) -> Vec<[f64; 2]> {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
     let len = (dx * dx + dy * dy).sqrt().max(f64::EPSILON);
     let (ux, uy) = (dx / len, dy / len);
     let (nx, ny) = (-uy * thickness / 2.0, ux * thickness / 2.0);
-    let gap = thickness * 0.6;
+    let flat = snap && (dx == 0.0 || dy == 0.0);
+    let (gap, tip) = match flat {
+        true => (thickness / 2.0, 0.0),
+        false => (thickness * 0.6, thickness / 2.0),
+    };
     let a = [from[0] + ux * gap, from[1] + uy * gap];
     let b = [to[0] - ux * gap, to[1] - uy * gap];
-    let tip = thickness / 2.0;
     vec![
         [a[0] - ux * tip, a[1] - uy * tip],
         [a[0] + nx, a[1] + ny],
@@ -206,9 +230,40 @@ mod tests {
     fn one_polygon_per_lit_segment() {
         let cell = [0.0, 0.0, 8.0, 16.0];
         // '1' in 14 segments: b, c and the upper right diagonal
-        assert_eq!(polygons(SegmentStyle::Alpha14, 0x0406, cell).len(), 3);
-        assert_eq!(polygons(SegmentStyle::Numeric7, 0x7F, cell).len(), 7);
-        assert_eq!(polygons(SegmentStyle::Numeric7, 0x80, cell).len(), 1);
+        assert_eq!(
+            polygons(SegmentStyle::Alpha14, 0x0406, cell, false).len(),
+            3
+        );
+        assert_eq!(polygons(SegmentStyle::Numeric7, 0x7F, cell, false).len(), 7);
+        assert_eq!(polygons(SegmentStyle::Numeric7, 0x80, cell, false).len(), 1);
+    }
+
+    #[test]
+    fn snapped_bars_cover_whole_pixel_rows_and_columns() {
+        // A 12x18 cell: bars come out 1.2 thick and the middle one centered
+        // on the boundary between rows 8 and 9.
+        let cell = [3.0, 2.0, 12.0, 18.0];
+        let whole = |v: f64| v.fract() == 0.0;
+        for (bit, horizontal) in [(0, true), (6, true), (3, true), (1, false), (4, false)] {
+            let bar = &polygons(SegmentStyle::Numeric7, 1 << bit, cell, true)[0];
+            // Points 1 and 5 are the two long edges at one end of the bar.
+            let axis = usize::from(horizontal);
+            let (one, other) = (bar[1][axis], bar[5][axis]);
+            assert!(
+                whole(one) && whole(other),
+                "segment {bit}: {one} and {other}"
+            );
+            assert_eq!((one - other).abs(), 1.0, "segment {bit}");
+            // Flat ends, on the grid as well.
+            let along = 1 - axis;
+            assert_eq!(bar[0][along], bar[1][along]);
+            assert!(
+                whole(bar[0][along]) && whole(bar[3][along]),
+                "segment {bit}"
+            );
+        }
+        let loose = &polygons(SegmentStyle::Numeric7, 1 << 6, cell, false)[0];
+        assert!(!whole(loose[1][1]));
     }
 
     #[test]
