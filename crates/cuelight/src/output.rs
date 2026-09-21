@@ -144,6 +144,7 @@ mod tests {
             mode: Some(OutputMode::Gray4),
             tint: Some("#FF5820".into()),
             scaling: None,
+            passes: None,
         };
         assert_eq!(
             OutputColor::from_output(&output),
@@ -153,6 +154,7 @@ mod tests {
             mode: Some(OutputMode::Gray4),
             tint: None,
             scaling: None,
+            passes: None,
         };
         assert_eq!(
             OutputColor::from_output(&output),
@@ -162,6 +164,7 @@ mod tests {
             mode: Some(OutputMode::Gray4),
             tint: Some("orange".into()),
             scaling: None,
+            passes: None,
         };
         assert_eq!(OutputColor::from_output(&output), None);
     }

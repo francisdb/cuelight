@@ -148,6 +148,69 @@ pub struct Output {
     /// How hosts scale the frame up to their surface; `smooth` by default.
     #[serde(default)]
     pub scaling: Option<Scaling>,
+    /// Effects applied to the finished frame as it is shown, in order. A
+    /// scene's list replaces the show's; an empty list turns them off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passes: Option<Vec<Pass>>,
+}
+
+/// An effect on the finished frame, applied where it is shown (windows, the
+/// web player), not by the offscreen renderer: it works at the surface's
+/// resolution, which a frame at canvas size does not have.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Pass {
+    /// Every canvas pixel becomes a dot, as on a dot matrix display.
+    Dots(Dots),
+}
+
+/// The dot matrix look: canvas pixels shown as separate dots on black.
+/// Below three surface pixels per dot there is no room for it and the frame
+/// is shown plain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Dots {
+    /// Dot diameter as a share of the pixel pitch, above 0 up to 1.
+    #[serde(default = "default_dot_size")]
+    pub size: f64,
+    #[serde(default)]
+    pub shape: DotShape,
+    /// Color of a dot that is off, `#RRGGBB`: the faint dots of a real
+    /// panel. Dots never get darker than this. None by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlit: Option<String>,
+    /// How much lit dots bleed into the dark around them, 0 (not at all,
+    /// the default) to 1.
+    #[serde(default)]
+    pub glow: f64,
+}
+
+fn default_dot_size() -> f64 {
+    0.8
+}
+
+impl Default for Dots {
+    fn default() -> Self {
+        Self {
+            size: default_dot_size(),
+            shape: DotShape::default(),
+            unlit: None,
+            glow: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum DotShape {
+    #[default]
+    Round,
+    /// Square dots with gaps: an LED matrix.
+    Square,
 }
 
 impl Output {
@@ -157,6 +220,7 @@ impl Output {
             mode: self.mode.or(base.mode),
             tint: self.tint.clone().or_else(|| base.tint.clone()),
             scaling: self.scaling.or(base.scaling),
+            passes: self.passes.clone().or_else(|| base.passes.clone()),
         }
     }
 }

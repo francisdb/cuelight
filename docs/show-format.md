@@ -145,8 +145,33 @@ crisp square block, which is what DMD-resolution content wants).
 `render::Presenter` honors it; hosts doing their own presentation read it
 with `Engine::scaling()` and place the frame with `render::fit`.
 
+`passes` lists effects applied to the finished frame as it is shown, in
+order. One exists so far, `dots`, the dot matrix look: every canvas pixel
+becomes a separate dot on black.
+
+```json
+"output": { "mode": "gray4", "tint": "#FF5820",
+            "passes": [ { "dots": { "size": 0.8, "unlit": "#1A0904", "glow": 0.3 } } ] }
+```
+
+- `size` (default 0.8): dot diameter as a share of the pixel pitch, above
+  0 up to 1.
+- `shape`: `round` (default) or `square` (an LED matrix).
+- `unlit`: color of a dot that is off, as on a real panel; dots never get
+  darker than this. None by default. It is not run through the output
+  `mode`, so give it in the tint's hue.
+- `glow` (default 0): how much lit dots bleed into the dark around them,
+  0 to 1.
+
+Passes work at the surface's resolution, so `render::Presenter` applies
+them (the player, the web player) and the offscreen renderer, whose frames
+are canvas size, does not. A dot needs room: below three surface pixels
+per canvas pixel the frame is shown plain. Hosts doing their own
+presentation read the list with `Engine::passes()`.
+
 A scene may declare its own `output`; while it is active, the fields it
-sets override the show's and the rest still come from the show. The conversion happens on the whole frame after
+sets override the show's and the rest still come from the show (a scene's
+`passes` replace the show's list; an empty list turns them off). The conversion happens on the whole frame after
 compositing, so antialiased edges and opacity quantize like everything
 else. Hosts read the active mode with `Engine::output()`; the offscreen
 renderer applies it after readback. Hosts rendering on their own device
