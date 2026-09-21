@@ -576,7 +576,13 @@ pub struct Binding {
 /// With `wrap` the value lives on a ring of that size (360 for an angle,
 /// 10 for a sheet with a frame per digit) and `direction` picks the way
 /// round.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+///
+/// A transition is a small timeline played on every change. `duration`
+/// and `ease` say how a move progresses; `offset` adds keyed motion on top,
+/// in the value's own units, so it is the same size however far the move
+/// goes (a reel settling against its stop); `step` plays a large change as
+/// several moves in a row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Transition {
     /// Seconds a change takes; above 0.
@@ -589,6 +595,17 @@ pub struct Transition {
     /// Which way round a wrapped value goes; needs `wrap`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<Direction>,
+    /// Size of one move, above 0: a larger change plays as several moves in
+    /// a row, each with its own `duration`, `ease` and `offset`, the last
+    /// one shorter when the change is no whole number of steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    /// Motion added on top of a move, along its direction of travel: keys
+    /// like a timeline track's, `t` in seconds from the start of the move,
+    /// `v` in the value's units. Has to start and end at 0. A move lasts as
+    /// long as the longer of `duration` and these keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offset: Vec<Key>,
 }
 
 /// Which way round a wrapped [`Transition`] goes.
@@ -607,27 +624,53 @@ pub enum Direction {
 }
 
 impl Transition {
+    /// Seconds one move takes: `duration`, or the `offset` when it runs
+    /// longer.
+    pub fn move_time(&self) -> f64 {
+        let offset_end = self.offset.last().map_or(0.0, |k| k.t);
+        self.duration.max(offset_end)
+    }
+
     /// The value `elapsed` seconds into a change from `start` to `target`.
     pub fn value_at(&self, start: f64, target: f64, elapsed: f64) -> f64 {
+        let on_ring = |v: f64| self.wrap.map_or(v, |wrap| v.rem_euclid(wrap));
+        let delta = match self.wrap {
+            None => target - start,
+            Some(wrap) => {
+                let forward = (target - start).rem_euclid(wrap);
+                match self.direction.unwrap_or_default() {
+                    Direction::Shortest if forward > wrap / 2.0 => forward - wrap,
+                    Direction::Shortest | Direction::Forward => forward,
+                    Direction::Backward if forward == 0.0 => 0.0,
+                    Direction::Backward => forward - wrap,
+                }
+            }
+        };
+        let distance = delta.abs();
+        // One move for the whole change, unless `step` divides it.
+        let unit = self
+            .step
+            .filter(|step| *step < distance)
+            .unwrap_or(distance);
+        // Tolerant of 3.0000000001 steps being three.
+        let moves = if unit > 0.0 {
+            (distance / unit - 1e-9).ceil().max(1.0)
+        } else {
+            1.0
+        };
+        let period = self.move_time();
         // Decided by time, not by progress: an ease that overshoots passes
-        // 1 on the way.
-        let done = elapsed >= self.duration;
-        let progress = self.ease.apply(elapsed / self.duration);
-        let Some(wrap) = self.wrap else {
-            return start + (target - start) * progress;
-        };
-        let forward = (target - start).rem_euclid(wrap);
-        let delta = match self.direction.unwrap_or_default() {
-            Direction::Shortest if forward > wrap / 2.0 => forward - wrap,
-            Direction::Shortest | Direction::Forward => forward,
-            Direction::Backward if forward == 0.0 => 0.0,
-            Direction::Backward => forward - wrap,
-        };
-        if done {
-            // Exactly the target, not a rounding step away from it.
-            return target.rem_euclid(wrap);
+        // 1 on the way. Exactly the target, not a rounding step from it.
+        if distance == 0.0 || elapsed >= moves * period {
+            return on_ring(target);
         }
-        (start + delta * progress).rem_euclid(wrap)
+        let index = (elapsed.max(0.0) / period).floor().min(moves - 1.0);
+        let local = elapsed.max(0.0) - index * period;
+        let covered = index * unit;
+        let length = (distance - covered).min(unit);
+        let along = covered + length * self.ease.apply(local / self.duration);
+        let offset = sample_keys(&self.offset, local).unwrap_or(0.0);
+        on_ring(start + delta.signum() * (along + offset))
     }
 }
 
@@ -717,7 +760,7 @@ pub struct Track {
 
 /// A keyframe: at time `t` (seconds) the property reaches value `v`,
 /// approached with `ease` from the previous key.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Key {
     pub t: f64,
@@ -726,27 +769,33 @@ pub struct Key {
     pub ease: Easing,
 }
 
+/// Sample `keys` at `time` seconds: the first value before the first key,
+/// the last after the last, eased in between. `None` without keys.
+pub(crate) fn sample_keys(keys: &[Key], time: f64) -> Option<f64> {
+    let first = keys.first()?;
+    if time <= first.t {
+        return Some(first.v);
+    }
+    let last = keys.last()?;
+    if time >= last.t {
+        return Some(last.v);
+    }
+    let next_idx = keys.iter().position(|k| k.t > time)?;
+    let a = &keys[next_idx - 1];
+    let b = &keys[next_idx];
+    let span = b.t - a.t;
+    let t = if span <= 0.0 {
+        1.0
+    } else {
+        (time - a.t) / span
+    };
+    Some(a.v + (b.v - a.v) * b.ease.apply(t))
+}
+
 impl Track {
     /// Sample the track at `time` seconds from timeline start.
     pub fn sample(&self, time: f64) -> Option<f64> {
-        let first = self.keys.first()?;
-        if time <= first.t {
-            return Some(first.v);
-        }
-        let last = self.keys.last()?;
-        if time >= last.t {
-            return Some(last.v);
-        }
-        let next_idx = self.keys.iter().position(|k| k.t > time)?;
-        let a = &self.keys[next_idx - 1];
-        let b = &self.keys[next_idx];
-        let span = b.t - a.t;
-        let t = if span <= 0.0 {
-            1.0
-        } else {
-            (time - a.t) / span
-        };
-        Some(a.v + (b.v - a.v) * b.ease.apply(t))
+        sample_keys(&self.keys, time)
     }
 
     /// End time of the track's last key, 0.0 when empty.

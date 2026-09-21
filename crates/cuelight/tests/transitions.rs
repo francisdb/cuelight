@@ -1,7 +1,7 @@
 //! Binding transitions: bound values ease to a new value instead of
 //! jumping, as a function of time only.
 
-use cuelight::{BitmapFont, Direction, Easing, Engine, ResolvedShape, Transition};
+use cuelight::{BitmapFont, Direction, Easing, Engine, Key, ResolvedShape, Transition};
 
 /// A show with one rect carrying `binding`.
 fn show(binding: &str) -> String {
@@ -237,6 +237,8 @@ fn wrapped_values_pick_their_way_round() {
         ease: Easing::Linear,
         wrap: Some(360.0),
         direction,
+        step: None,
+        offset: Vec::new(),
     };
     // The short way from 350 to 10 is forward through 0.
     assert_eq!(t(None).value_at(350.0, 10.0, 0.5), 0.0);
@@ -256,6 +258,8 @@ fn wrapped_values_pick_their_way_round() {
         ease: Easing::Linear,
         wrap: Some(10.0),
         direction: Some(Direction::Forward),
+        step: None,
+        offset: Vec::new(),
     };
     assert!((reel.value_at(9.0, 0.0, 0.5) - 9.5).abs() < 1e-9);
     assert_eq!(reel.value_at(9.0, 0.0, 1.0), 0.0);
@@ -264,7 +268,7 @@ fn wrapped_values_pick_their_way_round() {
     // wrap if it has to, and still lands exactly.
     let snap = Transition {
         ease: Easing::BackOut,
-        ..reel
+        ..reel.clone()
     };
     let peak = snap.value_at(9.0, 0.0, 0.6);
     assert!(peak > 0.0 && peak < 0.2, "past 0 on the far side: {peak}");
@@ -272,6 +276,92 @@ fn wrapped_values_pick_their_way_round() {
     // Not moving is not a full turn.
     assert_eq!(t(Some(Direction::Backward)).value_at(90.0, 90.0, 0.5), 90.0);
     assert_eq!(t(Some(Direction::Forward)).value_at(90.0, 450.0, 0.5), 90.0);
+}
+
+/// A reel move: there in 0.1 s, then out by 0.12 and back by 0.2 s.
+fn kick() -> Transition {
+    let key = |t, v| Key {
+        t,
+        v,
+        ease: Easing::Linear,
+    };
+    Transition {
+        duration: 0.1,
+        ease: Easing::Linear,
+        wrap: None,
+        direction: None,
+        step: None,
+        offset: vec![key(0.1, 0.0), key(0.15, 0.12), key(0.2, 0.0)],
+    }
+}
+
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-9
+}
+
+#[test]
+fn an_offset_is_the_same_size_however_far_the_move_goes() {
+    let kick = kick();
+    assert_eq!(kick.move_time(), 0.2);
+    // Swinging past the target by 0.12, for a move of 1 and a move of 9.
+    assert!(close(kick.value_at(0.0, 1.0, 0.15), 1.12));
+    assert!(close(kick.value_at(0.0, 9.0, 0.15), 9.12));
+    // Along the direction of travel: going down it swings below.
+    assert!(close(kick.value_at(9.0, 8.0, 0.15), 7.88));
+    // Nothing of it before the move is done, nothing left after.
+    assert!(close(kick.value_at(0.0, 1.0, 0.05), 0.5));
+    assert_eq!(kick.value_at(0.0, 1.0, 0.2), 1.0);
+}
+
+#[test]
+fn a_step_plays_a_large_change_as_moves_in_a_row() {
+    let chug = Transition {
+        step: Some(1.0),
+        ..kick()
+    };
+    // Three kicks of 0.2 s each, every one with its settle.
+    assert!(close(chug.value_at(0.0, 3.0, 0.05), 0.5));
+    assert!(close(chug.value_at(0.0, 3.0, 0.15), 1.12));
+    assert!(close(chug.value_at(0.0, 3.0, 0.25), 1.5));
+    assert!(close(chug.value_at(0.0, 3.0, 0.55), 3.12));
+    assert_eq!(chug.value_at(0.0, 3.0, 0.6), 3.0);
+    // Two and a half: the last move is the short one.
+    assert!(close(chug.value_at(0.0, 2.5, 0.45), 2.25));
+    assert_eq!(chug.value_at(0.0, 2.5, 0.6), 2.5);
+    // Smaller than a step is one move, as without it.
+    assert!(close(chug.value_at(0.0, 0.5, 0.05), 0.25));
+}
+
+#[test]
+fn a_stepped_reel_rolls_through_the_wrap_and_settles_each_digit() {
+    let reel = Transition {
+        step: Some(1.0),
+        wrap: Some(10.0),
+        direction: Some(Direction::Forward),
+        ..kick()
+    };
+    // 8 to 1 is three kicks: 9, 0, 1.
+    assert!(close(reel.value_at(8.0, 1.0, 0.15), 9.12));
+    assert!(close(reel.value_at(8.0, 1.0, 0.35), 0.12));
+    assert!(close(reel.value_at(8.0, 1.0, 0.25), 9.5));
+    assert_eq!(reel.value_at(8.0, 1.0, 0.6), 1.0);
+}
+
+#[test]
+fn step_and_offset_load_from_a_show() {
+    let mut engine = load(
+        r#"{ "property": "x", "variable": "pos",
+             "transition": { "duration": 0.1, "step": 10,
+               "offset": [ { "t": 0.1, "v": 0 }, { "t": 0.15, "v": 3 }, { "t": 0.2, "v": 0 } ] } }"#,
+    );
+    engine.advance_frame(0.1);
+    engine.set_variable("pos", 20.0);
+    engine.advance_frame(0.15);
+    assert!(close(x(&engine), 13.0));
+    engine.advance_frame(0.2);
+    assert!(close(x(&engine), 23.0));
+    engine.advance_frame(0.05);
+    assert_eq!(x(&engine), 20.0);
 }
 
 #[test]
@@ -292,4 +382,18 @@ fn bad_transitions_are_refused() {
              "transition": { "duration": 1, "direction": "forward" } }"#,
     );
     assert!(direction.contains("needs wrap"), "{direction}");
+    let step = refused(
+        r#"{ "property": "x", "variable": "pos", "transition": { "duration": 1, "step": 0 } }"#,
+    );
+    assert!(step.contains("step above 0"), "{step}");
+    let resting = refused(
+        r#"{ "property": "x", "variable": "pos", "transition": { "duration": 1,
+             "offset": [ { "t": 0, "v": 0 }, { "t": 1, "v": 2 } ] } }"#,
+    );
+    assert!(resting.contains("starts and ends at 0"), "{resting}");
+    let order = refused(
+        r#"{ "property": "x", "variable": "pos", "transition": { "duration": 1,
+             "offset": [ { "t": 1, "v": 0 }, { "t": 0.5, "v": 0 } ] } }"#,
+    );
+    assert!(order.contains("time order"), "{order}");
 }

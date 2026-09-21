@@ -614,7 +614,9 @@ impl Engine {
             let binding = root_layers(show, *root)
                 .and_then(|layers| layer_at(layers, path))
                 .and_then(|layer| layer.bindings.get(*index));
-            let Some((binding, transition)) = binding.and_then(|b| Some((b, b.transition?))) else {
+            let Some((binding, transition)) =
+                binding.and_then(|b| Some((b, b.transition.as_ref()?)))
+            else {
                 continue;
             };
             let Some(target) = self.binding_number(binding) else {
@@ -648,7 +650,7 @@ impl Engine {
         index: usize,
         b: &Binding,
     ) -> Option<Value> {
-        let transition = b.transition?;
+        let transition = b.transition.as_ref()?;
         let change = self.transitions.get(&(root, path.to_vec(), index))?;
         let mut n = transition.value_at(change.start, change.target, self.time - change.started);
         if b.property != Property::Text {
@@ -1157,6 +1159,21 @@ fn validate(show: &Show) -> Result<(), Error> {
                         Some("needs a wrap above 0")
                     } else if transition.direction.is_some() && transition.wrap.is_none() {
                         Some("sets a direction, which needs wrap")
+                    } else if transition.step.is_some_and(|step| !positive(step)) {
+                        Some("needs a step above 0")
+                    } else if transition
+                        .offset
+                        .windows(2)
+                        .any(|pair| pair[1].t < pair[0].t)
+                        || transition.offset.iter().any(|k| k.t.is_nan() || k.t < 0.0)
+                    {
+                        Some("needs offset keys in time order, from 0 on")
+                    } else if [transition.offset.first(), transition.offset.last()]
+                        .iter()
+                        .flatten()
+                        .any(|k| k.v != 0.0)
+                    {
+                        Some("needs an offset that starts and ends at 0")
                     } else {
                         None
                     };

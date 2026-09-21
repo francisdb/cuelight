@@ -908,7 +908,7 @@
       ]
     },
     "Transition": {
-      "description": "How a bound property moves when its binding's value changes: from the\nvalue it has now to the new one over `duration` seconds.\n\nWhat is eased is the binding's output (after `map`, `scale` and\n`offset`), so it has to be a number: on a `text` binding numbers count\nup or down before they are formatted (whole numbers stay whole on the\nway), any other text jumps. A change while a transition runs starts a\nnew one from the value reached so far. When a show loads or a scene is\nentered, properties start at their value; nothing eases in.\n\nWith `wrap` the value lives on a ring of that size (360 for an angle,\n10 for a sheet with a frame per digit) and `direction` picks the way\nround.",
+      "description": "How a bound property moves when its binding's value changes: from the\nvalue it has now to the new one over `duration` seconds.\n\nWhat is eased is the binding's output (after `map`, `scale` and\n`offset`), so it has to be a number: on a `text` binding numbers count\nup or down before they are formatted (whole numbers stay whole on the\nway), any other text jumps. A change while a transition runs starts a\nnew one from the value reached so far. When a show loads or a scene is\nentered, properties start at their value; nothing eases in.\n\nWith `wrap` the value lives on a ring of that size (360 for an angle,\n10 for a sheet with a frame per digit) and `direction` picks the way\nround.\n\nA transition is a small timeline played on every change. `duration`\nand `ease` say how a move progresses; `offset` adds keyed motion on top,\nin the value's own units, so it is the same size however far the move\ngoes (a reel settling against its stop); `step` plays a large change as\nseveral moves in a row.",
       "type": "object",
       "properties": {
         "direction": {
@@ -930,6 +930,21 @@
         "ease": {
           "$ref": "#/$defs/Easing",
           "default": "linear"
+        },
+        "offset": {
+          "description": "Motion added on top of a move, along its direction of travel: keys\nlike a timeline track's, `t` in seconds from the start of the move,\n`v` in the value's units. Has to start and end at 0. A move lasts as\nlong as the longer of `duration` and these keys.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "step": {
+          "description": "Size of one move, above 0: a larger change plays as several moves in\na row, each with its own `duration`, `ease` and `offset`, the last\none shorter when the change is no whole number of steps.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         },
         "wrap": {
           "description": "Size of the ring the value lives on; above 0.",
