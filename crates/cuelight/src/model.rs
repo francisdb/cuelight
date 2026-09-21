@@ -558,6 +558,74 @@ pub struct Binding {
     /// Value for variable values `map` does not list.
     #[serde(default)]
     pub default: Option<Value>,
+    /// Ease toward a new value instead of jumping to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition: Option<Transition>,
+}
+
+/// How a bound property moves when its binding's value changes: from the
+/// value it has now to the new one over `duration` seconds.
+///
+/// What is eased is the binding's output (after `map`, `scale` and
+/// `offset`), so it has to be a number: on a `text` binding numbers count
+/// up or down before they are formatted (whole numbers stay whole on the
+/// way), any other text jumps. A change while a transition runs starts a
+/// new one from the value reached so far. When a show loads or a scene is
+/// entered, properties start at their value; nothing eases in.
+///
+/// With `wrap` the value lives on a ring of that size (360 for an angle,
+/// 10 for a sheet with a frame per digit) and `direction` picks the way
+/// round.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Transition {
+    /// Seconds a change takes; above 0.
+    pub duration: f64,
+    #[serde(default)]
+    pub ease: Easing,
+    /// Size of the ring the value lives on; above 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<f64>,
+    /// Which way round a wrapped value goes; needs `wrap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<Direction>,
+}
+
+/// Which way round a wrapped [`Transition`] goes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Direction {
+    /// Whichever way is shorter; forward on a tie.
+    #[default]
+    Shortest,
+    /// Always toward higher values: 9 to 0 rolls on through the wrap.
+    Forward,
+    /// Always toward lower values.
+    Backward,
+}
+
+impl Transition {
+    /// The value `elapsed` seconds into a change from `start` to `target`.
+    pub fn value_at(&self, start: f64, target: f64, elapsed: f64) -> f64 {
+        let progress = self.ease.apply(elapsed / self.duration);
+        let Some(wrap) = self.wrap else {
+            return start + (target - start) * progress;
+        };
+        let forward = (target - start).rem_euclid(wrap);
+        let delta = match self.direction.unwrap_or_default() {
+            Direction::Shortest if forward > wrap / 2.0 => forward - wrap,
+            Direction::Shortest | Direction::Forward => forward,
+            Direction::Backward if forward == 0.0 => 0.0,
+            Direction::Backward => forward - wrap,
+        };
+        if progress >= 1.0 {
+            // Exactly the target, not a rounding step away from it.
+            return target.rem_euclid(wrap);
+        }
+        (start + delta * progress).rem_euclid(wrap)
+    }
 }
 
 /// Number to text conversion for text bindings.

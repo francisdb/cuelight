@@ -137,6 +137,17 @@
           "format": "double",
           "default": 1.0
         },
+        "transition": {
+          "description": "Ease toward a new value instead of jumping to it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Transition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "variable": {
           "type": "string"
         }
@@ -200,6 +211,26 @@
           "required": [
             "segments"
           ]
+        }
+      ]
+    },
+    "Direction": {
+      "description": "Which way round a wrapped [`Transition`] goes.",
+      "oneOf": [
+        {
+          "description": "Whichever way is shorter; forward on a tie.",
+          "type": "string",
+          "const": "shortest"
+        },
+        {
+          "description": "Always toward higher values: 9 to 0 rolls on through the wrap.",
+          "type": "string",
+          "const": "forward"
+        },
+        {
+          "description": "Always toward lower values.",
+          "type": "string",
+          "const": "backward"
         }
       ]
     },
@@ -849,6 +880,43 @@
       "required": [
         "property",
         "keys"
+      ]
+    },
+    "Transition": {
+      "description": "How a bound property moves when its binding's value changes: from the\nvalue it has now to the new one over `duration` seconds.\n\nWhat is eased is the binding's output (after `map`, `scale` and\n`offset`), so it has to be a number: on a `text` binding numbers count\nup or down before they are formatted (whole numbers stay whole on the\nway), any other text jumps. A change while a transition runs starts a\nnew one from the value reached so far. When a show loads or a scene is\nentered, properties start at their value; nothing eases in.\n\nWith `wrap` the value lives on a ring of that size (360 for an angle,\n10 for a sheet with a frame per digit) and `direction` picks the way\nround.",
+      "type": "object",
+      "properties": {
+        "direction": {
+          "description": "Which way round a wrapped value goes; needs `wrap`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Direction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration": {
+          "description": "Seconds a change takes; above 0.",
+          "type": "number",
+          "format": "double"
+        },
+        "ease": {
+          "$ref": "#/$defs/Easing",
+          "default": "linear"
+        },
+        "wrap": {
+          "description": "Size of the ring the value lives on; above 0.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "required": [
+        "duration"
       ]
     },
     "Triggers": {
