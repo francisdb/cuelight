@@ -117,7 +117,9 @@ is the player (`cargo install --path crates/cuelight-player` puts
 file (a built-in demo when no path is given), lists its actions (trigger
 names) and variables on the console, and lets you drive it: type an action
 number or name to fire it (digit keys in the window work too),
-`name=value` to set a variable, `q` to quit. See `--help` for the options.
+`name=value` to set a variable, `q` to quit. In the window `f` or F11
+switches fullscreen (`--fullscreen` starts that way) and escape leaves it,
+or quits. See `--help` for the options.
 
 A show folder holds `show.json` plus an optional `test-driver.json` and
 `assets/` with images and bitmap fonts; the bundled beacon show
