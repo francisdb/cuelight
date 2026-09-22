@@ -38,8 +38,8 @@ mod value;
 
 pub use easing::Easing;
 pub use engine::{
-    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape, Vector,
-    VectorPath, Voice,
+    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape,
+    Transform, Vector, VectorPath, Voice,
 };
 pub use font::BitmapFont;
 pub use model::{

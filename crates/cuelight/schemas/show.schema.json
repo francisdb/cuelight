@@ -442,8 +442,25 @@
           "format": "double",
           "default": 1.0
         },
+        "rotation": {
+          "description": "Rotation in degrees, clockwise on the canvas, around the layer's\nx/y origin or its anchor point. A group turns its whole subtree.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
         "scale": {
-          "description": "Uniform scale of this layer's own geometry around its x/y origin\n(shape coordinates and sizes, image destination size). With an\n`anchor` the anchored point stays at x/y while scaling. Not\ninherited by group children yet.",
+          "description": "Uniform scale of the layer around its x/y origin (shape coordinates\nand sizes, image destination size), or around its anchor point.\nA group's scale applies to its whole subtree.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "scale_x": {
+          "description": "Scale along x and y on top of `scale`, for stretching and flips\n(negative values mirror). Inherited like `scale`.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "scale_y": {
           "type": "number",
           "format": "double",
           "default": 1.0
@@ -904,7 +921,10 @@
             "x",
             "y",
             "opacity",
-            "scale"
+            "scale",
+            "scale_x",
+            "scale_y",
+            "rotation"
           ]
         },
         {
