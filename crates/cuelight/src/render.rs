@@ -195,6 +195,7 @@ pub fn build_vello_scene(
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
         let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
+        let placement = Affine::new(layer.transform.0);
         match layer.shape {
             ResolvedShape::Rect {
                 x,
@@ -203,19 +204,19 @@ pub fn build_vello_scene(
                 height,
             } => {
                 let rect = Rect::new(x, y, x + width, y + height);
-                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+                show.fill(Fill::NonZero, placement, color, None, &rect);
             }
             ResolvedShape::Circle { cx, cy, radius } => {
                 let circle = Circle::new((cx, cy), radius);
-                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &circle);
+                show.fill(Fill::NonZero, placement, color, None, &circle);
             }
             ResolvedShape::ClipBegin { shape } => match *shape {
                 ResolvedShape::Circle { cx, cy, radius } => {
                     let circle = Circle::new((cx, cy), radius);
-                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &circle);
+                    show.push_clip_layer(Fill::NonZero, placement, &circle);
                 }
                 ResolvedShape::Path { ref elements, .. } => {
-                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &bez_path(elements));
+                    show.push_clip_layer(Fill::NonZero, placement, &bez_path(elements));
                 }
                 // Always push something so the matching ClipEnd balances;
                 // anything that is not a rect or circle clips nothing.
@@ -229,7 +230,7 @@ pub fn build_vello_scene(
                         } => Rect::new(x, y, x + width, y + height),
                         _ => Rect::new(f64::MIN, f64::MIN, f64::MAX, f64::MAX),
                     };
-                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &rect);
+                    show.push_clip_layer(Fill::NonZero, placement, &rect);
                 }
             },
             ResolvedShape::ClipEnd => show.pop_layer(),
@@ -254,11 +255,13 @@ pub fn build_vello_scene(
                     let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
                     let stroke = Stroke::new(width * 2.0).with_join(Join::Round);
                     show.draw_glyphs(&font)
+                        .transform(placement)
                         .font_size(size as f32)
                         .brush(Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8))
                         .draw(&stroke, run());
                 }
                 show.draw_glyphs(&font)
+                    .transform(placement)
                     .font_size(size as f32)
                     .brush(color)
                     .draw(Fill::NonZero, run());
@@ -266,13 +269,13 @@ pub fn build_vello_scene(
             ResolvedShape::Path { elements, stroke } => {
                 let path = bez_path(&elements);
                 if layer.color[3] > 0 {
-                    show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
+                    show.fill(Fill::NonZero, placement, color, None, &path);
                 }
                 if let Some(([r, g, b, a], width)) = stroke {
                     let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
                     let stroke = Stroke::new(width);
                     let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
-                    show.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+                    show.stroke(&stroke, placement, color, None, &path);
                 }
             }
             ResolvedShape::Polygon { points } => {
@@ -285,7 +288,7 @@ pub fn build_vello_scene(
                     }
                 }
                 path.close_path();
-                show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
+                show.fill(Fill::NonZero, placement, color, None, &path);
             }
             ResolvedShape::Image {
                 image,
@@ -304,7 +307,8 @@ pub fn build_vello_scene(
                     None => images.get(&image, data),
                     Some(cell) => images.cell(&image, data, cell),
                 };
-                let transform = Affine::translate((x, y))
+                let transform = placement
+                    * Affine::translate((x, y))
                     * Affine::scale_non_uniform(
                         width / f64::from(pixels.width),
                         height / f64::from(pixels.height),
@@ -320,7 +324,8 @@ pub fn build_vello_scene(
                 height,
             } => {
                 let brush = ImageBrush::new(images.bitmap(&image)).with_alpha(layer.opacity as f32);
-                let transform = Affine::translate((x, y))
+                let transform = placement
+                    * Affine::translate((x, y))
                     * Affine::scale_non_uniform(
                         width / f64::from(image.width),
                         height / f64::from(image.height),

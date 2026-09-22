@@ -356,12 +356,21 @@ pub struct Layer {
     /// Opacity in [0, 1], multiplied down the tree.
     #[serde(default = "default_opacity")]
     pub opacity: f64,
-    /// Uniform scale of this layer's own geometry around its x/y origin
-    /// (shape coordinates and sizes, image destination size). With an
-    /// `anchor` the anchored point stays at x/y while scaling. Not
-    /// inherited by group children yet.
+    /// Uniform scale of the layer around its x/y origin (shape coordinates
+    /// and sizes, image destination size), or around its anchor point.
+    /// A group's scale applies to its whole subtree.
     #[serde(default = "default_scale")]
     pub scale: f64,
+    /// Scale along x and y on top of `scale`, for stretching and flips
+    /// (negative values mirror). Inherited like `scale`.
+    #[serde(default = "default_scale")]
+    pub scale_x: f64,
+    #[serde(default = "default_scale")]
+    pub scale_y: f64,
+    /// Rotation in degrees, clockwise on the canvas, around the layer's
+    /// x/y origin or its anchor point. A group turns its whole subtree.
+    #[serde(default)]
+    pub rotation: f64,
     /// Which point of the layer's content box sits at its x/y. Without an
     /// anchor, images put their top-left corner there and shapes their
     /// local origin. Not supported on groups.
@@ -618,6 +627,9 @@ pub enum Property {
     Y,
     Opacity,
     Scale,
+    ScaleX,
+    ScaleY,
+    Rotation,
     /// The text of a text layer; bindable, not animatable.
     Text,
     /// The font style of a text layer; bindable, not animatable.
@@ -690,6 +702,9 @@ impl Layer {
             (Property::Opacity, _) => Value::Number(self.opacity),
             (Property::Visible, _) => Value::Bool(self.visible),
             (Property::Scale, _) => Value::Number(self.scale),
+            (Property::ScaleX, _) => Value::Number(self.scale_x),
+            (Property::ScaleY, _) => Value::Number(self.scale_y),
+            (Property::Rotation, _) => Value::Number(self.rotation),
             (Property::Text, LayerKind::Text { text, .. } | LayerKind::Digits { text, .. }) => {
                 Value::Text(text.clone())
             }

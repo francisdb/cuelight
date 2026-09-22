@@ -193,9 +193,21 @@ group children behind whatever follows the group. Every layer has:
   `audio` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
-- `scale` (default 1): uniform scale of this layer's own geometry around
-  its x/y origin (or its anchor point). Not yet inherited by group
-  children.
+- `scale` (default 1): uniform scale of the layer around its x/y origin
+  (or its anchor point). `scale_x`, `scale_y` (default 1) scale along one
+  axis on top of it, for stretching and flips (negative mirrors).
+- `rotation` (default 0): degrees, clockwise on the canvas, around the
+  layer's x/y origin or its anchor point (so an image anchored at
+  `center` spins in place). A needle is a shape with `rotation` bound to a
+  value; a reel window is a group turned by a timeline.
+
+  A group's translation, scale and rotation apply to its whole subtree,
+  in that order (children turn and scale with the group). In the draw list
+  anything only translated and uniformly scaled arrives in canvas
+  coordinates; a rotation or an uneven scale anywhere above leaves the
+  shape in its own space and places it with the item's `transform`, an
+  affine hosts drawing the list themselves apply (see
+  [Host contract](#host-contract)).
 - `anchor` (optional): which point of the layer's content box sits at its
   x/y: `top_left`, `top`, `top_right`, `left`, `center`, `right`,
   `bottom_left`, `bottom`, `bottom_right`. The content box is an image's
@@ -378,8 +390,8 @@ A binding wires a layer property to a variable, evaluated every frame:
 ```
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
-`x`, `y`, `opacity`, `scale`, `frame` for sprite sheet images, and `gain`
-for groups and audio layers. `visible` can be bound but not keyframed.
+`x`, `y`, `opacity`, `scale`, `scale_x`, `scale_y`, `rotation`, `frame`
+for sprite sheet images, and `gain` for groups and audio layers. `visible` can be bound but not keyframed.
 
 A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
@@ -552,9 +564,11 @@ The engine is driven exclusively through four calls: `load_show` (JSON in),
 `set_variable`, `trigger`, and `advance_frame(dt)`. What the show itself
 fires (`on_end` triggers) comes back through `drain_events()`, so content
 can tell the host that something finished. Output is either
-`resolved_layers()` (a flat, GPU-free draw list) or the `render` feature's
-vello rasterizer, plus `voices()` for what should be heard (see
-[Sound](#sound)). Everything else, including where variable values and
+`resolved_layers()` (a flat, GPU-free draw list; each item carries a
+`transform` that is the identity unless a rotation or uneven scale placed
+it, in which case the shape is in its layer's space and the transform
+puts it on the canvas) or the `render` feature's vello rasterizer, plus
+`voices()` for what should be heard (see [Sound](#sound)). Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 

@@ -171,3 +171,35 @@ fn a_stroke_outlines_a_shape() {
     assert_eq!(pixel(&frame, 8, 8), [0, 0, 0, 255]);
     assert_eq!(pixel(&frame, 1, 8), [0, 0, 0, 255]);
 }
+
+#[test]
+fn rotated_shapes_render_where_the_transform_says() {
+    // A 12x2 white bar anchored at its center, turned upright.
+    let show = r##"{ "name": "rotate", "size": [16, 16], "background": "#000000", "layers": [
+        { "name": "bar", "type": "shape", "shape": { "rect": [0, 0, 12, 2] }, "fill": "#FFFFFF",
+          "x": 8, "y": 8, "anchor": "center", "rotation": 90 }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 7, 3), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 7, 12), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 3, 7), [0, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 12, 7), [0, 0, 0, 255]);
+}
+
+#[test]
+fn a_rotated_group_turns_its_clip_and_children() {
+    let show = r##"{ "name": "rotate", "size": [16, 16], "background": "#000000", "layers": [
+        { "name": "window", "type": "group", "x": 8, "y": 8, "rotation": 90, "clip": { "rect": [0, 0, 6, 2] },
+          "children": [ { "name": "fill", "type": "shape", "shape": { "rect": [-8, -8, 16, 16] }, "fill": "#FFFFFF" } ] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // The clip's 6x2 window, turned clockwise, runs down from (8, 8) and
+    // extends to the left.
+    assert_eq!(pixel(&frame, 7, 11), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 9, 11), [0, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 7, 5), [0, 0, 0, 255]);
+}

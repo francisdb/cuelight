@@ -63,6 +63,57 @@ impl ImageData {
     }
 }
 
+/// A map of the plane, `(x, y)` to `(a x + c y + e, b x + d y + f)`, its
+/// coefficients in the order `[a, b, c, d, e, f]` that SVG and kurbo use.
+/// The draw list places items with one where a rotation or an uneven
+/// scale is involved; see [`ResolvedLayer::transform`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform(pub [f64; 6]);
+
+impl Transform {
+    pub const IDENTITY: Transform = Transform([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+
+    pub fn translate(x: f64, y: f64) -> Self {
+        Transform([1.0, 0.0, 0.0, 1.0, x, y])
+    }
+
+    pub fn scale(sx: f64, sy: f64) -> Self {
+        Transform([sx, 0.0, 0.0, sy, 0.0, 0.0])
+    }
+
+    /// Rotation by `degrees`, clockwise on a canvas whose y grows down.
+    pub fn rotate(degrees: f64) -> Self {
+        let (s, c) = degrees.to_radians().sin_cos();
+        Transform([c, s, -s, c, 0.0, 0.0])
+    }
+
+    /// This map applied after `inner`.
+    pub fn then(self, inner: Transform) -> Transform {
+        let [a, b, c, d, e, f] = self.0;
+        let [a2, b2, c2, d2, e2, f2] = inner.0;
+        Transform([
+            a * a2 + c * b2,
+            b * a2 + d * b2,
+            a * c2 + c * d2,
+            b * c2 + d * d2,
+            a * e2 + c * f2 + e,
+            b * e2 + d * f2 + f,
+        ])
+    }
+
+    pub fn apply(self, [x, y]: [f64; 2]) -> [f64; 2] {
+        let [a, b, c, d, e, f] = self.0;
+        [a * x + c * y + e, b * x + d * y + f]
+    }
+
+    /// `(scale, x, y)` when this is only a positive uniform scale and a
+    /// translation, which the draw list bakes into its coordinates.
+    pub fn plain(self) -> Option<(f64, f64, f64)> {
+        let [a, b, c, d, e, f] = self.0;
+        (b == 0.0 && c == 0.0 && a == d && a > 0.0).then_some((a, e, f))
+    }
+}
+
 /// A binding with a transition or a debounce: layer tree, layer path,
 /// binding index.
 type TransitionSite = (Root, Vec<usize>, usize);
@@ -842,8 +893,7 @@ impl Engine {
             Root::Show,
             &show.layers,
             &mut Vec::new(),
-            0.0,
-            0.0,
+            Transform::IDENTITY,
             1.0,
             &mut out,
         )?;
@@ -853,8 +903,7 @@ impl Engine {
                     Root::Scene(scene),
                     layers,
                     &mut Vec::new(),
-                    0.0,
-                    0.0,
+                    Transform::IDENTITY,
                     1.0,
                     &mut out,
                 )?;
@@ -1194,15 +1243,9 @@ impl Engine {
     }
 
     /// A layer's content box `[x, y, width, height]` in its local space,
-    /// scaled; `None` for groups, unregistered images and text whose font
-    /// is not registered.
-    fn content_box(
-        &self,
-        root: Root,
-        layer: &Layer,
-        path: &[usize],
-        scale: f64,
-    ) -> Option<[f64; 4]> {
+    /// before any scale; `None` for groups, unregistered images and text
+    /// whose font is not registered.
+    fn content_box(&self, root: Root, layer: &Layer, path: &[usize]) -> Option<[f64; 4]> {
         let [x, y, w, h] = match &layer.kind {
             LayerKind::Group { .. } | LayerKind::Audio { .. } => return None,
             LayerKind::Shape { shape, .. } => match shape {
@@ -1243,7 +1286,7 @@ impl Engine {
                 [0.0, 0.0, w, h]
             }
         };
-        Some([x * scale, y * scale, w * scale, h * scale])
+        Some([x, y, w, h])
     }
 
     /// How `text` in font style `style_name` gets drawn: a glyph run for an
@@ -1323,35 +1366,47 @@ impl Engine {
         raster
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Resolve `layers` under `parent`, the placement of the tree above
+    /// them, at `oa` opacity.
     fn walk(
         &self,
         root: Root,
         layers: &[Layer],
         path: &mut Vec<usize>,
-        ox: f64,
-        oy: f64,
+        parent: Transform,
         oa: f64,
         out: &mut Vec<ResolvedLayer>,
     ) -> Result<(), Error> {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if self.is_visible(root, layer, path) {
-                let x = ox + self.number(root, layer, path, Property::X);
-                let y = oy + self.number(root, layer, path, Property::Y);
-                let opacity =
-                    (oa * self.number(root, layer, path, Property::Opacity)).clamp(0.0, 1.0);
-                let scale = self.number(root, layer, path, Property::Scale);
-                // Shift the layer so its anchor point lands on x/y.
-                let content_box = layer
+                let number = |prop| self.number(root, layer, path, prop);
+                let opacity = (oa * number(Property::Opacity)).clamp(0.0, 1.0);
+                let scale = number(Property::Scale);
+                let (sx, sy) = (
+                    scale * number(Property::ScaleX),
+                    scale * number(Property::ScaleY),
+                );
+                // The anchor point, in the layer's scaled space: it lands on
+                // x/y and the layer turns and scales around it.
+                let pivot = layer
                     .anchor
-                    .and_then(|anchor| Some((anchor, self.content_box(root, layer, path, scale)?)));
-                let (x, y) = match content_box {
-                    Some((anchor, [bx, by, bw, bh])) => {
+                    .and_then(|anchor| {
+                        let [bx, by, bw, bh] = self.content_box(root, layer, path)?;
                         let (ax, ay) = anchor.offset(bw, bh, 0.0, 0.0);
-                        (x + ax - bx, y + ay - by)
-                    }
-                    None => (x, y),
+                        Some([(bx - ax) * sx, (by - ay) * sy])
+                    })
+                    .unwrap_or([0.0, 0.0]);
+                let local = Transform::translate(number(Property::X), number(Property::Y))
+                    .then(Transform::rotate(number(Property::Rotation)))
+                    .then(Transform::translate(-pivot[0], -pivot[1]))
+                    .then(Transform::scale(sx, sy));
+                let m = parent.then(local);
+                // Baked into the coordinates where it can be; otherwise the
+                // shape stays local and the transform carries it.
+                let ((scale, x, y), transform) = match m.plain() {
+                    Some(plain) => (plain, Transform::IDENTITY),
+                    None => ((1.0, 0.0, 0.0), m),
                 };
                 match &layer.kind {
                     // Heard, not seen.
@@ -1365,15 +1420,17 @@ impl Engine {
                                 },
                                 color: [0; 4],
                                 opacity,
+                                transform,
                             });
                         }
-                        self.walk(root, children, path, x, y, opacity, out)?;
+                        self.walk(root, children, path, m, opacity, out)?;
                         if clip.is_some() {
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::ClipEnd,
                                 color: [0; 4],
                                 opacity,
+                                transform,
                             });
                         }
                     }
@@ -1397,6 +1454,7 @@ impl Engine {
                             shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
                             opacity,
+                            transform,
                         });
                     }
                     LayerKind::Vector { vector, size } => {
@@ -1417,6 +1475,7 @@ impl Engine {
                                     },
                                     color: item.fill.unwrap_or([0; 4]),
                                     opacity,
+                                    transform,
                                 });
                             }
                         }
@@ -1448,6 +1507,7 @@ impl Engine {
                                 },
                                 color: [255, 255, 255, 255],
                                 opacity,
+                                transform,
                             });
                         }
                     }
@@ -1471,8 +1531,10 @@ impl Engine {
                         // grid (anything but smooth full color, see the
                         // presenter), segments keep to it.
                         let output = self.effective_output();
-                        let snap = output.mode.unwrap_or_default() != crate::model::OutputMode::Rgb
-                            || output.scaling.unwrap_or_default() == Scaling::PixelPerfect;
+                        let snap = (output.mode.unwrap_or_default()
+                            != crate::model::OutputMode::Rgb
+                            || output.scaling.unwrap_or_default() == Scaling::PixelPerfect)
+                            && transform == Transform::IDENTITY;
                         let cell_w = width * scale / f64::from((*digits).max(1));
                         for (i, mask) in masks.into_iter().enumerate() {
                             let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
@@ -1483,6 +1545,7 @@ impl Engine {
                                         shape: ResolvedShape::Polygon { points },
                                         color,
                                         opacity,
+                                        transform,
                                     });
                                 }
                             };
@@ -1509,6 +1572,7 @@ impl Engine {
                                     },
                                     color: [255, 255, 255, 255],
                                     opacity,
+                                    transform,
                                 });
                             }
                             Some(TextDraw::Glyphs {
@@ -1540,6 +1604,7 @@ impl Engine {
                                     },
                                     color: style.map_or([255; 4], |s| rgba(&s.color)),
                                     opacity,
+                                    transform,
                                 });
                             }
                             _ => {}
@@ -1917,6 +1982,13 @@ pub struct ResolvedLayer {
     pub color: [u8; 4],
     /// Effective opacity in [0, 1] (tree-multiplied).
     pub opacity: f64,
+    /// Applied to the shape's coordinates to place it on the canvas. The
+    /// identity for anything only translated and uniformly scaled, which is
+    /// then already in canvas coordinates; a rotation or an uneven scale
+    /// anywhere up the tree leaves the shape in the layer's own space and
+    /// puts the whole placement here. Hosts drawing the list themselves
+    /// apply it (a clip's shape included).
+    pub transform: Transform,
 }
 
 #[derive(Debug, Clone, PartialEq)]
