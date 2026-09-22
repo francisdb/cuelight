@@ -203,8 +203,8 @@ the conversion alone, for hosts that want to do the rest themselves).
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `vector`, `image`, `text`, `digits` or
-  `audio` (see below).
+- `type`: `group`, `shape`, `vector`, `image`, `text`, `digits`, `audio`
+  or `video` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of the layer around its x/y origin
@@ -389,6 +389,8 @@ Layer kinds:
   than a fade.
 - `audio`: a sound, played like a timeline is; draws nothing. See
   [Sound](#sound).
+- `video`: a moving picture, played like a sound is; the host decodes it.
+  See [Video](#video).
 
 ## Sound
 
@@ -441,6 +443,39 @@ after its layer started playing is heard from where it would be by then;
 until then the play is silent and does not end. The `cuelight-audio` crate
 is that backend: decoding, a mixer, a sound device for the player and a
 WAV file for offline rendering.
+
+## Video
+
+```json
+{ "name": "intro", "type": "video", "video": "intro", "trigger": "start",
+  "size": [640, 360], "loop": false, "on_end": "intro_done" }
+```
+
+A video layer plays `video`, a video the host registered, and draws its
+current frame. It takes the playhead a sound takes and means it the same
+way: `trigger` or `autoplay` starts it, `delay`, `loop`, `repeat` and
+`on_end` behave as on a sound or a timeline, and `stop` ends it without
+firing `on_end`. What it does not take is what only makes sense for
+sound: a picture shows one thing at a time, so a trigger restarts it
+rather than overlapping it, and there is no gain or bus. `size` scales
+the picture as it does on an image; without it the video's own size is
+used.
+
+**The engine decodes nothing.** It knows a video only by what
+`Engine::set_video(name, duration, size)` tells it: the length, so it can
+loop, repeat and end a play, and the size, so the layer has a box before
+anything has been decoded. Each frame the host reads `Engine::videos()`,
+the picture twin of `voices()`: per playing video an id, the layer, the
+video's name, the position in seconds and whether it loops. The host
+decodes to that position and hands the picture back with
+`Engine::set_image` under the video's name, which the layer draws. A
+frame is then an image like any other, with the same upload path and
+caches, and a host that cannot decode video still loads the show: the
+layer shows nothing until a frame arrives, exactly as an image layer
+does.
+
+Decoding lives outside the engine, in the `cuelight-video` crate, behind
+cargo features, so a host pays for a decoder only if it wants one.
 
 ## Fonts
 

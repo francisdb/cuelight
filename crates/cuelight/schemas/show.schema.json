@@ -768,6 +768,80 @@
           ]
         },
         {
+          "description": "A video the host registered under `video` with its duration and\nsize ([`Engine::set_video`](crate::Engine::set_video)), played the\nway a sound is: on `trigger` or at load with `autoplay`, after\n`delay`, looping or repeating, firing `on_end`. The engine decodes\nnothing: it reports what should be showing and at which position\n([`Engine::videos`](crate::Engine::videos)), and draws whatever\nframe the host last registered as an image under the video's name.",
+          "type": "object",
+          "properties": {
+            "autoplay": {
+              "description": "Play when the show loads or the scene is entered.",
+              "type": "boolean",
+              "default": false
+            },
+            "delay": {
+              "description": "Seconds between the trigger and the first frame.",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "loop": {
+              "description": "Repeat forever. Cannot be combined with `repeat`.",
+              "type": "boolean",
+              "default": false
+            },
+            "on_end": {
+              "description": "Trigger fired when a play finishes (never for loops).",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "repeat": {
+              "description": "Number of plays (fractions allowed); once when omitted.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "default": null
+            },
+            "size": {
+              "description": "Drawn size `[width, height]`; the video's own when omitted.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "stop": {
+              "description": "Trigger name, or list of names, that stops it.",
+              "$ref": "#/$defs/Triggers",
+              "default": null
+            },
+            "trigger": {
+              "description": "Trigger name, or list of names, that plays it.",
+              "$ref": "#/$defs/Triggers",
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "video"
+            },
+            "video": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "video"
+          ]
+        },
+        {
           "description": "A sound the host registered under `sound` with its duration\n([`Engine::set_sound`](crate::Engine::set_sound)), played the way a\ntimeline is: on `trigger` or at load with `autoplay`, after `delay`,\nlooping or repeating, firing `on_end`. Draws nothing. What plays is\nreported by [`Engine::voices`](crate::Engine::voices); the engine\nnever touches samples.",
           "type": "object",
           "properties": {

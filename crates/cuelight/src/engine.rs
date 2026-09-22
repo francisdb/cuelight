@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, Blend, DigitDisplay, Justify, Layer, LayerKind, Output, Pass,
-    Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, Blend, DigitDisplay, Justify, Layer, LayerKind, MediaKind, Output,
+    Pass, Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::path::{self, PathElement};
@@ -29,6 +29,8 @@ pub enum Error {
     InvalidFont(String),
     #[error("invalid sound: {0}")]
     InvalidSound(String),
+    #[error("invalid video: {0}")]
+    InvalidVideo(String),
 }
 
 /// A host-provided raster image: tightly packed RGBA8 pixels (straight,
@@ -311,6 +313,36 @@ struct Sounding {
     started: f64,
 }
 
+/// What the engine knows of a video: how long it runs and how big it is.
+/// The frames are the host's business.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoInfo {
+    /// Seconds, for looping, repeating and ending a play.
+    pub duration: f64,
+    /// The video's own size in pixels, what a layer without `size` draws
+    /// at.
+    pub width: f64,
+    pub height: f64,
+}
+
+/// A video that should be showing now, as [`Engine::videos`] reports it:
+/// the picture twin of a [`Voice`]. A host decodes to `position` and hands
+/// the frame back with
+/// [`set_image`](Engine::set_image) under the video's name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Playing {
+    /// Identifies one play for as long as it lasts; never reused.
+    pub id: u64,
+    /// Name of the video layer.
+    pub layer: String,
+    /// The video, as registered with [`Engine::set_video`].
+    pub video: String,
+    /// Seconds into the video, wrapped for loops and repeats.
+    pub position: f64,
+    /// Whether it plays on from its end.
+    pub looping: bool,
+}
+
 /// A sound that should be heard now, as [`Engine::voices`] reports it: the
 /// audio twin of a [`ResolvedLayer`]. Plain data, so a backend can be fed
 /// and tested without an engine.
@@ -367,6 +399,8 @@ pub struct Engine {
     text_cache: Mutex<TextCache>,
     /// Registered sounds and their durations in seconds.
     sounds: BTreeMap<String, f64>,
+    /// Registered videos: what the engine knows without decoding them.
+    videos: BTreeMap<String, VideoInfo>,
     playing: Vec<Playhead>,
     sounding: Vec<Sounding>,
     /// Id for the next play; ids are never reused.
@@ -630,6 +664,104 @@ impl Engine {
         self.sounds.get(name).copied()
     }
 
+    /// Register (or replace) a named video by its `duration` in seconds
+    /// and its size in pixels, which is all the engine needs of it: to
+    /// loop, repeat and end plays, and to lay its layer out. Decoding is
+    /// the host's: it reads [`videos`](Engine::videos) each frame and
+    /// hands the picture back with [`set_image`](Engine::set_image) under
+    /// the same name, which the video layer draws. Like images, videos
+    /// survive `load_show` and may arrive after it.
+    pub fn set_video(
+        &mut self,
+        name: &str,
+        duration: f64,
+        [width, height]: [f64; 2],
+    ) -> Result<(), Error> {
+        let sane = |n: f64| n.is_finite() && n > 0.0;
+        if !sane(duration) || !sane(width) || !sane(height) {
+            return Err(Error::InvalidVideo(format!(
+                "{name:?}: {duration}s at {width}x{height} is not above 0"
+            )));
+        }
+        self.videos.insert(
+            name.to_owned(),
+            VideoInfo {
+                duration,
+                width,
+                height,
+            },
+        );
+        Ok(())
+    }
+
+    /// What is registered for video `name`.
+    pub fn video(&self, name: &str) -> Option<VideoInfo> {
+        self.videos.get(name).copied()
+    }
+
+    /// How long the content of a playhead runs, whichever registry it
+    /// comes from; `None` while the host has not registered it.
+    fn media_duration(&self, media: &crate::model::Media<'_>) -> Option<f64> {
+        match media.kind {
+            MediaKind::Sound => self.sounds.get(media.name).copied(),
+            MediaKind::Video => self.videos.get(media.name).map(|video| video.duration),
+        }
+    }
+
+    /// The videos that should be showing now, in tree order: every play of
+    /// a visible video layer whose video is registered and whose delay is
+    /// over, at its position. The picture twin of
+    /// [`voices`](Engine::voices); a host decodes to these positions.
+    pub fn videos(&self) -> Result<Vec<Playing>, Error> {
+        let show = self.show.as_ref().ok_or(Error::NoShow)?;
+        let mut out = Vec::new();
+        for (root, layers) in std::iter::once((Root::Show, show.layers.as_slice())).chain(
+            self.active_scene
+                .and_then(|i| Some((Root::Scene(i), root_layers(show, Root::Scene(i))?))),
+        ) {
+            self.watch(root, layers, &mut Vec::new(), &mut out);
+        }
+        Ok(out)
+    }
+
+    fn watch(&self, root: Root, layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<Playing>) {
+        for (i, layer) in layers.iter().enumerate() {
+            path.push(i);
+            if self.is_visible(root, layer, path) {
+                if let LayerKind::Video { video, .. } = &layer.kind {
+                    let media = layer.kind.media();
+                    let plays = self
+                        .sounding
+                        .iter()
+                        .filter(|s| s.root == root && s.layer_path == *path);
+                    for play in plays {
+                        let (Some(media), Some(info)) = (media, self.videos.get(video)) else {
+                            continue;
+                        };
+                        let elapsed = self.time - play.started - media.delay.max(0.0);
+                        if elapsed < 0.0 {
+                            continue;
+                        }
+                        let position = if media.looping || media.repeat.is_some() {
+                            elapsed % info.duration
+                        } else {
+                            elapsed
+                        };
+                        out.push(Playing {
+                            id: play.id,
+                            layer: layer.name.clone(),
+                            video: video.clone(),
+                            position,
+                            looping: media.looping,
+                        });
+                    }
+                }
+                self.watch(root, layer.children(), path, out);
+            }
+            path.pop();
+        }
+    }
+
     /// The pixels registered under `name`, if any.
     pub fn image(&self, name: &str) -> Option<&ImageData> {
         self.images.get(name)
@@ -675,7 +807,7 @@ impl Engine {
             .chain(self.active_scene.map(Root::Scene))
             .collect();
         for root in roots {
-            for (path, (stops, plays)) in self.audio_layers(root, |trigger, stop| {
+            for (path, (stops, plays)) in self.media_layers(root, |trigger, stop| {
                 (stop.contains(name), trigger.contains(name))
             }) {
                 if stops {
@@ -689,9 +821,10 @@ impl Engine {
         }
     }
 
-    /// The audio layers of `root` for which `want` (given their `trigger`
-    /// and `stop`) says something: their paths, with what it said.
-    fn audio_layers<T>(
+    /// The layers of `root` with a playhead for which `want` (given their
+    /// `trigger` and `stop`) says something: their paths, with what it
+    /// said.
+    fn media_layers<T>(
         &self,
         root: Root,
         want: impl Fn(&crate::model::Triggers, &crate::model::Triggers) -> T,
@@ -704,8 +837,8 @@ impl Engine {
         ) {
             for (i, layer) in layers.iter().enumerate() {
                 path.push(i);
-                if let LayerKind::Audio { trigger, stop, .. } = &layer.kind {
-                    out.push((path.clone(), want(trigger, stop)));
+                if let Some(media) = layer.kind.media() {
+                    out.push((path.clone(), want(media.trigger, media.stop)));
                 }
                 walk(layer.children(), path, want, out);
                 path.pop();
@@ -718,7 +851,7 @@ impl Engine {
         out
     }
 
-    /// Start the autoplay audio layers of `root`.
+    /// Start the autoplay sounds and videos of `root`.
     fn play_autoplay(&mut self, root: Root) {
         let Some(layers) = self.show.as_ref().and_then(|show| root_layers(show, root)) else {
             return;
@@ -727,7 +860,7 @@ impl Engine {
         fn walk(layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
             for (i, layer) in layers.iter().enumerate() {
                 path.push(i);
-                if let LayerKind::Audio { autoplay: true, .. } = &layer.kind {
+                if layer.kind.media().is_some_and(|media| media.autoplay) {
                     out.push(path.clone());
                 }
                 walk(layer.children(), path, out);
@@ -748,13 +881,10 @@ impl Engine {
             .as_ref()
             .and_then(|show| root_layers(show, root))
             .and_then(|layers| layer_at(layers, &path));
-        let Some(LayerKind::Audio {
-            retrigger, voices, ..
-        }) = layer.map(|l| &l.kind)
-        else {
+        let Some(media) = layer.and_then(|layer| layer.kind.media()) else {
             return;
         };
-        let (retrigger, voices) = (*retrigger, *voices as usize);
+        let (retrigger, voices) = (media.retrigger, media.voices as usize);
         let mine = |s: &Sounding| s.root == root && s.layer_path == path;
         match retrigger {
             Retrigger::Restart => self.sounding.retain(|s| !mine(s)),
@@ -881,27 +1011,21 @@ impl Engine {
         let mut ended: Vec<usize> = Vec::new();
         for (i, s) in self.sounding.iter().enumerate() {
             let layer = root_layers(show, s.root).and_then(|l| layer_at(l, &s.layer_path));
-            let Some(LayerKind::Audio {
-                sound,
-                looping,
-                delay,
-                repeat,
-                on_end: end,
-                ..
-            }) = layer.map(|l| &l.kind)
-            else {
+            let Some(media) = layer.and_then(|layer| layer.kind.media()) else {
                 ended.push(i);
                 continue;
             };
-            if *looping {
+            if media.looping {
                 continue;
             }
-            let Some(duration) = self.sounds.get(sound) else {
+            // Content the host has not registered yet has no end.
+            let Some(duration) = self.media_duration(&media) else {
                 continue;
             };
-            if time - s.started - delay.max(0.0) >= duration * repeat.unwrap_or(1.0).max(0.0) {
+            let plays = media.repeat.unwrap_or(1.0).max(0.0);
+            if time - s.started - media.delay.max(0.0) >= duration * plays {
                 ended.push(i);
-                on_end.extend(end.clone());
+                on_end.extend(media.on_end.map(str::to_owned));
             }
         }
         for i in ended.into_iter().rev() {
@@ -1472,6 +1596,17 @@ impl Engine {
                 let [w, h] = size.unwrap_or([data.width, data.height]);
                 [0.0, 0.0, w, h]
             }
+            LayerKind::Video { video, size, .. } => {
+                // Its own size until a frame says otherwise, so a layer has
+                // a box before the host has decoded anything.
+                let info = self.videos.get(video);
+                let natural = info.map(|info| [info.width, info.height]).or_else(|| {
+                    let frame = self.images.get(video)?;
+                    Some([f64::from(frame.width), f64::from(frame.height)])
+                })?;
+                let [w, h] = size.unwrap_or(natural);
+                [0.0, 0.0, w, h]
+            }
             LayerKind::Image {
                 image, size, sheet, ..
             } => {
@@ -2008,6 +2143,32 @@ impl Engine {
                             }
                         }
                     }
+                    LayerKind::Video { video, size, .. } => {
+                        // The frame the host last handed over, if any: a
+                        // video layer draws nothing until one arrives.
+                        if let Some(frame) = self.images.get(video) {
+                            let natural = self.videos.get(video).map_or(
+                                [f64::from(frame.width), f64::from(frame.height)],
+                                |info| [info.width, info.height],
+                            );
+                            let [width, height] = size.unwrap_or(natural);
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::Image {
+                                    image: video.clone(),
+                                    source: None,
+                                    x,
+                                    y,
+                                    width: width * scale,
+                                    height: height * scale,
+                                },
+                                color: [255; 4],
+                                opacity,
+                                blend: layer.blend,
+                                transform,
+                            });
+                        }
+                    }
                     LayerKind::Image {
                         image, size, sheet, ..
                     } => {
@@ -2445,32 +2606,31 @@ fn validate(show: &Show) -> Result<(), Error> {
             {
                 parse_color(tint).ok_or_else(|| Error::InvalidColor(tint.clone()))?;
             }
-            if let LayerKind::Audio {
-                looping,
-                repeat,
-                delay,
-                voices,
-                retrigger,
-                gain,
-                ..
-            } = &layer.kind
-            {
-                let problem = if *looping && repeat.is_some() {
+            if let Some(media) = layer.kind.media() {
+                let gain = match &layer.kind {
+                    LayerKind::Audio { gain, .. } => *gain,
+                    _ => 1.0,
+                };
+                let problem = if media.looping && media.repeat.is_some() {
                     Some("sets both loop and repeat")
-                } else if !delay.is_finite() || *delay < 0.0 {
+                } else if !media.delay.is_finite() || media.delay < 0.0 {
                     Some("needs a delay of 0 or more")
-                } else if repeat.is_some_and(|r| !r.is_finite() || r < 0.0) {
+                } else if media.repeat.is_some_and(|r| !r.is_finite() || r < 0.0) {
                     Some("needs a repeat of 0 or more")
-                } else if !gain.is_finite() || *gain < 0.0 {
+                } else if !gain.is_finite() || gain < 0.0 {
                     Some("needs a gain of 0 or more")
-                } else if *retrigger == Retrigger::Overlap && *voices == 0 {
+                } else if media.retrigger == Retrigger::Overlap && media.voices == 0 {
                     Some("needs at least one voice to overlap")
                 } else {
                     None
                 };
                 if let Some(problem) = problem {
+                    let kind = match media.kind {
+                        MediaKind::Sound => "audio",
+                        MediaKind::Video => "video",
+                    };
                     return Err(Error::InvalidShow(format!(
-                        "audio layer {:?} {problem}",
+                        "{kind} layer {:?} {problem}",
                         layer.name
                     )));
                 }

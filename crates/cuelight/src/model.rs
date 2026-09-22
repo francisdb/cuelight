@@ -505,6 +505,40 @@ pub enum LayerKind {
         justify: Justify,
         display: DigitDisplay,
     },
+    /// A video the host registered under `video` with its duration and
+    /// size ([`Engine::set_video`](crate::Engine::set_video)), played the
+    /// way a sound is: on `trigger` or at load with `autoplay`, after
+    /// `delay`, looping or repeating, firing `on_end`. The engine decodes
+    /// nothing: it reports what should be showing and at which position
+    /// ([`Engine::videos`](crate::Engine::videos)), and draws whatever
+    /// frame the host last registered as an image under the video's name.
+    Video {
+        video: String,
+        /// Drawn size `[width, height]`; the video's own when omitted.
+        #[serde(default)]
+        size: Option<[f64; 2]>,
+        /// Trigger name, or list of names, that plays it.
+        #[serde(default)]
+        trigger: Triggers,
+        /// Play when the show loads or the scene is entered.
+        #[serde(default)]
+        autoplay: bool,
+        /// Repeat forever. Cannot be combined with `repeat`.
+        #[serde(default, rename = "loop")]
+        looping: bool,
+        /// Seconds between the trigger and the first frame.
+        #[serde(default)]
+        delay: f64,
+        /// Number of plays (fractions allowed); once when omitted.
+        #[serde(default)]
+        repeat: Option<f64>,
+        /// Trigger fired when a play finishes (never for loops).
+        #[serde(default)]
+        on_end: Option<String>,
+        /// Trigger name, or list of names, that stops it.
+        #[serde(default)]
+        stop: Triggers,
+    },
     /// A sound the host registered under `sound` with its duration
     /// ([`Engine::set_sound`](crate::Engine::set_sound)), played the way a
     /// timeline is: on `trigger` or at load with `autoplay`, after `delay`,
@@ -554,6 +588,37 @@ pub enum LayerKind {
 
 fn default_voices() -> u32 {
     4
+}
+
+/// Which registry the content of a playhead comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MediaKind {
+    Sound,
+    Video,
+}
+
+/// The playhead of a layer whose content has a length: what starts it,
+/// how long it goes on and what it says when it ends. A sound and a video
+/// carry the same one, so the engine runs both through the same code.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct Media<'a> {
+    pub kind: MediaKind,
+    /// The asset the host registered, by name.
+    pub name: &'a str,
+    pub trigger: &'a Triggers,
+    pub stop: &'a Triggers,
+    pub autoplay: bool,
+    pub looping: bool,
+    pub delay: f64,
+    pub repeat: Option<f64>,
+    pub on_end: Option<&'a str>,
+    /// What a trigger does while it already plays. A picture shows one
+    /// thing at a time, so a video always restarts.
+    pub retrigger: Retrigger,
+    /// How many plays may run at once; one for a video.
+    pub voices: u32,
 }
 
 /// What an audio layer's trigger does while the layer is already playing.
@@ -865,15 +930,21 @@ impl Show {
                 for timeline in &layer.timelines {
                     out.extend(timeline.trigger.iter().map(str::to_owned));
                 }
-                match &layer.kind {
-                    LayerKind::Audio { trigger, stop, .. } => {
-                        out.extend(trigger.iter().chain(stop.iter()).map(str::to_owned));
-                    }
-                    LayerKind::Digits {
-                        display: DigitDisplay::Reel(reel),
-                        ..
-                    } => out.extend(reel.spin.iter().map(str::to_owned)),
-                    _ => {}
+                if let Some(media) = layer.kind.media() {
+                    out.extend(
+                        media
+                            .trigger
+                            .iter()
+                            .chain(media.stop.iter())
+                            .map(str::to_owned),
+                    );
+                }
+                if let LayerKind::Digits {
+                    display: DigitDisplay::Reel(reel),
+                    ..
+                } = &layer.kind
+                {
+                    out.extend(reel.spin.iter().map(str::to_owned));
                 }
                 timelines(layer.children(), out);
             }
@@ -892,6 +963,64 @@ impl Show {
     pub fn layer_trees(&self) -> impl Iterator<Item = &[Layer]> {
         std::iter::once(self.layers.as_slice())
             .chain(self.scenes.iter().map(|s| s.layers.as_slice()))
+    }
+}
+
+impl LayerKind {
+    /// The playhead of this layer, when its content has a length: a sound
+    /// or a video.
+    pub fn media(&self) -> Option<Media<'_>> {
+        match self {
+            LayerKind::Audio {
+                sound,
+                trigger,
+                autoplay,
+                looping,
+                delay,
+                repeat,
+                on_end,
+                stop,
+                retrigger,
+                voices,
+                ..
+            } => Some(Media {
+                kind: MediaKind::Sound,
+                name: sound,
+                trigger,
+                stop,
+                autoplay: *autoplay,
+                looping: *looping,
+                delay: *delay,
+                repeat: *repeat,
+                on_end: on_end.as_deref(),
+                retrigger: *retrigger,
+                voices: *voices,
+            }),
+            LayerKind::Video {
+                video,
+                trigger,
+                autoplay,
+                looping,
+                delay,
+                repeat,
+                on_end,
+                stop,
+                ..
+            } => Some(Media {
+                kind: MediaKind::Video,
+                name: video,
+                trigger,
+                stop,
+                autoplay: *autoplay,
+                looping: *looping,
+                delay: *delay,
+                repeat: *repeat,
+                on_end: on_end.as_deref(),
+                retrigger: Retrigger::Restart,
+                voices: 1,
+            }),
+            _ => None,
+        }
     }
 }
 
