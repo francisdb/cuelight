@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, Blend, DigitDisplay, Justify, Layer, LayerKind, MediaKind, Output,
-    Pass, Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, Blend, Choice, DigitDisplay, Justify, Layer, LayerKind, MediaKind,
+    Output, Pass, Pick, Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::path::{self, PathElement};
@@ -422,6 +422,18 @@ pub struct Engine {
     /// What each video layer last played, so pointing one somewhere new
     /// can be told from one that simply finished.
     shown: HashMap<(Root, Vec<usize>), String>,
+    /// What each playhead has played so far: how many times, which is
+    /// what decides which of several assets the next play takes, and when
+    /// the last one started, for `rest`.
+    plays: HashMap<(Root, Vec<usize>), Played>,
+    /// Plays waiting their turn, oldest first; see
+    /// [`Retrigger::Queue`](crate::model::Retrigger::Queue). Each holds
+    /// the asset asked for, so a queue of different clips stays a queue
+    /// of different clips.
+    waiting: Vec<(Root, Vec<usize>, Option<String>)>,
+    /// Scrambles the picks that are meant to vary; see
+    /// [`Engine::set_seed`].
+    seed: u64,
     /// Every reel row, found once at load, and where each of its cells is
     /// on its ring: one record per cell, in cell order.
     reel_sites: Vec<(Root, Vec<usize>)>,
@@ -516,6 +528,8 @@ impl Engine {
         self.reels.clear();
         self.spinning.clear();
         self.shown.clear();
+        self.plays.clear();
+        self.waiting.clear();
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
         self.events.clear();
@@ -701,6 +715,21 @@ impl Engine {
         Ok(())
     }
 
+    /// Scramble the picks that are meant to vary.
+    ///
+    /// A layer that names several assets with `pick: random` or
+    /// `pick: shuffle` picks by counting its plays, not by rolling dice,
+    /// so a show plays the same way every run. That is what rendering a
+    /// show to a file needs, and it is the wrong thing for a show that
+    /// runs all day: seed the engine with something that differs per run
+    /// (the clock will do) and the same show varies between runs while
+    /// staying repeatable within one.
+    ///
+    /// Set it before the show loads; it changes nothing already played.
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+    }
+
     /// What is registered for video `name`.
     pub fn video(&self, name: &str) -> Option<VideoInfo> {
         self.videos.get(name).copied()
@@ -709,9 +738,9 @@ impl Engine {
     /// How long the content of a playhead runs, whichever registry it
     /// comes from; `None` while the host has not registered it.
     fn media_duration(&self, media: &crate::model::Media<'_>, playing: &str) -> Option<f64> {
-        // What it is playing, which a bound video name may have changed.
+        // What it is playing, which a binding or a pick may have chosen.
         let name = if playing.is_empty() {
-            media.name
+            media.names.first()
         } else {
             playing
         };
@@ -827,6 +856,8 @@ impl Engine {
                 if stops {
                     self.sounding
                         .retain(|s| !(s.root == root && s.layer_path == path));
+                    // Whatever was waiting its turn is not owed a turn.
+                    self.waiting.retain(|(r, p, _)| !(*r == root && *p == path));
                 }
                 if plays {
                     self.play(root, path);
@@ -867,7 +898,14 @@ impl Engine {
                 if !idle {
                     continue;
                 }
-                let now = self.media_name(root, &path);
+                let Some(layer) = layer_at(layers, &path) else {
+                    continue;
+                };
+                // Only a layer that is pointed somewhere: one playing through
+                // a list of its own waits to be told to play.
+                let Some(now) = self.pointed_at(root, layer, &path) else {
+                    continue;
+                };
                 // Nothing to show, or the clip it last finished: it stays
                 // as it is until it is pointed somewhere new.
                 let shown = self.shown.get(&(root, path.clone()));
@@ -879,8 +917,8 @@ impl Engine {
         out
     }
 
-    /// What the layer at `path` is set to play now: the asset its
-    /// playhead names, after any binding.
+    /// The asset a new play of the layer at `path` would take: what the
+    /// layer is pointed at, or the next of the several it names.
     fn media_name(&self, root: Root, path: &[usize]) -> String {
         let layer = self
             .show
@@ -890,12 +928,73 @@ impl Engine {
         let Some(layer) = layer else {
             return String::new();
         };
-        match &layer.kind {
-            LayerKind::Video { .. } => self.text(root, layer, path, Property::Video),
-            other => other
-                .media()
-                .map_or_else(String::new, |media| media.name.to_owned()),
+        if let Some(pointed) = self.pointed_at(root, layer, path) {
+            return pointed;
         }
+        let Some(media) = layer.kind.media() else {
+            return String::new();
+        };
+        let ordinal = self
+            .plays
+            .get(&(root, path.to_vec()))
+            .map_or(0, |played| played.count);
+        pick_one(
+            media.names,
+            media.pick,
+            ordinal,
+            self.seed ^ seed_of(root, path),
+        )
+    }
+
+    /// What the playhead at `path` does when asked to play while it is
+    /// already playing.
+    fn retrigger_of(&self, root: Root, path: &[usize]) -> Retrigger {
+        self.media_at(root, path)
+            .map_or(Retrigger::Restart, |media| media.retrigger)
+    }
+
+    /// How many plays the playhead at `path` may hold at once.
+    fn voices_of(&self, root: Root, path: &[usize]) -> usize {
+        self.media_at(root, path)
+            .map_or(1, |media| media.voices.max(1) as usize)
+    }
+
+    /// The playhead of the layer at `path`, if it has one.
+    fn media_at(&self, root: Root, path: &[usize]) -> Option<crate::model::Media<'_>> {
+        self.show
+            .as_ref()
+            .and_then(|show| root_layers(show, root))
+            .and_then(|layers| layer_at(layers, path))
+            .and_then(|layer| layer.kind.media())
+    }
+
+    /// Where the layer at `path` is pointed, by path alone.
+    fn pointed(&self, root: Root, path: &[usize]) -> Option<String> {
+        let layer = self
+            .show
+            .as_ref()
+            .and_then(|show| root_layers(show, root))
+            .and_then(|layers| layer_at(layers, path))?;
+        self.pointed_at(root, layer, path)
+    }
+
+    /// Where a layer is pointed, when its video name is bound to
+    /// something: a layer told what to show ignores any list of its own.
+    fn pointed_at(&self, root: Root, layer: &Layer, path: &[usize]) -> Option<String> {
+        layer
+            .bindings
+            .iter()
+            .any(|b| b.property == Property::Video)
+            .then(|| self.text(root, layer, path, Property::Video))
+    }
+
+    /// The asset the layer at `path` is showing: what its running play
+    /// took, or what a new play would take while nothing runs.
+    fn showing(&self, root: Root, path: &[usize]) -> String {
+        self.sounding
+            .iter()
+            .find(|s| s.root == root && s.layer_path == *path)
+            .map_or_else(|| self.media_name(root, path), |s| s.playing.clone())
     }
 
     /// The layers of `root` with a playhead for which `want` (given their
@@ -953,6 +1052,12 @@ impl Engine {
     /// Play the audio layer at `path`, as its `retrigger` says when it
     /// already plays.
     fn play(&mut self, root: Root, path: Vec<usize>) {
+        self.start(root, path, None);
+    }
+
+    /// Start a play of the layer at `path`, of `asked` when the caller
+    /// has already settled which asset it wants.
+    fn start(&mut self, root: Root, path: Vec<usize>, asked: Option<String>) {
         let layer = self
             .show
             .as_ref()
@@ -962,11 +1067,35 @@ impl Engine {
             return;
         };
         let (retrigger, voices) = (media.retrigger, media.voices as usize);
+        // Too soon after the last play: dropped, whatever the layer would
+        // otherwise do with it.
+        if media.rest > 0.0 {
+            let last = self.plays.get(&(root, path.clone())).map(|p| p.at);
+            if last.is_some_and(|at| self.time - at < media.rest) {
+                return;
+            }
+        }
         let mine = |s: &Sounding| s.root == root && s.layer_path == path;
         match retrigger {
             Retrigger::Restart => self.sounding.retain(|s| !mine(s)),
             Retrigger::Ignore if self.sounding.iter().any(mine) => return,
             Retrigger::Ignore => {}
+            Retrigger::Queue if self.sounding.iter().any(mine) => {
+                // In line behind what is playing, and behind whatever is
+                // already waiting. Beyond the layer's `voices` the
+                // trigger is dropped rather than piling up.
+                let waiting = self
+                    .waiting
+                    .iter()
+                    .filter(|(r, p, _)| *r == root && *p == path)
+                    .count();
+                if waiting < voices.max(1) {
+                    let asked = self.media_name(root, &path);
+                    self.waiting.push((root, path, Some(asked)));
+                }
+                return;
+            }
+            Retrigger::Queue => {}
             Retrigger::Overlap => {
                 // Plays are in start order: the oldest of this layer's
                 // stands first.
@@ -982,8 +1111,11 @@ impl Engine {
             }
         }
         self.next_voice += 1;
-        let playing = self.media_name(root, &path);
+        let playing = asked.unwrap_or_else(|| self.media_name(root, &path));
         self.shown.insert((root, path.clone()), playing.clone());
+        let played = self.plays.entry((root, path.clone())).or_default();
+        played.count += 1;
+        played.at = self.time;
         self.sounding.push(Sounding {
             root,
             layer_path: path,
@@ -1041,6 +1173,7 @@ impl Engine {
         self.playing.retain(|p| p.root == Root::Show);
         // Leaving a scene stops its sounds.
         self.sounding.retain(|s| s.root == Root::Show);
+        self.waiting.retain(|(root, ..)| *root == Root::Show);
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
         self.color_transitions
@@ -1068,16 +1201,36 @@ impl Engine {
             .iter()
             .enumerate()
             .filter_map(|(i, s)| {
-                let now = self.media_name(s.root, &s.layer_path);
+                let now = self.pointed(s.root, &s.layer_path)?;
                 (now != s.playing).then_some((i, now))
             })
             .collect();
         for (i, now) in pointed {
-            let play = &mut self.sounding[i];
-            play.playing = now;
-            play.started = self.time;
-            self.next_voice += 1;
-            play.id = self.next_voice;
+            // Being pointed somewhere new is a play like any other, so
+            // the layer's `retrigger` says what happens to the one that
+            // is running.
+            let (root, path) = (self.sounding[i].root, self.sounding[i].layer_path.clone());
+            match self.retrigger_of(root, &path) {
+                Retrigger::Ignore => continue,
+                Retrigger::Queue => {
+                    let waiting = self
+                        .waiting
+                        .iter()
+                        .filter(|(r, p, _)| *r == root && *p == path)
+                        .count();
+                    let voices = self.voices_of(root, &path);
+                    if waiting < voices {
+                        self.waiting.push((root, path, Some(now)));
+                    }
+                }
+                _ => {
+                    let play = &mut self.sounding[i];
+                    play.playing = now;
+                    play.started = self.time;
+                    self.next_voice += 1;
+                    play.id = self.next_voice;
+                }
+            }
         }
         for (root, path) in self.repointed() {
             self.play(root, path);
@@ -1132,6 +1285,24 @@ impl Engine {
         }
         for i in ended.into_iter().rev() {
             self.sounding.remove(i);
+        }
+        // A layer that has just fallen idle takes the next play waiting
+        // for it, in the order the triggers arrived.
+        let mut turn: Vec<(Root, Vec<usize>, Option<String>)> = Vec::new();
+        self.waiting.retain(|(root, path, asked)| {
+            let busy = self
+                .sounding
+                .iter()
+                .any(|s| s.root == *root && s.layer_path == *path);
+            let taken = turn.iter().any(|(r, p, _)| r == root && p == path);
+            if busy || taken {
+                return true;
+            }
+            turn.push((*root, path.clone(), asked.clone()));
+            false
+        });
+        for (root, path, asked) in turn {
+            self.start(root, path, asked);
         }
         for name in on_end {
             self.trigger(&name);
@@ -1227,7 +1398,6 @@ impl Engine {
                         self.hear(root, children, path, gain, out);
                     }
                     LayerKind::Audio {
-                        sound,
                         looping,
                         delay,
                         repeat,
@@ -1240,6 +1410,7 @@ impl Engine {
                             .iter()
                             .filter(|s| s.root == root && s.layer_path == *path);
                         for play in plays {
+                            let sound = &play.playing;
                             let Some(duration) = self.sounds.get(sound) else {
                                 continue;
                             };
@@ -1704,7 +1875,7 @@ impl Engine {
             LayerKind::Video { size, .. } => {
                 // Its own size until a frame says otherwise, so a layer has
                 // a box before the host has decoded anything.
-                let video = &self.media_name(root, path);
+                let video = &self.showing(root, path);
                 let info = self.videos.get(video);
                 let natural = info.map(|info| [info.width, info.height]).or_else(|| {
                     let frame = self.images.get(video)?;
@@ -2254,12 +2425,12 @@ impl Engine {
                         // is playing. Nothing playing draws nothing, so
                         // what is behind shows through when a clip ends,
                         // and nothing is drawn before a frame arrives.
-                        let video = &self.media_name(root, path);
                         let playing = self
                             .sounding
                             .iter()
-                            .any(|play| play.root == root && play.layer_path == *path);
-                        if let Some(frame) = playing.then(|| self.images.get(video)).flatten() {
+                            .find(|play| play.root == root && play.layer_path == *path);
+                        let video = &playing.map(|play| play.playing.clone()).unwrap_or_default();
+                        if let Some(frame) = self.images.get(video) {
                             let natural = self.videos.get(video).map_or(
                                 [f64::from(frame.width), f64::from(frame.height)],
                                 |info| [info.width, info.height],
@@ -2467,6 +2638,66 @@ fn reel_sites(show: &Show) -> Vec<(Root, Vec<usize>)> {
         walk(Root::Scene(i), &scene.layers, &mut Vec::new(), &mut out);
     }
     out
+}
+
+/// What a playhead has played so far.
+#[derive(Debug, Clone, Copy, Default)]
+struct Played {
+    /// How many plays it has started, which picks from a list of assets.
+    count: u64,
+    /// When the last one started, which `rest` measures from.
+    at: f64,
+}
+
+/// Which of `names` the play numbered `ordinal` on a layer takes.
+///
+/// Every mode is a function of the ordinal alone, so the same play always
+/// takes the same asset: a show renders the same way twice, and a seek
+/// back to a play would find what it found the first time.
+fn pick_one(names: &Choice, how: Pick, ordinal: u64, seed: u64) -> String {
+    let count = names.len() as u64;
+    if count <= 1 {
+        return names.first().to_owned();
+    }
+    let index = match how {
+        Pick::InOrder => ordinal % count,
+        Pick::Random => mix(seed ^ mix(ordinal)) % count,
+        // A fresh scramble per round through the list.
+        Pick::Shuffle => scramble(names.len(), seed, ordinal / count)[(ordinal % count) as usize],
+    };
+    names.get(index as usize).to_owned()
+}
+
+/// `0..count` in a scrambled order, the same order every time for a given
+/// `seed` and `round`.
+fn scramble(count: usize, seed: u64, round: u64) -> Vec<u64> {
+    let mut order: Vec<u64> = (0..count as u64).collect();
+    let mut state = mix(seed ^ mix(round));
+    for i in (1..count).rev() {
+        state = mix(state);
+        order.swap(i, (state % (i as u64 + 1)) as usize);
+    }
+    order
+}
+
+/// Tells layers apart, so two of them picking from the same list do not
+/// pick in step.
+fn seed_of(root: Root, path: &[usize]) -> u64 {
+    let start = match root {
+        Root::Show => 0,
+        Root::Scene(i) => i as u64 + 1,
+    };
+    path.iter()
+        .fold(mix(start), |acc, i| mix(acc ^ (*i as u64 + 1)))
+}
+
+/// Scatters the bits of a counter (splitmix64's finalizer). Not random:
+/// the same input always gives the same output.
+fn mix(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
 }
 
 fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
@@ -2734,6 +2965,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                     Some("needs a gain of 0 or more")
                 } else if media.retrigger == Retrigger::Overlap && media.voices == 0 {
                     Some("needs at least one voice to overlap")
+                } else if media.retrigger == Retrigger::Overlap && media.kind == MediaKind::Video {
+                    Some("cannot overlap: a video layer shows one picture at a time")
+                } else if media.names.is_empty() {
+                    Some("names nothing to play")
+                } else if !media.rest.is_finite() || media.rest < 0.0 {
+                    Some("needs a rest of 0 or more")
                 } else {
                     None
                 };

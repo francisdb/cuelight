@@ -275,6 +275,128 @@ fn rejects_bad_audio_layers() {
     assert!(Engine::new().set_sound("s", 0.0).is_err());
 }
 
+/// One layer, three recordings of the same thing: what a knock, a bumper
+/// or a footstep needs so it does not sound like a tape loop.
+const KNOCKS: &str = r#"{ "name": "knock", "type": "audio",
+    "sound": ["knock1", "knock2", "knock3"], "trigger": "hit" }"#;
+
+fn knocking(pick: &str, seed: u64) -> Engine {
+    let mut engine = Engine::new();
+    for name in ["knock1", "knock2", "knock3"] {
+        engine.set_sound(name, 1.0).unwrap();
+    }
+    engine.set_seed(seed);
+    let layer = KNOCKS.replace("\"trigger\"", &format!("\"pick\": \"{pick}\", \"trigger\""));
+    engine.load_show(&show(&layer)).unwrap();
+    engine
+}
+
+/// The sound of each of `plays` triggers, one play at a time.
+fn heard(engine: &mut Engine, plays: usize) -> Vec<String> {
+    (0..plays)
+        .map(|_| {
+            engine.trigger("hit");
+            engine.advance_frame(0.0);
+            let sound = voices(engine)[0].sound.clone();
+            // Let it finish, so each trigger is a play of its own.
+            engine.advance_frame(1.5);
+            sound
+        })
+        .collect()
+}
+
+#[test]
+fn a_layer_of_several_sounds_plays_them_in_turn() {
+    let mut engine = knocking("in_order", 0);
+    assert_eq!(
+        heard(&mut engine, 5),
+        ["knock1", "knock2", "knock3", "knock1", "knock2"],
+        "a list plays in order and wraps"
+    );
+}
+
+#[test]
+fn picking_is_the_same_every_run_and_differs_by_seed() {
+    let first = heard(&mut knocking("random", 7), 12);
+    assert_eq!(
+        first,
+        heard(&mut knocking("random", 7), 12),
+        "the same show and seed play the same way twice"
+    );
+    assert_ne!(
+        first,
+        heard(&mut knocking("random", 8), 12),
+        "a different seed picks differently"
+    );
+    assert!(
+        first.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+        "random picked the same sound every time: {first:?}"
+    );
+}
+
+#[test]
+fn shuffle_gives_everything_a_turn_before_repeating() {
+    let heard = heard(&mut knocking("shuffle", 3), 9);
+    for round in heard.chunks(3) {
+        let mut round = round.to_vec();
+        round.sort();
+        assert_eq!(round, ["knock1", "knock2", "knock3"], "{heard:?}");
+    }
+}
+
+#[test]
+fn two_layers_of_the_same_sounds_do_not_pick_in_step() {
+    let mut engine = Engine::new();
+    for name in ["knock1", "knock2", "knock3"] {
+        engine.set_sound(name, 1.0).unwrap();
+    }
+    let one = KNOCKS.replace("\"trigger\"", "\"pick\": \"random\", \"trigger\"");
+    let two = one.replace("\"knock\"", "\"knock-too\"");
+    engine.load_show(&show(&format!("{one}, {two}"))).unwrap();
+    let mut apart = 0;
+    for _ in 0..12 {
+        engine.trigger("hit");
+        engine.advance_frame(0.0);
+        let heard = voices(&engine);
+        assert_eq!(heard.len(), 2);
+        if heard[0].sound != heard[1].sound {
+            apart += 1;
+        }
+        engine.advance_frame(1.5);
+    }
+    assert!(apart > 0, "both layers picked the same sound every time");
+}
+
+#[test]
+fn rest_drops_a_trigger_that_comes_too_soon() {
+    let mut engine = Engine::new();
+    engine.set_sound("tick", 0.1).unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "name": "tick", "type": "audio", "sound": "tick",
+                 "trigger": "hit", "rest": 1.0 }"#,
+        ))
+        .unwrap();
+    engine.trigger("hit");
+    engine.advance_frame(0.2);
+    let first = voices(&engine);
+    assert!(first.is_empty(), "a 0.1s sound is over by 0.2s");
+
+    // Well inside the rest: dropped, even though nothing is playing.
+    engine.trigger("hit");
+    engine.advance_frame(0.0);
+    assert!(
+        voices(&engine).is_empty(),
+        "a trigger inside the rest played"
+    );
+
+    // Past it: it plays again.
+    engine.advance_frame(1.0);
+    engine.trigger("hit");
+    engine.advance_frame(0.0);
+    assert_eq!(voices(&engine).len(), 1);
+}
+
 #[test]
 fn a_show_says_whether_it_can_make_a_sound() {
     let mut engine = Engine::new();
@@ -316,7 +438,7 @@ fn a_video_is_not_a_sound() {
     engine.set_video("intro", 2.0, [16.0, 8.0]).unwrap();
     engine
         .load_show(
-            r#"{ "name": "screen", "size": [64, 32],
+            r#"{ "name": "playing", "size": [64, 32],
                  "layers": [ { "name": "intro", "type": "video", "video": "intro",
                                "autoplay": true } ] }"#,
         )

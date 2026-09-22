@@ -114,11 +114,13 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                     layer.name
                 );
             }
-            LayerKind::Audio { sound, .. } if engine.sound_duration(sound).is_none() => {
-                log::warn!(
-                    "sound {sound:?} (layer {:?}) is not registered; it will not be heard",
-                    layer.name
-                );
+            LayerKind::Audio { sound, .. } => {
+                for sound in sound.iter().filter(|s| engine.sound_duration(s).is_none()) {
+                    log::warn!(
+                        "sound {sound:?} (layer {:?}) is not registered; it will not be heard",
+                        layer.name
+                    );
+                }
             }
             _ => {}
         }

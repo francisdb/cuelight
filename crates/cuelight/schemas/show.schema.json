@@ -218,6 +218,20 @@
         "color"
       ]
     },
+    "Choice": {
+      "description": "An asset name, or a list of names to pick between; see `pick`.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "DigitDisplay": {
       "description": "How the cells of a digit row are drawn.",
       "oneOf": [
@@ -795,6 +809,11 @@
               ],
               "default": null
             },
+            "pick": {
+              "description": "Which of several videos a play shows; ignored for one.",
+              "$ref": "#/$defs/Pick",
+              "default": "in_order"
+            },
             "repeat": {
               "description": "Number of plays (fractions allowed); once when omitted.",
               "type": [
@@ -803,6 +822,17 @@
               ],
               "format": "double",
               "default": null
+            },
+            "rest": {
+              "description": "Least seconds between one play starting and the next; a\ntrigger that comes sooner is dropped. 0 (default) never drops.",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "retrigger": {
+              "description": "What the trigger does while a clip is already showing:\n`restart` (default), `ignore` or `queue`. Not `overlap`: a\nlayer shows one picture at a time.",
+              "$ref": "#/$defs/Retrigger",
+              "default": "restart"
             },
             "size": {
               "description": "Drawn size `[width, height]`; the video's own when omitted.",
@@ -833,7 +863,14 @@
               "const": "video"
             },
             "video": {
-              "type": "string"
+              "$ref": "#/$defs/Choice"
+            },
+            "voices": {
+              "description": "How many plays may wait their turn with `queue`. Default 4.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 4,
+              "minimum": 0
             }
           },
           "required": [
@@ -882,6 +919,11 @@
               ],
               "default": null
             },
+            "pick": {
+              "description": "Which of several sounds a play uses; ignored for one.",
+              "$ref": "#/$defs/Pick",
+              "default": "in_order"
+            },
             "repeat": {
               "description": "Number of plays (fractions allowed); once when omitted.",
               "type": [
@@ -891,13 +933,19 @@
               "format": "double",
               "default": null
             },
+            "rest": {
+              "description": "Least seconds between one play starting and the next; a\ntrigger that comes sooner is dropped. 0 (default) never drops.",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
             "retrigger": {
               "description": "What the trigger does while the sound is already playing.",
               "$ref": "#/$defs/Retrigger",
               "default": "restart"
             },
             "sound": {
-              "type": "string"
+              "$ref": "#/$defs/Choice"
             },
             "stop": {
               "description": "Trigger name, or list of names, that stops it.",
@@ -1035,6 +1083,26 @@
     "PathData": {
       "description": "SVG path data: M L H V C S Q T A Z commands, absolute or relative.",
       "type": "string"
+    },
+    "Pick": {
+      "description": "Which of a layer's several assets a play uses.\n\nEvery one of these is a function of how many times the layer has\nplayed, never of a running dice roll, so a show plays the same way\ntwice and a host that seeds the engine\n([`Engine::set_seed`](crate::Engine::set_seed)) decides how much it\nvaries between runs.",
+      "oneOf": [
+        {
+          "description": "The next one each play, wrapping round at the end.",
+          "type": "string",
+          "const": "in_order"
+        },
+        {
+          "description": "Any of them, which may be the one that just played.",
+          "type": "string",
+          "const": "random"
+        },
+        {
+          "description": "All of them in a scrambled order, then scrambled again: varied,\nbut nothing is skipped and nothing repeats until the rest have had\ntheir turn.",
+          "type": "string",
+          "const": "shuffle"
+        }
+      ]
     },
     "Property": {
       "description": "An animatable layer property.",
@@ -1236,6 +1304,11 @@
           "description": "Let the play finish; the trigger does nothing.",
           "type": "string",
           "const": "ignore"
+        },
+        {
+          "description": "Let the play finish, then play: the trigger waits its turn, up to\n`voices` of them waiting at once.",
+          "type": "string",
+          "const": "queue"
         }
       ]
     },

@@ -97,6 +97,111 @@ impl<'de> Deserialize<'de> for Triggers {
     }
 }
 
+/// One asset name, or several for a layer to pick between: written as a
+/// name or a list of names.
+///
+/// A layer that names several plays one of them per play, chosen by its
+/// [`Pick`]. It is the same idea whatever the asset: a sound with three
+/// recordings of the same knock, a layer with a folder of clips to show
+/// between rounds, an idle animation that should not look like a loop.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Choice(pub Vec<String>);
+
+impl Choice {
+    /// A choice of exactly one name.
+    pub fn one(name: impl Into<String>) -> Choice {
+        Choice(vec![name.into()])
+    }
+
+    /// The name at `index`, or nothing when there are none.
+    pub fn get(&self, index: usize) -> &str {
+        self.0.get(index).map_or("", String::as_str)
+    }
+
+    /// The first name, or `""`.
+    pub fn first(&self) -> &str {
+        self.get(0)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
+}
+
+impl Serialize for Choice {
+    /// Written back the way it is usually authored: one name, or a list.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0.as_slice() {
+            [one] => serializer.serialize_str(one),
+            many => many.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Choice {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(Choice(match Option::<Form>::deserialize(deserializer)? {
+            None => Vec::new(),
+            Some(Form::One(name)) => vec![name],
+            Some(Form::Many(names)) => names,
+        }))
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for Choice {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Choice".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "An asset name, or a list of names to pick between; see `pick`.",
+            "anyOf": [
+                { "type": "string" },
+                { "type": "array", "items": { "type": "string" } }
+            ]
+        })
+    }
+}
+
+/// Which of a layer's several assets a play uses.
+///
+/// Every one of these is a function of how many times the layer has
+/// played, never of a running dice roll, so a show plays the same way
+/// twice and a host that seeds the engine
+/// ([`Engine::set_seed`](crate::Engine::set_seed)) decides how much it
+/// varies between runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Pick {
+    /// The next one each play, wrapping round at the end.
+    #[default]
+    InOrder,
+    /// Any of them, which may be the one that just played.
+    Random,
+    /// All of them in a scrambled order, then scrambled again: varied,
+    /// but nothing is skipped and nothing repeats until the rest have had
+    /// their turn.
+    Shuffle,
+}
+
 #[cfg(feature = "schema")]
 impl schemars::JsonSchema for Triggers {
     fn schema_name() -> std::borrow::Cow<'static, str> {
@@ -513,7 +618,10 @@ pub enum LayerKind {
     /// ([`Engine::videos`](crate::Engine::videos)), and draws whatever
     /// frame the host last registered as an image under the video's name.
     Video {
-        video: String,
+        video: Choice,
+        /// Which of several videos a play shows; ignored for one.
+        #[serde(default)]
+        pick: Pick,
         /// Drawn size `[width, height]`; the video's own when omitted.
         #[serde(default)]
         size: Option<[f64; 2]>,
@@ -538,6 +646,18 @@ pub enum LayerKind {
         /// Trigger name, or list of names, that stops it.
         #[serde(default)]
         stop: Triggers,
+        /// Least seconds between one play starting and the next; a
+        /// trigger that comes sooner is dropped. 0 (default) never drops.
+        #[serde(default)]
+        rest: f64,
+        /// What the trigger does while a clip is already showing:
+        /// `restart` (default), `ignore` or `queue`. Not `overlap`: a
+        /// layer shows one picture at a time.
+        #[serde(default)]
+        retrigger: Retrigger,
+        /// How many plays may wait their turn with `queue`. Default 4.
+        #[serde(default = "default_voices")]
+        voices: u32,
     },
     /// A sound the host registered under `sound` with its duration
     /// ([`Engine::set_sound`](crate::Engine::set_sound)), played the way a
@@ -546,7 +666,10 @@ pub enum LayerKind {
     /// reported by [`Engine::voices`](crate::Engine::voices); the engine
     /// never touches samples.
     Audio {
-        sound: String,
+        sound: Choice,
+        /// Which of several sounds a play uses; ignored for one.
+        #[serde(default)]
+        pick: Pick,
         /// Trigger name, or list of names, that plays it.
         #[serde(default)]
         trigger: Triggers,
@@ -568,6 +691,10 @@ pub enum LayerKind {
         /// Trigger name, or list of names, that stops it.
         #[serde(default)]
         stop: Triggers,
+        /// Least seconds between one play starting and the next; a
+        /// trigger that comes sooner is dropped. 0 (default) never drops.
+        #[serde(default)]
+        rest: f64,
         /// What the trigger does while the sound is already playing.
         #[serde(default)]
         retrigger: Retrigger,
@@ -605,8 +732,11 @@ pub enum MediaKind {
 #[non_exhaustive]
 pub struct Media<'a> {
     pub kind: MediaKind,
-    /// The asset the host registered, by name.
-    pub name: &'a str,
+    /// The assets the host registered, by name: one, or several to pick
+    /// between.
+    pub names: &'a Choice,
+    /// Which of `names` a play uses.
+    pub pick: Pick,
     pub trigger: &'a Triggers,
     pub stop: &'a Triggers,
     pub autoplay: bool,
@@ -614,9 +744,10 @@ pub struct Media<'a> {
     pub delay: f64,
     pub repeat: Option<f64>,
     pub on_end: Option<&'a str>,
-    /// What a trigger does while it already plays. A picture shows one
-    /// thing at a time, so a video always restarts.
+    /// What a trigger does while it already plays.
     pub retrigger: Retrigger,
+    /// Least seconds between plays; 0 never drops a trigger.
+    pub rest: f64,
     /// How many plays may run at once; one for a video.
     pub voices: u32,
 }
@@ -634,6 +765,9 @@ pub enum Retrigger {
     Overlap,
     /// Let the play finish; the trigger does nothing.
     Ignore,
+    /// Let the play finish, then play: the trigger waits its turn, up to
+    /// `voices` of them waiting at once.
+    Queue,
 }
 
 /// A sprite sheet layout: cells of `cell` `[width, height]` pixels,
@@ -998,6 +1132,7 @@ impl LayerKind {
         match self {
             LayerKind::Audio {
                 sound,
+                pick,
                 trigger,
                 autoplay,
                 looping,
@@ -1007,10 +1142,12 @@ impl LayerKind {
                 stop,
                 retrigger,
                 voices,
+                rest,
                 ..
             } => Some(Media {
                 kind: MediaKind::Sound,
-                name: sound,
+                names: sound,
+                pick: *pick,
                 trigger,
                 stop,
                 autoplay: *autoplay,
@@ -1020,9 +1157,11 @@ impl LayerKind {
                 on_end: on_end.as_deref(),
                 retrigger: *retrigger,
                 voices: *voices,
+                rest: *rest,
             }),
             LayerKind::Video {
                 video,
+                pick,
                 trigger,
                 autoplay,
                 looping,
@@ -1030,10 +1169,14 @@ impl LayerKind {
                 repeat,
                 on_end,
                 stop,
+                retrigger,
+                voices,
+                rest,
                 ..
             } => Some(Media {
                 kind: MediaKind::Video,
-                name: video,
+                names: video,
+                pick: *pick,
                 trigger,
                 stop,
                 autoplay: *autoplay,
@@ -1041,8 +1184,9 @@ impl LayerKind {
                 delay: *delay,
                 repeat: *repeat,
                 on_end: on_end.as_deref(),
-                retrigger: Retrigger::Restart,
-                voices: 1,
+                retrigger: *retrigger,
+                voices: *voices,
+                rest: *rest,
             }),
             _ => None,
         }
@@ -1074,7 +1218,9 @@ impl Layer {
                 Value::Text(text.clone())
             }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
-            (Property::Video, LayerKind::Video { video, .. }) => Value::Text(video.clone()),
+            (Property::Video, LayerKind::Video { video, .. }) => {
+                Value::Text(video.first().to_owned())
+            }
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
             (Property::Tint, LayerKind::Image { tint, .. }) => {
                 Value::Text(tint.clone().unwrap_or_default())
