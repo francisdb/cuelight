@@ -21,6 +21,7 @@
 //!   assets/             images, registered by filename stem
 //!     fonts/            fonts, registered by filename stem: bitmap (.fnt
 //!                       plus its page images) or outline (.ttf, .otf)
+//!     sounds/           sound files, listed for the host's audio backend
 //! ```
 //!
 //! Where bytes come from and how they become pixels are separate concerns.
@@ -72,11 +73,22 @@ pub struct Loaded {
     /// Names of the images and fonts that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
+    /// Sound files found in `assets/sounds/` (see [`SOUND_EXTENSIONS`]),
+    /// for the host to decode and register by their stem with
+    /// `Engine::set_sound` and its audio backend (the `cuelight-audio`
+    /// crate does both). The engine only needs their durations, so nothing
+    /// here decodes them; an audio layer whose sound arrives later plays
+    /// silently until then.
+    pub sounds: Vec<PathBuf>,
     /// Image and font files under `assets/` that were left alone because
     /// support for their format is not compiled in; hosts may want to log
     /// them.
     pub skipped: Vec<PathBuf>,
 }
+
+/// File extensions (lowercase) of the sound files a show folder may hold
+/// in `assets/sounds/`: what the `cuelight-audio` crate decodes.
+pub const SOUND_EXTENSIONS: &[&str] = &["wav", "flac", "ogg", "mp3"];
 
 /// Load a show into `engine` from `path`: a show folder, or a loose show
 /// file. Assets are registered before the show loads. Fields the engine
@@ -88,6 +100,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         driver: None,
         images: Vec::new(),
         fonts: Vec::new(),
+        sounds: Vec::new(),
         skipped: Vec::new(),
     };
     if path.is_dir() {
@@ -103,6 +116,13 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
                 let (fonts, skipped) = register_font_dir(engine, &font_dir)?;
                 loaded.fonts = fonts;
                 loaded.skipped.extend(skipped);
+            }
+            let sound_dir = assets.join("sounds");
+            if sound_dir.is_dir() {
+                loaded.sounds = files_in(&sound_dir)?
+                    .into_iter()
+                    .filter(|p| SOUND_EXTENSIONS.contains(&extension(p).as_str()))
+                    .collect();
             }
         }
         loaded.driver = Some(path.join("test-driver.json")).filter(|p| p.is_file());

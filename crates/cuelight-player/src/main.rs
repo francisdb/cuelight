@@ -17,8 +17,9 @@
 //! switches fullscreen (as does starting with `--fullscreen`), escape
 //! leaves fullscreen or quits. All of it keeps working while a driver runs.
 //!
-//! Images and fonts a show references but nobody registered are logged as
-//! warnings at load and skipped.
+//! Images, fonts and sounds a show references but nobody registered are
+//! logged as warnings at load and skipped. Sound plays through the default
+//! output device unless `--no-audio` is given.
 
 use std::io::BufRead;
 use std::sync::mpsc::{Receiver, Sender};
@@ -29,6 +30,7 @@ use clap::Parser;
 use cuelight::render::Presenter;
 use cuelight::vello;
 use cuelight::{Engine, Layer, LayerKind, Value};
+use cuelight_audio::{Output, Sound};
 use cuelight_loader::{Driver, DriverPlayer, Step};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
@@ -64,8 +66,8 @@ fn fmt_value(value: &Value) -> String {
     }
 }
 
-/// Warn (once, at load) about image and text layers whose pixels or font
-/// nobody registered.
+/// Warn (once, at load) about image, text and audio layers whose pixels,
+/// font or sound nobody registered.
 fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
     let fonts = &engine.show().expect("show loaded").fonts;
     for layer in layers {
@@ -84,6 +86,12 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                         layer.name
                     );
                 }
+            }
+            LayerKind::Audio { sound, .. } if engine.sound_duration(sound).is_none() => {
+                log::warn!(
+                    "sound {sound:?} (layer {:?}) is not registered; it will not be heard",
+                    layer.name
+                );
             }
             _ => {}
         }
@@ -144,6 +152,8 @@ struct App {
     engine: Engine,
     actions: Vec<String>,
     driver: Option<DriverPlayer>,
+    /// The sound device, when one could be opened and was wanted.
+    audio: Option<Output>,
     console: Receiver<String>,
     context: RenderContext,
     // One vello renderer per wgpu device the context hands out.
@@ -258,6 +268,12 @@ impl App {
         self.engine.advance_frame(dt);
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
+        }
+        if let Some(audio) = &self.audio {
+            match self.engine.voices() {
+                Ok(voices) => audio.apply(&voices),
+                Err(e) => log::warn!("voices: {e}"),
+            }
         }
 
         if let Some((width, height)) = self.pending_size.take() {
@@ -548,6 +564,9 @@ struct Cli {
     /// Start fullscreen on the monitor the window opens on.
     #[arg(long)]
     fullscreen: bool,
+    /// Do not open a sound device; the show plays silently.
+    #[arg(long)]
+    no_audio: bool,
 }
 
 const DEMO_SHOW: &str = include_str!("../demo/show.json");
@@ -557,17 +576,39 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut engine = Engine::new();
     let mut driver = None;
+    // Sound is optional: without a device the show still plays.
+    let audio = if cli.no_audio {
+        None
+    } else {
+        Output::open().map_err(|e| log::warn!("no sound: {e}")).ok()
+    };
     match &cli.show {
         Some(path) => {
             let loaded = cuelight_loader::load(&mut engine, path)?;
             log::info!(
-                "loaded {:?}: {} image(s), {} font(s)",
+                "loaded {:?}: {} image(s), {} font(s), {} sound(s)",
                 loaded.show,
                 loaded.images.len(),
-                loaded.fonts.len()
+                loaded.fonts.len(),
+                loaded.sounds.len()
             );
             for skipped in &loaded.skipped {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
+            }
+            for path in &loaded.sounds {
+                let name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                match Sound::from_file(path) {
+                    Ok(sound) => {
+                        engine.set_sound(&name, sound.duration())?;
+                        if let Some(audio) = &audio {
+                            audio.set_sound(&name, Arc::new(sound));
+                        }
+                    }
+                    Err(e) => log::warn!("skipping sound {path:?}: {e}"),
+                }
             }
             if let Some(path) = cli.driver.as_ref().or(loaded.driver.as_ref()) {
                 driver = Some(Driver::from_file(path)?);
@@ -605,6 +646,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         engine,
         actions,
         driver,
+        audio,
         console: rx,
         context: RenderContext::new(),
         renderers: Vec::new(),

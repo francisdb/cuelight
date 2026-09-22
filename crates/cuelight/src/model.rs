@@ -396,6 +396,10 @@ pub enum LayerKind {
         children: Vec<Layer>,
         #[serde(default)]
         clip: Option<Shape>,
+        /// Loudness of the sounds in the subtree, multiplied down the tree
+        /// like opacity.
+        #[serde(default = "default_scale")]
+        gain: f64,
     },
     Shape {
         shape: Shape,
@@ -445,6 +449,70 @@ pub enum LayerKind {
         justify: Justify,
         display: DigitDisplay,
     },
+    /// A sound the host registered under `sound` with its duration
+    /// ([`Engine::set_sound`](crate::Engine::set_sound)), played the way a
+    /// timeline is: on `trigger` or at load with `autoplay`, after `delay`,
+    /// looping or repeating, firing `on_end`. Draws nothing. What plays is
+    /// reported by [`Engine::voices`](crate::Engine::voices); the engine
+    /// never touches samples.
+    Audio {
+        sound: String,
+        /// Trigger name, or list of names, that plays it.
+        #[serde(default)]
+        trigger: Triggers,
+        /// Play when the show loads or the scene is entered.
+        #[serde(default)]
+        autoplay: bool,
+        /// Repeat forever. Cannot be combined with `repeat`.
+        #[serde(default, rename = "loop")]
+        looping: bool,
+        /// Seconds between the trigger and the first sample.
+        #[serde(default)]
+        delay: f64,
+        /// Number of plays (fractions allowed); once when omitted.
+        #[serde(default)]
+        repeat: Option<f64>,
+        /// Trigger fired when a play finishes (never for loops).
+        #[serde(default)]
+        on_end: Option<String>,
+        /// Trigger name, or list of names, that stops it.
+        #[serde(default)]
+        stop: Triggers,
+        /// What the trigger does while the sound is already playing.
+        #[serde(default)]
+        retrigger: Retrigger,
+        /// With `overlap`, how many plays may sound at once; the oldest
+        /// stops beyond it. Default 4.
+        #[serde(default = "default_voices")]
+        voices: u32,
+        /// Loudness, 0 to 1 and above, times the gains of the groups above
+        /// it. A normal numeric property: bindable and animatable.
+        #[serde(default = "default_scale")]
+        gain: f64,
+        /// Name of the bus the sound plays through; hosts route buses to
+        /// outputs. Their default when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bus: Option<String>,
+    },
+}
+
+fn default_voices() -> u32 {
+    4
+}
+
+/// What an audio layer's trigger does while the layer is already playing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Retrigger {
+    /// Start over: the play so far stops.
+    #[default]
+    Restart,
+    /// Start another play on top, up to the layer's `voices`.
+    Overlap,
+    /// Let the play finish; the trigger does nothing.
+    Ignore,
 }
 
 /// A sprite sheet layout: cells of `cell` `[width, height]` pixels,
@@ -527,6 +595,8 @@ pub enum Property {
     /// Sprite sheet cell of an image layer: rounded down and clamped to
     /// the sheet, so a linear key from 0 to n steps through n cells.
     Frame,
+    /// Loudness of an audio layer or a group's subtree.
+    Gain,
 }
 
 impl Property {
@@ -537,14 +607,17 @@ impl Property {
 }
 
 impl Show {
-    /// Every trigger name the show listens to: what enters its scenes and
-    /// what starts its timelines, in any layer tree. What a host can offer
-    /// as the show's actions.
+    /// Every trigger name the show listens to: what enters its scenes,
+    /// what starts its timelines and what plays or stops its sounds, in
+    /// any layer tree. What a host can offer as the show's actions.
     pub fn triggers(&self) -> std::collections::BTreeSet<String> {
         fn timelines(layers: &[Layer], out: &mut std::collections::BTreeSet<String>) {
             for layer in layers {
                 for timeline in &layer.timelines {
                     out.extend(timeline.trigger.iter().map(str::to_owned));
+                }
+                if let LayerKind::Audio { trigger, stop, .. } = &layer.kind {
+                    out.extend(trigger.iter().chain(stop.iter()).map(str::to_owned));
                 }
                 timelines(layer.children(), out);
             }
@@ -588,7 +661,10 @@ impl Layer {
             }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
-            (Property::Text | Property::Font | Property::Frame, _) => return None,
+            (Property::Gain, LayerKind::Group { gain, .. } | LayerKind::Audio { gain, .. }) => {
+                Value::Number(*gain)
+            }
+            (Property::Text | Property::Font | Property::Frame | Property::Gain, _) => return None,
         })
     }
 }

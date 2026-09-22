@@ -7,7 +7,7 @@
 //! and hands them to [`load_from_memory`], which applies the same folder
 //! conventions as [`load`](crate::load) does on disk.
 
-use crate::{register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS};
+use crate::{register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS, SOUND_EXTENSIONS};
 use cuelight::Engine;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ pub struct Manifest {
     /// Version of this manifest layout.
     pub format: u32,
     /// `show.json`, `test-driver.json` when present, then everything
-    /// directly in `assets/` and `assets/fonts/`, sorted.
+    /// directly in `assets/`, `assets/fonts/` and `assets/sounds/`, sorted.
     pub files: Vec<String>,
 }
 
@@ -36,7 +36,7 @@ impl Manifest {
         if dir.join("test-driver.json").is_file() {
             files.push("test-driver.json".to_owned());
         }
-        for sub in ["assets", "assets/fonts"] {
+        for sub in ["assets", "assets/fonts", "assets/sounds"] {
             let path = dir.join(sub);
             if !path.is_dir() {
                 continue;
@@ -68,6 +68,9 @@ pub struct LoadedFiles {
     /// Names of the images and fonts that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
+    /// Sound files in `assets/sounds/` (their paths in `files`), for the
+    /// host to decode and register; see [`Loaded::sounds`](crate::Loaded::sounds).
+    pub sounds: Vec<String>,
     /// Asset files left alone because support for their format is not
     /// compiled in.
     pub skipped: Vec<String>,
@@ -96,6 +99,7 @@ pub fn load_from_memory(
         driver: None,
         images: Vec::new(),
         fonts: Vec::new(),
+        sounds: Vec::new(),
         skipped: Vec::new(),
     };
 
@@ -141,6 +145,9 @@ pub fn load_from_memory(
                     }
                 }
                 loaded.fonts.push(stem.to_owned());
+            }
+            "assets/sounds" if SOUND_EXTENSIONS.contains(&extension.as_str()) => {
+                loaded.sounds.push(path.clone());
             }
             _ => {}
         }

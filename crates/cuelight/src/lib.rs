@@ -17,8 +17,10 @@
 //! draw and never touches the GPU. With the `render`
 //! feature, [`render::Renderer`] renders offscreen to RGBA pixels and
 //! [`render::Presenter`] puts the show on a host surface, fitted and with
-//! its output mode applied. [`Engine::drain_events`] hands back what the
-//! show itself fired.
+//! its output mode applied. [`Engine::voices`] is the same for sound: what
+//! should be heard, for an audio backend to play (the engine never touches
+//! samples). [`Engine::drain_events`] hands back what the show itself
+//! fired.
 //!
 //! Everything else belongs to hosts and adapters, not this crate.
 
@@ -35,12 +37,12 @@ mod value;
 
 pub use easing::Easing;
 pub use engine::{
-    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape,
+    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape, Voice,
 };
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, DigitDisplay, Direction, DotShape, Dots, FontStyle, Justify, Key,
-    Layer, LayerKind, NumberFormat, Output, OutputMode, Pass, Property, Scaling, Scene,
+    Layer, LayerKind, NumberFormat, Output, OutputMode, Pass, Property, Retrigger, Scaling, Scene,
     SegmentStyle, Shape, Sheet, Show, Timeline, Track, Transition, Triggers, FORMAT,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};

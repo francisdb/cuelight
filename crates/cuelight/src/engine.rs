@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Pass, Property, Scaling,
-    Shape, Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Pass, Property, Retrigger,
+    Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::segments;
@@ -26,6 +26,8 @@ pub enum Error {
     InvalidImage(String),
     #[error("invalid font: {0}")]
     InvalidFont(String),
+    #[error("invalid sound: {0}")]
+    InvalidSound(String),
 }
 
 /// A host-provided raster image: tightly packed RGBA8 pixels (straight,
@@ -173,13 +175,50 @@ struct Playhead {
     time: f64,
 }
 
+/// One play of an audio layer, from its trigger until it ends or is
+/// stopped.
+#[derive(Debug, Clone)]
+struct Sounding {
+    root: Root,
+    layer_path: Vec<usize>,
+    /// Engine-unique, so a backend can tell one play from the next.
+    id: u64,
+    /// Engine time it was triggered at; the delay counts from here.
+    started: f64,
+}
+
+/// A sound that should be heard now, as [`Engine::voices`] reports it: the
+/// audio twin of a [`ResolvedLayer`]. Plain data, so a backend can be fed
+/// and tested without an engine.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Voice {
+    /// Identifies one play for as long as it lasts; never reused within an
+    /// engine. A backend starts a sound when an id appears and stops it
+    /// when the id is gone.
+    pub id: u64,
+    /// Name of the audio layer.
+    pub layer: String,
+    /// The sound, as registered with [`Engine::set_sound`].
+    pub sound: String,
+    /// Seconds into the sound, wrapped for loops and repeats. A backend
+    /// starts a new voice here and resyncs one that has drifted away
+    /// from it (a seek).
+    pub position: f64,
+    /// Effective loudness: the layer's gain times every group's above it.
+    pub gain: f64,
+    /// Whether the sound plays on from its end.
+    pub looping: bool,
+    /// The bus the layer names, if any.
+    pub bus: Option<String>,
+}
+
 /// Something the show did that hosts may want to react to; collect them
 /// with [`Engine::drain_events`].
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Event {
-    /// The show fired this trigger itself (a timeline's `on_end`). Triggers
-    /// the host fires are not echoed back.
+    /// The show fired this trigger itself (a timeline's or a sound's
+    /// `on_end`). Triggers the host fires are not echoed back.
     Trigger(String),
 }
 
@@ -204,7 +243,12 @@ pub struct Engine {
     #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
     font_revision: u64,
     text_cache: Mutex<TextCache>,
+    /// Registered sounds and their durations in seconds.
+    sounds: BTreeMap<String, f64>,
     playing: Vec<Playhead>,
+    sounding: Vec<Sounding>,
+    /// Id for the next play; ids are never reused.
+    next_voice: u64,
     /// Every binding with a transition, found once at load.
     transition_sites: Vec<TransitionSite>,
     /// The change each of them is making; absent until its first frame,
@@ -289,6 +333,7 @@ impl Engine {
         }
         self.variables = show.variables.clone();
         self.playing.clear();
+        self.sounding.clear();
         self.transitions.clear();
         self.transition_sites = transition_sites(&show);
         self.events.clear();
@@ -296,8 +341,10 @@ impl Engine {
         self.active_scene = (!show.scenes.is_empty()).then_some(0);
         self.show = Some(show);
         self.start_matching(Some(Root::Show), |tl| tl.autoplay);
+        self.play_autoplay(Root::Show);
         if let Some(scene) = self.active_scene {
             self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
+            self.play_autoplay(Root::Scene(scene));
         }
         Ok(())
     }
@@ -422,6 +469,28 @@ impl Engine {
         self.fonts.contains_key(name) || self.outline_fonts.contains_key(name)
     }
 
+    /// Register (or replace) a named sound by its `duration` in seconds,
+    /// which is all the engine needs of it: to loop, repeat and end plays.
+    /// The samples stay with the host's audio backend, which plays what
+    /// [`voices`](Engine::voices) reports. Like images, sounds are host
+    /// assets that survive `load_show` and may arrive after it: an audio
+    /// layer whose sound is not registered plays silently and does not end
+    /// until it is.
+    pub fn set_sound(&mut self, name: &str, duration: f64) -> Result<(), Error> {
+        if !(duration.is_finite() && duration > 0.0) {
+            return Err(Error::InvalidSound(format!(
+                "{name:?}: duration {duration} is not above 0"
+            )));
+        }
+        self.sounds.insert(name.to_owned(), duration);
+        Ok(())
+    }
+
+    /// The duration registered for sound `name`, in seconds.
+    pub fn sound_duration(&self, name: &str) -> Option<f64> {
+        self.sounds.get(name).copied()
+    }
+
     /// The pixels registered under `name`, if any.
     pub fn image(&self, name: &str) -> Option<&ImageData> {
         self.images.get(name)
@@ -430,7 +499,8 @@ impl Engine {
     /// Fire a named event. A scene declaring it as its trigger becomes the
     /// active scene (restarting it when already active); then every
     /// timeline declaring it, in the show's layers or the active scene,
-    /// (re)starts from 0.
+    /// (re)starts from 0, and every audio layer declaring it plays (or
+    /// stops, when it is the layer's `stop`).
     pub fn trigger(&mut self, name: &str) {
         let entered = self
             .show
@@ -440,6 +510,116 @@ impl Engine {
             self.enter_scene(scene);
         }
         self.start_matching(None, |tl| tl.trigger.contains(name));
+        let roots: Vec<Root> = std::iter::once(Root::Show)
+            .chain(self.active_scene.map(Root::Scene))
+            .collect();
+        for root in roots {
+            for (path, (stops, plays)) in self.audio_layers(root, |trigger, stop| {
+                (stop.contains(name), trigger.contains(name))
+            }) {
+                if stops {
+                    self.sounding
+                        .retain(|s| !(s.root == root && s.layer_path == path));
+                }
+                if plays {
+                    self.play(root, path);
+                }
+            }
+        }
+    }
+
+    /// The audio layers of `root` for which `want` (given their `trigger`
+    /// and `stop`) says something: their paths, with what it said.
+    fn audio_layers<T>(
+        &self,
+        root: Root,
+        want: impl Fn(&crate::model::Triggers, &crate::model::Triggers) -> T,
+    ) -> Vec<(Vec<usize>, T)> {
+        fn walk<T>(
+            layers: &[Layer],
+            path: &mut Vec<usize>,
+            want: &impl Fn(&crate::model::Triggers, &crate::model::Triggers) -> T,
+            out: &mut Vec<(Vec<usize>, T)>,
+        ) {
+            for (i, layer) in layers.iter().enumerate() {
+                path.push(i);
+                if let LayerKind::Audio { trigger, stop, .. } = &layer.kind {
+                    out.push((path.clone(), want(trigger, stop)));
+                }
+                walk(layer.children(), path, want, out);
+                path.pop();
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(layers) = self.show.as_ref().and_then(|show| root_layers(show, root)) {
+            walk(layers, &mut Vec::new(), &want, &mut out);
+        }
+        out
+    }
+
+    /// Start the autoplay audio layers of `root`.
+    fn play_autoplay(&mut self, root: Root) {
+        let Some(layers) = self.show.as_ref().and_then(|show| root_layers(show, root)) else {
+            return;
+        };
+        let mut starts = Vec::new();
+        fn walk(layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+            for (i, layer) in layers.iter().enumerate() {
+                path.push(i);
+                if let LayerKind::Audio { autoplay: true, .. } = &layer.kind {
+                    out.push(path.clone());
+                }
+                walk(layer.children(), path, out);
+                path.pop();
+            }
+        }
+        walk(layers, &mut Vec::new(), &mut starts);
+        for path in starts {
+            self.play(root, path);
+        }
+    }
+
+    /// Play the audio layer at `path`, as its `retrigger` says when it
+    /// already plays.
+    fn play(&mut self, root: Root, path: Vec<usize>) {
+        let layer = self
+            .show
+            .as_ref()
+            .and_then(|show| root_layers(show, root))
+            .and_then(|layers| layer_at(layers, &path));
+        let Some(LayerKind::Audio {
+            retrigger, voices, ..
+        }) = layer.map(|l| &l.kind)
+        else {
+            return;
+        };
+        let (retrigger, voices) = (*retrigger, *voices as usize);
+        let mine = |s: &Sounding| s.root == root && s.layer_path == path;
+        match retrigger {
+            Retrigger::Restart => self.sounding.retain(|s| !mine(s)),
+            Retrigger::Ignore if self.sounding.iter().any(mine) => return,
+            Retrigger::Ignore => {}
+            Retrigger::Overlap => {
+                // Plays are in start order: the oldest of this layer's
+                // stands first.
+                let mut over = (self.sounding.iter().filter(|s| mine(s)).count() + 1)
+                    .saturating_sub(voices.max(1));
+                self.sounding.retain(|s| {
+                    if over > 0 && mine(s) {
+                        over -= 1;
+                        return false;
+                    }
+                    true
+                });
+            }
+        }
+        self.next_voice += 1;
+        self.sounding.push(Sounding {
+            root,
+            layer_path: path,
+            id: self.next_voice,
+            started: self.time,
+        });
     }
 
     /// Name of the active scene, if the show has scenes.
@@ -488,16 +668,19 @@ impl Engine {
 
     fn enter_scene(&mut self, scene: usize) {
         self.playing.retain(|p| p.root == Root::Show);
+        // Leaving a scene stops its sounds.
+        self.sounding.retain(|s| s.root == Root::Show);
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
         self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
+        self.play_autoplay(Root::Scene(scene));
     }
 
-    /// Advance time by `dt` seconds: running timelines progress, looping
-    /// ones wrap, finished ones stop (their properties fall back to
-    /// bindings/base values) and fire their `on_end` trigger, which is
-    /// also reported through [`drain_events`](Engine::drain_events).
+    /// Advance time by `dt` seconds: running timelines and sounds
+    /// progress, looping ones wrap, finished ones stop (their properties
+    /// fall back to bindings/base values) and fire their `on_end` trigger,
+    /// which is also reported through [`drain_events`](Engine::drain_events).
     pub fn advance_frame(&mut self, dt: f64) {
         self.follow_transitions();
         self.time += dt;
@@ -524,6 +707,38 @@ impl Engine {
         }
         for i in finished.into_iter().rev() {
             self.playing.remove(i);
+        }
+        // A play ends when its time is up; a play of an unregistered sound
+        // has no end yet.
+        let time = self.time;
+        let mut ended: Vec<usize> = Vec::new();
+        for (i, s) in self.sounding.iter().enumerate() {
+            let layer = root_layers(show, s.root).and_then(|l| layer_at(l, &s.layer_path));
+            let Some(LayerKind::Audio {
+                sound,
+                looping,
+                delay,
+                repeat,
+                on_end: end,
+                ..
+            }) = layer.map(|l| &l.kind)
+            else {
+                ended.push(i);
+                continue;
+            };
+            if *looping {
+                continue;
+            }
+            let Some(duration) = self.sounds.get(sound) else {
+                continue;
+            };
+            if time - s.started - delay.max(0.0) >= duration * repeat.unwrap_or(1.0).max(0.0) {
+                ended.push(i);
+                on_end.extend(end.clone());
+            }
+        }
+        for i in ended.into_iter().rev() {
+            self.sounding.remove(i);
         }
         for name in on_end {
             self.trigger(&name);
@@ -583,6 +798,85 @@ impl Engine {
             }
         }
         Ok(out)
+    }
+
+    /// The sounds that should be heard now, in tree order: every play of a
+    /// visible audio layer whose sound is registered and whose delay is
+    /// over, at its position and effective gain. The audio twin of
+    /// [`resolved_layers`](Engine::resolved_layers): a backend diffs it
+    /// frame by frame (start what is new, stop what is gone, ramp gains,
+    /// resync a position that jumped) and hosts that mix themselves read
+    /// the same list.
+    pub fn voices(&self) -> Result<Vec<Voice>, Error> {
+        let show = self.show.as_ref().ok_or(Error::NoShow)?;
+        let mut out = Vec::new();
+        self.hear(Root::Show, &show.layers, &mut Vec::new(), 1.0, &mut out);
+        if let Some(scene) = self.active_scene {
+            if let Some(layers) = root_layers(show, Root::Scene(scene)) {
+                self.hear(Root::Scene(scene), layers, &mut Vec::new(), 1.0, &mut out);
+            }
+        }
+        Ok(out)
+    }
+
+    fn hear(
+        &self,
+        root: Root,
+        layers: &[Layer],
+        path: &mut Vec<usize>,
+        chain: f64,
+        out: &mut Vec<Voice>,
+    ) {
+        for (i, layer) in layers.iter().enumerate() {
+            path.push(i);
+            if layer.visible {
+                match &layer.kind {
+                    LayerKind::Group { children, .. } => {
+                        let gain = chain * self.number(root, layer, path, Property::Gain).max(0.0);
+                        self.hear(root, children, path, gain, out);
+                    }
+                    LayerKind::Audio {
+                        sound,
+                        looping,
+                        delay,
+                        repeat,
+                        bus,
+                        ..
+                    } => {
+                        let gain = chain * self.number(root, layer, path, Property::Gain).max(0.0);
+                        let plays = self
+                            .sounding
+                            .iter()
+                            .filter(|s| s.root == root && s.layer_path == *path);
+                        for play in plays {
+                            let Some(duration) = self.sounds.get(sound) else {
+                                continue;
+                            };
+                            let elapsed = self.time - play.started - delay.max(0.0);
+                            if elapsed < 0.0 {
+                                continue;
+                            }
+                            let position = if *looping || repeat.is_some() {
+                                elapsed % duration
+                            } else {
+                                elapsed
+                            };
+                            out.push(Voice {
+                                id: play.id,
+                                layer: layer.name.clone(),
+                                sound: sound.clone(),
+                                position,
+                                gain,
+                                looping: *looping,
+                                bus: bus.clone(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            path.pop();
+        }
     }
 
     /// (Re)start the timelines `want` selects, in `root` or, with `None`,
@@ -789,7 +1083,7 @@ impl Engine {
         scale: f64,
     ) -> Option<[f64; 4]> {
         let [x, y, w, h] = match &layer.kind {
-            LayerKind::Group { .. } => return None,
+            LayerKind::Group { .. } | LayerKind::Audio { .. } => return None,
             LayerKind::Shape { shape, .. } => match *shape {
                 Shape::Rect(rect) => rect,
                 Shape::Circle([cx, cy, r]) => [cx - r, cy - r, 2.0 * r, 2.0 * r],
@@ -933,7 +1227,9 @@ impl Engine {
                     None => (x, y),
                 };
                 match &layer.kind {
-                    LayerKind::Group { children, clip } => {
+                    // Heard, not seen.
+                    LayerKind::Audio { .. } => {}
+                    LayerKind::Group { children, clip, .. } => {
                         if let Some(clip) = clip {
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
@@ -1222,11 +1518,45 @@ fn validate(show: &Show) -> Result<(), Error> {
                     }
                 }
             }
-            if matches!(layer.kind, LayerKind::Group { .. }) && layer.anchor.is_some() {
+            if matches!(
+                layer.kind,
+                LayerKind::Group { .. } | LayerKind::Audio { .. }
+            ) && layer.anchor.is_some()
+            {
                 return Err(Error::InvalidShow(format!(
-                    "group {:?} has an anchor; groups have no content box",
+                    "layer {:?} has an anchor, but no content box",
                     layer.name
                 )));
+            }
+            if let LayerKind::Audio {
+                looping,
+                repeat,
+                delay,
+                voices,
+                retrigger,
+                gain,
+                ..
+            } = &layer.kind
+            {
+                let problem = if *looping && repeat.is_some() {
+                    Some("sets both loop and repeat")
+                } else if !delay.is_finite() || *delay < 0.0 {
+                    Some("needs a delay of 0 or more")
+                } else if repeat.is_some_and(|r| !r.is_finite() || r < 0.0) {
+                    Some("needs a repeat of 0 or more")
+                } else if !gain.is_finite() || *gain < 0.0 {
+                    Some("needs a gain of 0 or more")
+                } else if *retrigger == Retrigger::Overlap && *voices == 0 {
+                    Some("needs at least one voice to overlap")
+                } else {
+                    None
+                };
+                if let Some(problem) = problem {
+                    return Err(Error::InvalidShow(format!(
+                        "audio layer {:?} {problem}",
+                        layer.name
+                    )));
+                }
             }
             layers(show, layer.children())?;
         }
