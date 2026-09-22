@@ -8,7 +8,8 @@
 //! - [`load_from_memory`]: the same folder conventions over files held in
 //!   memory, for hosts without a filesystem (web, embedded assets), with
 //!   [`Manifest`] telling them which files a show folder has.
-//! - [`register_image`] / [`register_font`]: single assets from bytes.
+//! - [`register_image`] / [`register_font`] / [`register_vector`]: single
+//!   assets from bytes.
 //! - [`Driver`]: scripted triggers and variable changes with delays, the
 //!   `test-driver.json` convention, standing in for a live host.
 //!
@@ -18,7 +19,8 @@
 //! myshow/
 //!   show.json           the show document (required)
 //!   test-driver.json    optional driver script
-//!   assets/             images, registered by filename stem
+//!   assets/             images and vector artwork (.svg), registered by
+//!                       filename stem
 //!     fonts/            fonts, registered by filename stem: bitmap (.fnt
 //!                       plus its page images) or outline (.ttf, .otf)
 //!     sounds/           sound files, listed for the host's audio backend
@@ -28,13 +30,18 @@
 //! Image formats are decoded by extension in [`decode_image`], each behind
 //! a cargo feature (`png`, on by default); a host that decodes images
 //! itself can turn them off and still use the folder and driver handling.
-//! Outline fonts are a feature too (`outline-fonts`, on by default).
+//! Outline fonts (`outline-fonts`) and SVG conversion (`svg`) are features
+//! too, on by default.
 
 mod driver;
 mod manifest;
+#[cfg(feature = "svg")]
+mod svg;
 
 pub use driver::{Driver, DriverPlayer, Step};
 pub use manifest::{load_from_memory, LoadedFiles, Manifest, MANIFEST_FILE};
+#[cfg(feature = "svg")]
+pub use svg::convert_svg;
 
 use cuelight::{BitmapFont, Engine};
 use std::path::{Path, PathBuf};
@@ -70,9 +77,10 @@ pub struct Loaded {
     /// `test-driver.json`, or `<show>.test-driver.json` next to a loose
     /// show file.
     pub driver: Option<PathBuf>,
-    /// Names of the images and fonts that were registered.
+    /// Names of the images, fonts and vector artwork that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
+    pub vectors: Vec<String>,
     /// Sound files found in `assets/sounds/` (see [`SOUND_EXTENSIONS`]),
     /// for the host to decode and register by their stem with
     /// `Engine::set_sound` and its audio backend (the `cuelight-audio`
@@ -100,6 +108,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         driver: None,
         images: Vec::new(),
         fonts: Vec::new(),
+        vectors: Vec::new(),
         sounds: Vec::new(),
         skipped: Vec::new(),
     };
@@ -111,6 +120,9 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         let assets = path.join("assets");
         if assets.is_dir() {
             (loaded.images, loaded.skipped) = register_image_dir(engine, &assets)?;
+            let (vectors, skipped) = register_vector_dir(engine, &assets)?;
+            loaded.vectors = vectors;
+            loaded.skipped.extend(skipped);
             let font_dir = assets.join("fonts");
             if font_dir.is_dir() {
                 let (fonts, skipped) = register_font_dir(engine, &font_dir)?;
@@ -142,7 +154,8 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
 
 /// Register every image file directly in `dir` under its filename stem,
 /// in name order. Returns the names, and the files skipped because no
-/// decoder for their extension is compiled in.
+/// decoder for their extension is compiled in (vector artwork is not an
+/// image: see [`register_vector_dir`]).
 pub fn register_image_dir(
     engine: &mut Engine,
     dir: &Path,
@@ -150,6 +163,9 @@ pub fn register_image_dir(
     let (mut names, mut skipped) = (Vec::new(), Vec::new());
     for path in files_in(dir)? {
         let extension = extension(&path);
+        if extension == VECTOR_EXTENSION {
+            continue;
+        }
         if !IMAGE_EXTENSIONS.contains(&extension.as_str()) {
             skipped.push(path);
             continue;
@@ -213,6 +229,49 @@ pub fn register_font_dir(
         names.push(name);
     }
     Ok((names, skipped))
+}
+
+/// Register every `.svg` file directly in `dir` as vector artwork under
+/// its filename stem, in name order. Returns the names, and the files
+/// skipped because the `svg` feature is off.
+pub fn register_vector_dir(
+    engine: &mut Engine,
+    dir: &Path,
+) -> Result<(Vec<String>, Vec<PathBuf>), LoadError> {
+    let mut names = Vec::new();
+    #[cfg_attr(feature = "svg", allow(unused_mut))]
+    let mut skipped = Vec::new();
+    for path in files_in(dir)? {
+        if extension(&path) != VECTOR_EXTENSION {
+            continue;
+        }
+        #[cfg(feature = "svg")]
+        {
+            let name = stem(&path);
+            register_vector(engine, &name, &read(&path)?).map_err(|message| LoadError::Asset {
+                path: path.clone(),
+                message,
+            })?;
+            names.push(name);
+        }
+        #[cfg(not(feature = "svg"))]
+        {
+            let _ = (&mut *engine, &mut names);
+            skipped.push(path);
+        }
+    }
+    Ok((names, skipped))
+}
+
+/// The file extension (lowercase) of vector artwork in a show folder.
+pub const VECTOR_EXTENSION: &str = "svg";
+
+/// Convert an SVG document's `bytes` and register it as vector artwork
+/// `name`; see [`convert_svg`] for what is kept.
+#[cfg(feature = "svg")]
+pub fn register_vector(engine: &mut Engine, name: &str, bytes: &[u8]) -> Result<(), String> {
+    let vector = convert_svg(bytes)?;
+    engine.set_vector(name, vector).map_err(|e| e.to_string())
 }
 
 /// Decode image `bytes` of the format `extension` names (`"png"`) and

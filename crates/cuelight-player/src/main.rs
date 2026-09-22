@@ -87,6 +87,12 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                     );
                 }
             }
+            LayerKind::Vector { vector, .. } if engine.vector(vector).is_none() => {
+                log::warn!(
+                    "vector {vector:?} (layer {:?}) is not registered; it will not render",
+                    layer.name
+                );
+            }
             LayerKind::Audio { sound, .. } if engine.sound_duration(sound).is_none() => {
                 log::warn!(
                     "sound {sound:?} (layer {:?}) is not registered; it will not be heard",

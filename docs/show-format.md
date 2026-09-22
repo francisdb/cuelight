@@ -48,7 +48,8 @@ A show exists in two forms:
   myshow/
     show.json           the show document (required)
     test-driver.json    optional driver script, hosts may pick it up
-    assets/             images, registered by filename stem (PNG)
+    assets/             images (PNG) and vector artwork (SVG), registered
+                        by filename stem
       fonts/            fonts, registered by filename stem: bitmap (.fnt
                         plus its page PNGs) or outline (.ttf, .otf)
       sounds/           sounds, registered by filename stem (.wav, .flac,
@@ -56,8 +57,8 @@ A show exists in two forms:
   ```
 
 Either way the engine only ever receives the single JSON document through
-`load_show` plus `set_image`, `set_font` and `set_sound` calls; it does no
-file I/O itself. Resolving a folder (reading the manifest, decoding and
+`load_show` plus `set_image`, `set_vector`, `set_font` and `set_sound`
+calls; it does no file I/O itself. Resolving a folder (reading the manifest, decoding and
 registering `assets/`, picking up the driver) is host-side convention,
 implemented by the `cuelight-loader` crate (sounds are decoded by
 `cuelight-audio`). A zipped folder is the natural future single-file
@@ -188,8 +189,8 @@ the conversion alone, for hosts that want to do the rest themselves).
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `image`, `text`, `digits` or `audio` (see
-  below).
+- `type`: `group`, `shape`, `vector`, `image`, `text`, `digits` or
+  `audio` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
@@ -210,14 +211,28 @@ group children behind whatever follows the group. Every layer has:
 Layer kinds:
 
 - `group`: `children` is a nested layer list. Optional `clip` is a shape
-  (`{ "rect": [x, y, width, height] }` or `{ "circle": [cx, cy, radius] }`,
-  in the group's local space like a shape layer's) outside which the
-  children do not show: a window onto its content. `gain` (default 1)
+  (a `rect`, `circle` or `path` as a shape layer writes it, in the group's
+  local space) outside which the children do not show: a window onto its
+  content. `gain` (default 1)
   scales the loudness of the audio layers in the subtree, see
   [Sound](#sound).
-- `shape`: `shape` is `{ "rect": [x, y, width, height] }` or
-  `{ "circle": [cx, cy, radius] }` in the layer's local space, plus a
-  `fill` color.
+- `shape`: `shape` is `{ "rect": [x, y, width, height] }`,
+  `{ "circle": [cx, cy, radius] }` or `{ "path": "M 0 0 L 10 0 L 5 8 Z" }`
+  in the layer's local space, plus a `fill` color (`#00000000` for an
+  outline only). `path` takes SVG path data: `M L H V C S Q T A Z`,
+  absolute or relative; arcs become curves. Optional `stroke`
+  `{ "color": "#RRGGBB", "width": 1 }` outlines the shape, centered on its
+  edge, in the layer's units (so it scales with the layer).
+- `vector`: `vector` names artwork the host registered with
+  `Engine::set_vector`; the loader does that for every `assets/*.svg`,
+  by stem. Drawn like an image: its top-left corner at the layer's x/y
+  (or by `anchor`), at its own size (the viewBox) or scaled into `size`
+  `[width, height]`. What an SVG keeps: paths, basic shapes and text (as
+  outlines, through the system's fonts), with solid fills and strokes,
+  group transforms and opacities. A gradient paints as its first stop's
+  color; patterns, raster images, clip paths, masks, filters, dashes and
+  line joins are dropped. Animation is not read: address moving parts as
+  separate vector layers and animate those.
 - `image`: `image` names pixels the host registers at runtime with
   `Engine::set_image` (RGBA8, kept in memory). Optional `size`
   `[width, height]` scales the image into the canvas; omitted, it draws at

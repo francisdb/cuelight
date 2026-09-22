@@ -14,9 +14,13 @@ png = { version = "0.18", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+usvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"], optional = true }
 
 [features]
-default = ["png", "outline-fonts"]
+default = ["png", "outline-fonts", "svg"]
+# Convert .svg files under assets/ into vector artwork (paths with fills
+# and strokes; text becomes paths through the system's fonts).
+svg = ["dep:usvg"]
 # Image decoders. Hosts that decode images themselves (a browser, a game
 # engine) can turn them off and register pixels with Engine::set_image.
 png = ["dep:png"]

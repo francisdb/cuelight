@@ -7,7 +7,10 @@
 //! and hands them to [`load_from_memory`], which applies the same folder
 //! conventions as [`load`](crate::load) does on disk.
 
-use crate::{register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS, SOUND_EXTENSIONS};
+use crate::{
+    register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS, SOUND_EXTENSIONS,
+    VECTOR_EXTENSION,
+};
 use cuelight::Engine;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -65,9 +68,10 @@ impl Manifest {
 pub struct LoadedFiles {
     /// The folder's driver script (`test-driver.json`), when it has one.
     pub driver: Option<Driver>,
-    /// Names of the images and fonts that were registered.
+    /// Names of the images, fonts and vector artwork that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
+    pub vectors: Vec<String>,
     /// Sound files in `assets/sounds/` (their paths in `files`), for the
     /// host to decode and register; see [`Loaded::sounds`](crate::Loaded::sounds).
     pub sounds: Vec<String>,
@@ -99,6 +103,7 @@ pub fn load_from_memory(
         driver: None,
         images: Vec::new(),
         fonts: Vec::new(),
+        vectors: Vec::new(),
         sounds: Vec::new(),
         skipped: Vec::new(),
     };
@@ -113,6 +118,16 @@ pub fn load_from_memory(
             None => (file, String::new()),
         };
         match dir {
+            "assets" if extension == VECTOR_EXTENSION => {
+                #[cfg(feature = "svg")]
+                {
+                    crate::register_vector(engine, stem, bytes)
+                        .map_err(|e| asset_error(path, e))?;
+                    loaded.vectors.push(stem.to_owned());
+                }
+                #[cfg(not(feature = "svg"))]
+                loaded.skipped.push(path.clone());
+            }
             "assets" if IMAGE_EXTENSIONS.contains(&extension.as_str()) => {
                 register_image(engine, stem, &extension, bytes)
                     .map_err(|e| asset_error(path, e))?;

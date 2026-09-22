@@ -495,6 +495,7 @@
           ]
         },
         {
+          "description": "A vector shape filled with `fill`, and outlined by `stroke` when\ngiven.",
           "type": "object",
           "properties": {
             "fill": {
@@ -502,6 +503,16 @@
             },
             "shape": {
               "$ref": "#/$defs/Shape"
+            },
+            "stroke": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Stroke"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": {
               "type": "string",
@@ -599,6 +610,37 @@
             "type",
             "text",
             "font"
+          ]
+        },
+        {
+          "description": "Vector artwork the host registered under `vector`\n([`Engine::set_vector`](crate::Engine::set_vector), the loader does\nit for `assets/*.svg`), drawn like an image: its top-left corner at\nthe layer's x/y (or by `anchor`), at its natural size or scaled\ninto `size`. Skipped while not registered.",
+          "type": "object",
+          "properties": {
+            "size": {
+              "description": "Destination size `[width, height]`; the artwork's own size\nwhen omitted.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "vector"
+            },
+            "vector": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "vector"
           ]
         },
         {
@@ -833,6 +875,10 @@
         }
       ]
     },
+    "PathData": {
+      "description": "SVG path data: M L H V C S Q T A Z commands, absolute or relative.",
+      "type": "string"
+    },
     "Property": {
       "description": "An animatable layer property.",
       "oneOf": [
@@ -993,6 +1039,19 @@
           "required": [
             "circle"
           ]
+        },
+        {
+          "description": "SVG path data (`\"M 0 0 L 10 0 L 5 8 Z\"`): lines, curves and arcs.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/PathData"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ]
         }
       ]
     },
@@ -1019,6 +1078,25 @@
       "required": [
         "cell",
         "columns"
+      ]
+    },
+    "Stroke": {
+      "description": "An outline drawn along a shape's edge, centered on it.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB` or `#RRGGBBAA`",
+          "type": "string"
+        },
+        "width": {
+          "description": "Line width in the layer's units, above 0; 1 by default.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        }
+      },
+      "required": [
+        "color"
       ]
     },
     "Timeline": {

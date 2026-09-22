@@ -41,9 +41,10 @@ to demo, to test and to render.
 
 ## What a show is made of
 
-- **Layers**: groups (optionally clipped), shapes, images and sprite
-  sheets, text in bitmap or outline fonts, digit rows drawn as segment
-  displays, and sounds. All share position, opacity, scale, anchor and
+- **Layers**: groups (optionally clipped), shapes (rects, circles, paths,
+  filled and stroked), SVG artwork, images and sprite sheets, text in
+  bitmap or outline fonts, digit rows drawn as segment displays, and
+  sounds. All share position, opacity, scale, anchor and
   visibility.
 - **Scenes**: named sets of layers within a show, entered by a trigger.
 - **Timelines**: keyframes with easing on layer properties, started on load
@@ -157,10 +158,10 @@ required.
 - [`cuelight`](crates/cuelight): the engine, plus the optional vello
   renderer. It does no I/O: hosts hand it a show document, images and fonts.
 - [`cuelight-loader`](crates/cuelight-loader): that host work, shared:
-  loading show folders from disk (or images and fonts from bytes, for hosts
-  without a filesystem) and playing `test-driver.json` scripts. Image
-  decoders and outline fonts are cargo features, for hosts that bring
-  their own. Hosts without a filesystem load the same folders from
+  loading show folders from disk (or images, SVGs and fonts from bytes,
+  for hosts without a filesystem) and playing `test-driver.json` scripts.
+  Image decoders, SVG conversion and outline fonts are cargo features,
+  for hosts that bring their own. Hosts without a filesystem load the same folders from
   memory; the `cuelight-manifest` tool writes the `manifest.json` that
   tells a browser which files a show folder has.
 - [`cuelight-audio`](crates/cuelight-audio): sound for hosts: decodes

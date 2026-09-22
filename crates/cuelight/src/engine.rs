@@ -5,6 +5,7 @@ use crate::model::{
     Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
+use crate::path::{self, PathElement};
 use crate::segments;
 use crate::value::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -99,6 +100,28 @@ impl FontData {
     pub fn revision(&self) -> u64 {
         self.revision
     }
+}
+
+/// Host-provided vector artwork (an SVG the loader converted): paths in
+/// its own units, drawn by vector layers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vector {
+    /// The artwork's natural size, what a vector layer without `size`
+    /// draws at.
+    pub width: f64,
+    pub height: f64,
+    /// In paint order.
+    pub paths: Vec<VectorPath>,
+}
+
+/// One path of a [`Vector`]: its geometry and how it is painted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorPath {
+    pub elements: Vec<PathElement>,
+    /// Fill color as RGBA bytes; `None` for an outline only.
+    pub fill: Option<[u8; 4]>,
+    /// Stroke color and width, in the artwork's units.
+    pub stroke: Option<([u8; 4], f64)>,
 }
 
 /// One glyph of a [`ResolvedShape::GlyphRun`]: its id in the font and the
@@ -238,6 +261,7 @@ pub struct Engine {
     variables: BTreeMap<String, Value>,
     images: BTreeMap<String, ImageData>,
     image_revision: u64,
+    vectors: BTreeMap<String, Vector>,
     fonts: BTreeMap<String, RegisteredFont>,
     outline_fonts: BTreeMap<String, FontData>,
     #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
@@ -494,6 +518,27 @@ impl Engine {
     /// The pixels registered under `name`, if any.
     pub fn image(&self, name: &str) -> Option<&ImageData> {
         self.images.get(name)
+    }
+
+    /// Register (or replace) named vector artwork that vector layers
+    /// reference: paths with fills and strokes in the artwork's own units,
+    /// what the loader makes of an SVG file. Like images, vectors are host
+    /// assets that survive `load_show`; a layer whose vector is not (yet)
+    /// registered is skipped.
+    pub fn set_vector(&mut self, name: &str, vector: Vector) -> Result<(), Error> {
+        if !(vector.width > 0.0 && vector.height > 0.0) {
+            return Err(Error::InvalidShow(format!(
+                "vector {name:?}: size {}x{} is not above 0",
+                vector.width, vector.height
+            )));
+        }
+        self.vectors.insert(name.to_owned(), vector);
+        Ok(())
+    }
+
+    /// The vector artwork registered under `name`, if any.
+    pub fn vector(&self, name: &str) -> Option<&Vector> {
+        self.vectors.get(name)
     }
 
     /// Fire a named event. A scene declaring it as its trigger becomes the
@@ -1084,10 +1129,16 @@ impl Engine {
     ) -> Option<[f64; 4]> {
         let [x, y, w, h] = match &layer.kind {
             LayerKind::Group { .. } | LayerKind::Audio { .. } => return None,
-            LayerKind::Shape { shape, .. } => match *shape {
-                Shape::Rect(rect) => rect,
+            LayerKind::Shape { shape, .. } => match shape {
+                Shape::Rect(rect) => *rect,
                 Shape::Circle([cx, cy, r]) => [cx - r, cy - r, 2.0 * r, 2.0 * r],
+                Shape::Path(data) => path::bounds(data.elements())?,
             },
+            LayerKind::Vector { vector, size } => {
+                let data = self.vectors.get(vector)?;
+                let [w, h] = size.unwrap_or([data.width, data.height]);
+                [0.0, 0.0, w, h]
+            }
             LayerKind::Image {
                 image, size, sheet, ..
             } => {
@@ -1234,7 +1285,7 @@ impl Engine {
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::ClipBegin {
-                                    shape: Box::new(resolve_shape(*clip, x, y, scale)),
+                                    shape: Box::new(resolve_shape(clip, x, y, scale, None)),
                                 },
                                 color: [0; 4],
                                 opacity,
@@ -1250,15 +1301,49 @@ impl Engine {
                             });
                         }
                     }
-                    LayerKind::Shape { shape, fill } => {
+                    LayerKind::Shape {
+                        shape,
+                        fill,
+                        stroke,
+                    } => {
                         let color =
                             parse_color(fill).ok_or_else(|| Error::InvalidColor(fill.clone()))?;
+                        let stroke = stroke
+                            .as_ref()
+                            .map(|s| {
+                                let color = parse_color(&s.color)
+                                    .ok_or_else(|| Error::InvalidColor(s.color.clone()))?;
+                                Ok::<_, Error>((color, s.width * scale))
+                            })
+                            .transpose()?;
                         out.push(ResolvedLayer {
                             name: layer.name.clone(),
-                            shape: resolve_shape(*shape, x, y, scale),
+                            shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
                             opacity,
                         });
+                    }
+                    LayerKind::Vector { vector, size } => {
+                        // Missing artwork is skipped like a missing image.
+                        if let Some(data) = self.vectors.get(vector) {
+                            let [w, h] = size.unwrap_or([data.width, data.height]);
+                            let (sx, sy) = (w / data.width * scale, h / data.height * scale);
+                            for item in &data.paths {
+                                out.push(ResolvedLayer {
+                                    name: layer.name.clone(),
+                                    shape: ResolvedShape::Path {
+                                        elements: item
+                                            .elements
+                                            .iter()
+                                            .map(|e| e.map(|[px, py]| [x + px * sx, y + py * sy]))
+                                            .collect(),
+                                        stroke: item.stroke.map(|(c, w)| (c, w * (sx + sy) / 2.0)),
+                                    },
+                                    color: item.fill.unwrap_or([0; 4]),
+                                    opacity,
+                                });
+                            }
+                        }
                     }
                     LayerKind::Image {
                         image, size, sheet, ..
@@ -1431,6 +1516,20 @@ fn validate(show: &Show) -> Result<(), Error> {
     }
     fn layers(show: &Show, list: &[Layer]) -> Result<(), Error> {
         for layer in list {
+            if let LayerKind::Shape {
+                stroke: Some(stroke),
+                ..
+            } = &layer.kind
+            {
+                parse_color(&stroke.color)
+                    .ok_or_else(|| Error::InvalidColor(stroke.color.clone()))?;
+                if !(stroke.width.is_finite() && stroke.width > 0.0) {
+                    return Err(Error::InvalidShow(format!(
+                        "layer {:?} needs a stroke width above 0",
+                        layer.name
+                    )));
+                }
+            }
             if let LayerKind::Text { font, .. } = &layer.kind {
                 if !show.fonts.contains_key(font) {
                     return Err(Error::InvalidShow(format!(
@@ -1639,19 +1738,62 @@ fn collect_timelines(
 }
 
 /// Place a shape's local geometry: scaled uniformly around the layer's
-/// x/y origin, then translated to it.
-fn resolve_shape(shape: Shape, x: f64, y: f64, scale: f64) -> ResolvedShape {
-    match shape {
-        Shape::Rect([rx, ry, w, h]) => ResolvedShape::Rect {
+/// x/y origin, then translated to it. A stroked rect or circle resolves
+/// as a path, the one shape that carries a stroke.
+fn resolve_shape(
+    shape: &Shape,
+    x: f64,
+    y: f64,
+    scale: f64,
+    stroke: Option<([u8; 4], f64)>,
+) -> ResolvedShape {
+    let place = |[px, py]: [f64; 2]| [px * scale + x, py * scale + y];
+    match (shape, stroke) {
+        (Shape::Rect([rx, ry, w, h]), None) => ResolvedShape::Rect {
             x: rx * scale + x,
             y: ry * scale + y,
             width: w * scale,
             height: h * scale,
         },
-        Shape::Circle([cx, cy, r]) => ResolvedShape::Circle {
+        (Shape::Circle([cx, cy, r]), None) => ResolvedShape::Circle {
             cx: cx * scale + x,
             cy: cy * scale + y,
             radius: r * scale,
+        },
+        (Shape::Rect([rx, ry, w, h]), stroke) => ResolvedShape::Path {
+            elements: [
+                PathElement::MoveTo([*rx, *ry]),
+                PathElement::LineTo([rx + w, *ry]),
+                PathElement::LineTo([rx + w, ry + h]),
+                PathElement::LineTo([*rx, ry + h]),
+                PathElement::Close,
+            ]
+            .into_iter()
+            .map(|e| e.map(place))
+            .collect(),
+            stroke,
+        },
+        (Shape::Circle([cx, cy, r]), stroke) => {
+            // Four cubic quarter arcs, the usual approximation.
+            const K: f64 = 0.552_284_749_8;
+            let (cx, cy, r) = (*cx, *cy, *r);
+            let k = K * r;
+            let elements = [
+                PathElement::MoveTo([cx + r, cy]),
+                PathElement::CubicTo([cx + r, cy + k], [cx + k, cy + r], [cx, cy + r]),
+                PathElement::CubicTo([cx - k, cy + r], [cx - r, cy + k], [cx - r, cy]),
+                PathElement::CubicTo([cx - r, cy - k], [cx - k, cy - r], [cx, cy - r]),
+                PathElement::CubicTo([cx + k, cy - r], [cx + r, cy - k], [cx + r, cy]),
+                PathElement::Close,
+            ];
+            ResolvedShape::Path {
+                elements: elements.into_iter().map(|e| e.map(place)).collect(),
+                stroke,
+            }
+        }
+        (Shape::Path(data), stroke) => ResolvedShape::Path {
+            elements: data.elements().iter().map(|e| e.map(place)).collect(),
+            stroke,
         },
     }
 }
@@ -1693,6 +1835,14 @@ pub enum ResolvedShape {
     /// implicitly.
     Polygon {
         points: Vec<[f64; 2]>,
+    },
+    /// A path of lines and curves in canvas coordinates, filled with the
+    /// layer's color (a fully transparent color means no fill) and then
+    /// outlined with `stroke` (color, width in canvas pixels) when given.
+    /// As a clip, the stroke is ignored.
+    Path {
+        elements: Vec<PathElement>,
+        stroke: Option<([u8; 4], f64)>,
     },
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle: the whole image, or with `source` only
