@@ -190,6 +190,9 @@ struct App {
     /// Whether the window has been given the show's shape, which happens
     /// once, on the compositor's first answer.
     fitted: bool,
+    /// Fastest refresh rate any monitor offers, for pacing redraws while
+    /// the window is resized and the display cannot be asked.
+    fastest_hertz: f64,
     mailbox_while_resizing: bool,
     /// When the surface last changed size, while it still presents with
     /// mailbox because of that.
@@ -470,11 +473,16 @@ impl App {
             // Mailbox does not pace anything: without this a drag draws
             // thousands of frames per second. Come back at the display's
             // pace instead.
+            // Wayland leaves `current_monitor` empty, so the fastest
+            // display stands in: under mailbox an extra frame is discarded,
+            // while too slow a pace makes the drag itself look choppy.
             let hertz = state
                 .window
                 .current_monitor()
                 .and_then(|monitor| monitor.refresh_rate_millihertz())
-                .map_or(60.0, |millihertz| f64::from(millihertz) / 1000.0);
+                .map_or(self.fastest_hertz, |millihertz| {
+                    f64::from(millihertz) / 1000.0
+                });
             // Counted from this frame's start, so drawing time is not added
             // on top of every interval.
             self.redraw_at = Some(now + Duration::from_secs_f64(1.0 / hertz));
@@ -513,6 +521,12 @@ impl ApplicationHandler for App {
                 .expect("create window"),
         );
         common::log_window_info(&window);
+        self.fastest_hertz = event_loop
+            .available_monitors()
+            .filter_map(|monitor| monitor.refresh_rate_millihertz())
+            .map(|millihertz| f64::from(millihertz) / 1000.0)
+            .fold(60.0_f64, f64::max);
+        log::debug!("fastest display: {:.0} Hz", self.fastest_hertz);
         let size = window.inner_size();
         let surface = pollster::block_on(self.context.create_surface(
             window.clone(),
@@ -737,6 +751,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         fullscreen: cli.fullscreen,
         pending_size: None,
         fitted: false,
+        fastest_hertz: 60.0,
         mailbox_while_resizing: false,
         resized_at: None,
         redraw_at: None,
