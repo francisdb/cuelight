@@ -430,6 +430,7 @@ impl Engine {
         if let Ok(understood) = serde_json::to_value(&show) {
             ignored_fields(&raw, &understood, "", &mut self.load_warnings);
         }
+        quiet_bindings(&show, &mut self.load_warnings);
         self.variables = show.variables.clone();
         self.playing.clear();
         self.sounding.clear();
@@ -2390,6 +2391,63 @@ fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> 
         0
     };
     [index % columns * cw, index / columns * ch, cw, ch]
+}
+
+/// Warn about bindings that will quietly do nothing.
+///
+/// A bound value the engine cannot use leaves the property as it was,
+/// silently, the way an unregistered image simply does not draw: the host
+/// may send something usable later, and a frame is no place to complain.
+/// That is right at runtime and useless while writing a show, where a
+/// mistyped variable or a color that is not one looks exactly like a
+/// feature that does not work.
+///
+/// What a show does state up front is which variables it declares and
+/// what they start at, so that is what is checked. Values written in the
+/// show itself, like the colors and styles a `map` lists, are errors at
+/// load instead.
+fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
+    fn walk(show: &Show, layers: &[Layer], out: &mut Vec<String>) {
+        for layer in layers {
+            for binding in &layer.bindings {
+                let name = &binding.variable;
+                let Some(value) = show.variables.get(name) else {
+                    out.push(format!(
+                        "the {:?} binding of layer {:?} reads variable {name:?}, which the show \
+                         does not declare; it does nothing until a host sets that variable",
+                        binding.property, layer.name
+                    ));
+                    continue;
+                };
+                // With a map it is the mapped values that reach the
+                // property, and those are checked at load.
+                if binding.map.is_some() {
+                    continue;
+                }
+                let text = value.to_text();
+                let problem = match binding.property {
+                    Property::Tint if !text.is_empty() && parse_color(&text).is_none() => {
+                        Some("a color like \"#RRGGBB\"")
+                    }
+                    Property::Font if !show.fonts.contains_key(&text) => {
+                        Some("one of the show's font styles")
+                    }
+                    _ => None,
+                };
+                if let Some(wanted) = problem {
+                    out.push(format!(
+                        "the {:?} binding of layer {:?} reads variable {name:?}, which starts at \
+                         {text:?}, not {wanted}; values it cannot use leave the property alone",
+                        binding.property, layer.name
+                    ));
+                }
+            }
+            walk(show, layer.children(), out);
+        }
+    }
+    for layers in show.layer_trees() {
+        walk(show, layers, out);
+    }
 }
 
 /// Collect the paths of object keys present in `given` but absent from

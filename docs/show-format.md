@@ -31,6 +31,12 @@ their paths (`layers[2].colour`), which is how a typo shows up. Keys
 starting with `$`, like `$schema`, are never reported. The player logs the
 warnings at load.
 
+The same list reports bindings that will quietly do nothing: one reading a
+variable the show does not declare, and one whose variable starts at a
+value the property cannot use, such as a `tint` variable starting at
+`"green"`. None of those is an error, since a host may set something
+usable later, but each looks exactly like a feature that does not work.
+
 Naming note: a **show** is the whole loaded document; **scenes** are the
 switchable views inside it (see [Scenes](#scenes)).
 
@@ -516,7 +522,14 @@ the active player's score:
 Font bindings may only map to declared font styles and tint bindings only
 to colors (`#RRGGBB`, `#RRGGBBAA`, or empty for no tint); `text`, `font`,
 `visible` and `tint` can be bound but not keyframed, so a tint changes
-over rather than fades. Binding or keyframing a property
+over rather than fades.
+
+A value the property cannot use, a font style the show does not declare
+or a tint that is not a color, leaves the property as it was. That is the
+same silence as an image nobody has registered: the host may send
+something usable on the next frame, and a frame is no place to complain.
+What the show can be checked for at load is checked at load, and lands in
+`Engine::load_warnings()`. Binding or keyframing a property
 the layer's kind does not have (`font` on a shape) is rejected at load.
 
 Two more knobs sit on a binding, for inputs that are levels or that
