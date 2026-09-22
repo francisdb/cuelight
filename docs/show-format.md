@@ -301,10 +301,12 @@ Layer kinds:
   `pixel_perfect` scaling) the straight bars are a whole number of pixels
   thick, lie on pixel boundaries and end flat, so small displays stay crisp.
 
-  `reel` is a row of wheels: every cell carries a ring of characters and
+  `reel` is a row of wheels: every cell carries a ring of symbols and
   rolls to the one the text asks of it, as an odometer, a counter or a
-  departure board does. The characters are drawn in a font style of the
-  show, so a reel needs no artwork and stays sharp at any size.
+  departure board does. A symbol is named by a character of the ring's
+  `charset` and drawn either as that character in a font style of the
+  show, which needs no artwork and stays sharp at any size, or as the
+  artwork `cells` gives it.
 
   ```json
   { "type": "digits", "digits": 6, "size": [180, 48], "justify": "right",
@@ -315,93 +317,56 @@ Layer kinds:
                                        { "t": 0.22, "v": 0 } ] } } }
   ```
 
-  - `font`: a style from the show's `fonts`, bitmap or outline.
-  - `charset` (default `0123456789`): the characters on the ring, in the
-    order they pass by. A cell shows nothing for a character that is not on
-    it, so a ring can hold letters, symbols or a blank as well as digits.
+  - `charset` (default `0123456789`): the characters naming the ring's
+    symbols, in the order they pass by. A cell shows nothing for anything
+    the text asks of it that the ring does not carry, so a ring can hold
+    letters, punctuation or a blank as well as digits.
+  - `font`: a style from the show's `fonts`, bitmap or outline, that a
+    symbol is drawn in as its own character.
+  - `cells`: artwork for the symbols instead, one entry per character of
+    the charset: `{ "vectors": ["cherry", "bar", "seven"] }` or
+    `{ "images": [...] }`, named as the host registered them. The charset
+    stays the ring's identity, so the text still says which symbol a cell
+    lands on; this only says what that symbol looks like. Artwork is
+    fitted into the cell and centred, keeping its shape, and vector
+    artwork stays sharp at any size. One of `font` or `cells` is needed.
   - `duration`, `ease`, `direction` and `offset` say how a cell moves, and
     mean what they do on a binding's [transition](#transitions):
     `forward` is a wheel that only turns one way, an `offset` settles a
     cell against its stop.
-  - `step` (default 1): how far a cell travels in one move, in characters.
-    One means it lands on every character on the way, each taking
-    `duration`, which is how a counter or a split-flap board reads. `null`
-    makes the whole journey a single move instead, so `duration` covers
-    all of it and `ease` shapes the journey rather than each character:
-    that is how a wheel spins, and how a meter whose lowest digit never
-    stops rolling behaves.
+  - `step` (default 1): how far a cell travels in one move, in symbols.
+    One means it lands on every symbol on the way, each taking `duration`,
+    which is how a counter or a split-flap board reads. `null` makes the
+    whole journey a single move instead, so `duration` covers all of it
+    and `ease` shapes the journey rather than each symbol: that is how a
+    wheel spins, and how a meter whose lowest digit never stops rolling
+    behaves.
   - `turns` (default 0): whole turns of the ring a cell adds before it
     lands. A spinning wheel takes a few; with `step` set to `null` the
-    characters fly past and the ease brings it to rest.
-  - `window` (default 1): how many characters of the ring the cell shows
-    at once, stacked, with the one it stands on in the middle. A reel
-    behind a tall window shows its neighbours, as a slot machine does; the
-    row's height is shared between them.
+    symbols fly past and the ease brings it to rest.
+  - `window` (default 1): how many symbols of the ring the cell shows at
+    once, stacked, with the one it stands on in the middle. A wheel behind
+    a tall window shows its neighbours, as a machine with several rows
+    does; the row's height is shared between them.
   - `stagger` (default 0): seconds each cell waits behind the one to its
     right, so a row does not move as one piece.
+
+  A row is one value across several cells, which is what a counter or a
+  board line is. Things that move independently are independent rows: a
+  machine with three wheels is three one-cell reel layers side by side,
+  each bound to its own variable, so a host can start and stop them when
+  it likes and give each its own charset, turns and duration. `stagger` is
+  for the other case, where one value ripples across a row as a carry
+  does.
 
   Each cell keeps its own place on the ring, so a change moves only the
   cells it reaches: going from `109` to `119` rolls the tens wheel and
   leaves the others standing. Where a cell stands is counted straight
   rather than around the ring, so a journey can be longer than one turn,
-  and a cell that is stopped mid-travel carries on from exactly where it
-  stands. A cell shows the character it stands on and
-  the one coming up behind it, clipped to the cell, which is what makes a
-  roll look like a wheel rather than a fade.
-- `audio`: a sound, played like a timeline is; draws nothing. See
-  [Sound](#sound).
-
-## Sound
-
-```json
-{ "name": "thunder", "type": "audio", "sound": "thunder",
-  "trigger": "strike", "stop": "hush", "gain": 0.8, "bus": "sfx",
-  "on_end": "thunder_done" }
-```
-
-An audio layer plays `sound`, a sound the host registered by name (by
-convention the file's stem, from `assets/sounds/`). It sits in the layer
-tree like anything else: a scene's music starts with the scene and stops
-when the scene is left, a group's `gain` scales every sound below it, and
-`gain` is a normal numeric property, so bindings, transitions and
-timelines give volume control, fades and warm-ups for free. It is
-controlled the way a timeline is, with the same names and meanings:
-
-- `trigger` (a name or a list) plays it; `autoplay` plays it when the show
-  loads or its scene is entered.
-- `delay`, `loop`, `repeat`, `on_end`: as on timelines. `on_end` fires when
-  a play finishes (after its repeats, never for loops) and is reported to
-  the host like a timeline's.
-- `stop` (a name or a list): a trigger that ends the play at once, without
-  `on_end`.
-- `retrigger` says what the trigger does while the sound already plays:
-  `restart` (default: the play so far stops and a new one begins),
-  `overlap` (another play sounds on top, up to `voices` at once, default
-  4; the oldest stops beyond that: footsteps, flaps, coins) or `ignore`
-  (the play finishes undisturbed).
-- `gain` (default 1): loudness, 0 to 1 and above, multiplied by the gains
-  of the groups above it. Only groups and audio layers have it.
-- `bus` (optional): a name the host may route to an output; nothing in
-  the engine depends on it yet.
-
-An invisible audio layer, or one in an invisible subtree, is not heard,
-like everything else in that subtree resolves to nothing.
-
-The engine never opens an audio device or touches a sample. A host
-registers each sound with only its duration (`Engine::set_sound`), which
-is all the engine needs to loop, repeat and end plays, and reads back what
-should be heard each frame with `Engine::voices()`: one voice per play,
-with a stable id, the sound's name, the position in seconds, the effective
-gain, whether it loops, and the bus. An audio backend diffs that list
-frame by frame (a new id starts at its position, a vanished id stops, a
-changed gain ramps, a position that jumped is resynced); a host with a
-mixer of its own consumes the same list. Positions are a function of
-engine time, so an offline render mixes sound sample-exact against the
-frames, and a seek only needs the backend to resync. A sound registered
-after its layer started playing is heard from where it would be by then;
-until then the play is silent and does not end. The `cuelight-audio` crate
-is that backend: decoding, a mixer, a sound device for the player and a
-WAV file for offline rendering.
+  and a cell stopped mid-travel carries on from exactly where it stands. A
+  cell shows the symbol it stands on and the one coming up behind it,
+  clipped to the cell, which is what makes a roll look like a wheel rather
+  than a fade.
 
 ## Fonts
 

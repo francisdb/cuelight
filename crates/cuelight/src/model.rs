@@ -607,24 +607,33 @@ fn default_window() -> u32 {
     1
 }
 
-/// A row of cells whose characters sit on a ring and roll to the ones the
-/// layer's `text` asks for, as the wheels of an odometer, a counter or a
-/// departure board do. Each cell has a place on the ring of its own, so a
-/// change moves only the cells it reaches, and `stagger` keeps them from
-/// moving in lockstep.
+/// A row of cells carrying a ring of symbols, each rolling to the symbol
+/// the layer's `text` asks of it, as the wheels of an odometer, a counter
+/// or a departure board do. Each cell stands somewhere on the ring of its
+/// own, so a change moves only the cells it reaches, and `stagger` keeps
+/// them from moving in lockstep.
 ///
-/// The characters are drawn in a font style of the show, so the display
-/// stays sharp at any size and needs no artwork.
+/// A symbol is named by a character of `charset` and drawn either as that
+/// character in a font style of the show, which needs no artwork and
+/// stays sharp at any size, or as the artwork `cells` gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Reel {
-    /// The characters on the ring, in the order they pass by. A cell shows
-    /// a blank for anything the text asks for that is not on it.
+    /// The characters naming the ring's symbols, in the order they pass
+    /// by. A cell shows nothing for anything the text asks of it that the
+    /// ring does not carry.
     #[serde(default = "default_charset")]
     pub charset: String,
-    /// Font style from the show's `fonts` the characters are drawn in.
-    pub font: String,
-    /// Seconds one character step takes; above 0.
+    /// Font style from the show's `fonts` the symbols are drawn in as
+    /// their own characters, when `cells` does not put artwork on the ring
+    /// instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// What each symbol looks like, one entry per character of `charset`.
+    /// Without it a symbol is drawn as its own character, in `font`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<ReelCells>,
+    /// Seconds one move takes; above 0.
     pub duration: f64,
     /// How a step progresses; the same easings timelines know.
     #[serde(default)]
@@ -633,24 +642,24 @@ pub struct Reel {
     /// `forward` for a wheel that only turns one way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<Direction>,
-    /// How far a cell travels in one move, in characters: one by default,
-    /// so it lands on every character on the way, as a counter does.
-    /// `null` makes the whole journey one move instead, which is how a
-    /// wheel spins: `duration` then covers all of it and `ease` shapes the
-    /// spin rather than each character.
+    /// How far a cell travels in one move, in symbols: one by default, so
+    /// it lands on every symbol on the way, as a counter does. `null`
+    /// makes the whole journey one move instead, which is how a wheel
+    /// spins: `duration` then covers all of it and `ease` shapes the spin
+    /// rather than each symbol.
     #[serde(default = "default_reel_step", skip_serializing_if = "Option::is_none")]
     pub step: Option<f64>,
     /// Extra whole turns of the ring a cell makes before it lands, on top
-    /// of the distance to its character. 0 by default; a spinning wheel
-    /// takes a few.
+    /// of the distance to its symbol. 0 by default; a spinning wheel takes
+    /// a few.
     #[serde(default)]
     pub turns: u32,
-    /// How many characters of the ring the cell shows at once, stacked
-    /// with the one it stands on in the middle. 1 by default; a wheel
-    /// behind a window several characters tall shows more.
+    /// How many symbols of the ring the cell shows at once, stacked with
+    /// the one it stands on in the middle. 1 by default; a wheel behind a
+    /// tall window shows its neighbours as well.
     #[serde(default = "default_window")]
     pub window: u32,
-    /// Motion added on top of a move, in characters: keys like a binding
+    /// Motion added on top of a move, in symbols: keys like a binding
     /// transition's `offset`, so a cell can settle against its stop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offset: Vec<Key>,
@@ -660,21 +669,58 @@ pub struct Reel {
     pub stagger: f64,
 }
 
+/// What a reel's symbols are drawn as. The charset stays the ring's
+/// identity, so a show still says which symbol a cell lands on by its
+/// character; this only says what that symbol looks like.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum ReelCells {
+    /// Vector artwork the host registered, by name, one per symbol.
+    /// Artwork scales with the row, so a reel of pictures is as sharp as
+    /// one of letters.
+    Vectors(Vec<String>),
+    /// Images the host registered, by name, one per symbol.
+    Images(Vec<String>),
+}
+
+impl ReelCells {
+    /// How many symbols the artwork covers.
+    pub fn len(&self) -> usize {
+        match self {
+            ReelCells::Vectors(names) | ReelCells::Images(names) => names.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The asset drawn for symbol `index` of the ring.
+    pub fn at(&self, index: usize) -> Option<&str> {
+        match self {
+            ReelCells::Vectors(names) | ReelCells::Images(names) => {
+                names.get(index).map(String::as_str)
+            }
+        }
+    }
+}
+
 impl Reel {
-    /// The characters of the ring.
+    /// The characters naming the ring's symbols, in order.
     pub fn characters(&self) -> Vec<char> {
         self.charset.chars().collect()
     }
 
-    /// How many characters the ring holds.
+    /// How many symbols the ring holds.
     pub fn ring(&self) -> f64 {
         self.charset.chars().count().max(1) as f64
     }
 
-    /// How a cell travels from one place to another. The places are
-    /// counted straight, not around a ring, so a journey can be longer
-    /// than one turn; where a cell stands is that count folded back onto
-    /// the ring.
+    /// How a cell travels from one symbol to another. Symbols are counted
+    /// straight, not around the ring, so a journey can be longer than one
+    /// turn; where a cell stands is that count folded back onto the ring.
     pub fn roll(&self) -> Transition {
         Transition {
             duration: self.duration,
@@ -686,9 +732,9 @@ impl Reel {
         }
     }
 
-    /// Where a cell standing at `from` travels to show the character at
-    /// `character` on the ring: the way round `direction` asks for, plus
-    /// the turns it takes before landing.
+    /// Where a cell standing at `from` travels to show the symbol that
+    /// `character` names: the way round `direction` asks for, plus the
+    /// turns it takes before landing.
     pub fn travel(&self, from: f64, character: f64) -> f64 {
         let ring = self.ring();
         let forward = (character - from).rem_euclid(ring);
