@@ -658,6 +658,16 @@ pub enum LayerKind {
         /// How many plays may wait their turn with `queue`. Default 4.
         #[serde(default = "default_voices")]
         voices: u32,
+        /// Loudness of the clip's own soundtrack, if the host registered
+        /// one: 0 to 1 and above, times the gains of the groups above it.
+        /// 0 plays the picture silently. A normal numeric property:
+        /// bindable and animatable.
+        #[serde(default = "default_scale")]
+        gain: f64,
+        /// Name of the bus the clip's sound plays through; hosts route
+        /// buses to outputs. Their default when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bus: Option<String>,
     },
     /// A sound the host registered under `sound` with its duration
     /// ([`Engine::set_sound`](crate::Engine::set_sound)), played the way a
@@ -1102,13 +1112,11 @@ impl Show {
     /// can skip doing so entirely for a show that is silent by
     /// construction.
     ///
-    /// This is exactly the set of layers
-    /// [`Engine::voices`](crate::Engine::voices) reports, which is what a
-    /// sound device is fed. A video layer is not one of them: the engine
-    /// reports a video's playhead and the host draws its frames, and
-    /// nothing in this engine carries a video's own soundtrack. Should
-    /// that ever change, this has to count video layers too, or a host
-    /// would leave the device shut on a show that ought to be heard.
+    /// A video layer is not counted, even though a clip can be heard: it
+    /// is heard only if the host registers a sound under the video's name,
+    /// and the show's own document cannot say whether it will. A host that
+    /// registers a clip's soundtrack knows it did, and should open a sound
+    /// device on that ground rather than on this answer.
     pub fn has_sound(&self) -> bool {
         fn any(layers: &[Layer]) -> bool {
             layers
@@ -1225,9 +1233,12 @@ impl Layer {
             (Property::Tint, LayerKind::Image { tint, .. }) => {
                 Value::Text(tint.clone().unwrap_or_default())
             }
-            (Property::Gain, LayerKind::Group { gain, .. } | LayerKind::Audio { gain, .. }) => {
-                Value::Number(*gain)
-            }
+            (
+                Property::Gain,
+                LayerKind::Group { gain, .. }
+                | LayerKind::Audio { gain, .. }
+                | LayerKind::Video { gain, .. },
+            ) => Value::Number(*gain),
             (
                 Property::Text
                 | Property::Font

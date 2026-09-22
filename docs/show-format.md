@@ -498,8 +498,7 @@ current frame. It takes the playhead a sound takes and means it the same
 way: `trigger` or `autoplay` starts it, `delay`, `loop`, `repeat` and
 `on_end` behave as on a sound or a timeline, and `stop` ends it without
 firing `on_end`. What it does not take is what only makes sense for
-sound: a picture shows one thing at a time, so it cannot `overlap` and
-there is no gain or bus. It does take the other three `retrigger` modes,
+sound: a picture shows one thing at a time, so it cannot `overlap`. It does take the other three `retrigger` modes,
 and they are how a layer fed by a driver arbitrates: `restart` (default)
 cuts to whatever it is asked for last, `ignore` protects the clip that is
 running, `queue` plays each in turn. Pointing a layer somewhere new
@@ -540,6 +539,35 @@ does.
 
 Decoding lives outside the engine, in the `cuelight-video` crate, behind
 cargo features, so a host pays for a decoder only if it wants one.
+
+### A clip's own soundtrack
+
+A clip cut as a self-contained sequence usually carries sound, and that
+sound travels the path a sound already travels. The host registers it
+with `Engine::set_sound` under **the video's name**, which is how it says
+this clip has a soundtrack and hands over its samples; the layer is then
+reported by `Engine::voices()` for as long as it plays, alongside its
+picture in `Engine::videos()`. Both carry the same play id, so a host can
+see they are one play.
+
+The picture's own duration governs the position, so the two cannot drift
+apart over a loop however long. A clip the host registered no sound for
+is silent, which is also how a host says a clip should not be heard: it
+simply does not hand over a soundtrack.
+
+```json
+{ "name": "backdrop", "type": "video", "video": "attract",
+  "autoplay": true, "loop": true, "gain": 0 }
+```
+
+Video layers take `gain` (default 1) and `bus`, meaning exactly what they
+mean on a sound: `gain` multiplies with the gains of the groups above, so
+a group turns down everything below it, and it is a normal numeric
+property, so a binding or a timeline fades a clip in. `gain: 0` keeps the
+pictures and loses the sound, which is what a looping backdrop wants.
+
+`Show::has_sound()` does not count video layers: whether a clip is heard
+is the host's to know, not the document's.
 
 ## Fonts
 

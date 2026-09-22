@@ -1435,6 +1435,53 @@ impl Engine {
                             });
                         }
                     }
+                    // A clip is heard when the host has registered a sound
+                    // under the video's name: that is how it says this clip
+                    // has a soundtrack and hands over its samples. The
+                    // picture's own duration governs the position, so the
+                    // two stay together through loops and repeats, and the
+                    // play's id is the one `videos` reports, so a host can
+                    // see that the sound and the picture are one play.
+                    LayerKind::Video { bus, .. } => {
+                        let Some(media) = layer.kind.media() else {
+                            path.pop();
+                            continue;
+                        };
+                        let gain = chain * self.number(root, layer, path, Property::Gain).max(0.0);
+                        let plays = self
+                            .sounding
+                            .iter()
+                            .filter(|s| s.root == root && s.layer_path == *path);
+                        for play in plays {
+                            let clip = &play.playing;
+                            let Some(info) = self
+                                .sounds
+                                .get(clip)
+                                .and(self.videos.get(clip))
+                                .filter(|info| info.duration > 0.0)
+                            else {
+                                continue;
+                            };
+                            let elapsed = self.time - play.started - media.delay.max(0.0);
+                            if elapsed < 0.0 {
+                                continue;
+                            }
+                            let position = if media.looping || media.repeat.is_some() {
+                                elapsed % info.duration
+                            } else {
+                                elapsed
+                            };
+                            out.push(Voice {
+                                id: play.id,
+                                layer: layer.name.clone(),
+                                sound: clip.clone(),
+                                position,
+                                gain,
+                                looping: media.looping,
+                                bus: bus.clone(),
+                            });
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -2953,7 +3000,7 @@ fn validate(show: &Show) -> Result<(), Error> {
             }
             if let Some(media) = layer.kind.media() {
                 let gain = match &layer.kind {
-                    LayerKind::Audio { gain, .. } => *gain,
+                    LayerKind::Audio { gain, .. } | LayerKind::Video { gain, .. } => *gain,
                     _ => 1.0,
                 };
                 let problem = if media.looping && media.repeat.is_some() {

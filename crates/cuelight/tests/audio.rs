@@ -428,25 +428,27 @@ fn a_show_says_whether_it_can_make_a_sound() {
 }
 
 #[test]
-fn a_video_is_not_a_sound() {
-    // A video's own soundtrack is not something this engine carries: it
-    // reports a playhead and the host draws frames. So a show that is
-    // only video makes no voices, and a host is right to leave the sound
-    // device alone. The day a video can be heard, this has to change
-    // along with `Show::has_sound`, or such a show would play silently.
+fn a_video_is_a_sound_only_once_a_host_hands_one_over() {
+    // A clip is heard when the host registers a sound under the video's
+    // name, which is how it says the clip has a soundtrack and hands over
+    // its samples. Until then a video layer makes no voices, so a show
+    // that is only video needs no sound device.
     let mut engine = Engine::new();
     engine.set_video("intro", 2.0, [16.0, 8.0]).unwrap();
-    engine
-        .load_show(
-            r#"{ "name": "playing", "size": [64, 32],
-                 "layers": [ { "name": "intro", "type": "video", "video": "intro",
-                               "autoplay": true } ] }"#,
-        )
-        .unwrap();
+    let show = r#"{ "name": "screen", "size": [64, 32],
+                    "layers": [ { "name": "intro", "type": "video", "video": "intro",
+                                  "autoplay": true } ] }"#;
+    engine.load_show(show).unwrap();
     engine.advance_frame(0.5);
-    assert!(!engine.show().unwrap().has_sound());
+    assert!(engine.voices().unwrap().is_empty());
     assert!(
-        engine.voices().unwrap().is_empty(),
-        "a video layer produced a voice; has_sound must count videos too"
+        !engine.show().unwrap().has_sound(),
+        "a show's own document cannot promise a soundtrack a host may never register"
     );
+
+    // Hand one over and the same show is heard.
+    engine.set_sound("intro", 2.0).unwrap();
+    engine.load_show(show).unwrap();
+    engine.advance_frame(0.5);
+    assert_eq!(engine.voices().unwrap().len(), 1);
 }

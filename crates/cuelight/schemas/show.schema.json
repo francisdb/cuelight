@@ -790,11 +790,24 @@
               "type": "boolean",
               "default": false
             },
+            "bus": {
+              "description": "Name of the bus the clip's sound plays through; hosts route\nbuses to outputs. Their default when omitted.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "delay": {
               "description": "Seconds between the trigger and the first frame.",
               "type": "number",
               "format": "double",
               "default": 0.0
+            },
+            "gain": {
+              "description": "Loudness of the clip's own soundtrack, if the host registered\none: 0 to 1 and above, times the gains of the groups above it.\n0 plays the picture silently. A normal numeric property:\nbindable and animatable.",
+              "type": "number",
+              "format": "double",
+              "default": 1.0
             },
             "loop": {
               "description": "Repeat forever. Cannot be combined with `repeat`.",
