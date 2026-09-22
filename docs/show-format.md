@@ -367,6 +367,60 @@ Layer kinds:
   cell shows the symbol it stands on and the one coming up behind it,
   clipped to the cell, which is what makes a roll look like a wheel rather
   than a fade.
+- `audio`: a sound, played like a timeline is; draws nothing. See
+  [Sound](#sound).
+
+## Sound
+
+```json
+{ "name": "thunder", "type": "audio", "sound": "thunder",
+  "trigger": "strike", "stop": "hush", "gain": 0.8, "bus": "sfx",
+  "on_end": "thunder_done" }
+```
+
+An audio layer plays `sound`, a sound the host registered by name (by
+convention the file's stem, from `assets/sounds/`). It sits in the layer
+tree like anything else: a scene's music starts with the scene and stops
+when the scene is left, a group's `gain` scales every sound below it, and
+`gain` is a normal numeric property, so bindings, transitions and
+timelines give volume control, fades and warm-ups for free. It is
+controlled the way a timeline is, with the same names and meanings:
+
+- `trigger` (a name or a list) plays it; `autoplay` plays it when the show
+  loads or its scene is entered.
+- `delay`, `loop`, `repeat`, `on_end`: as on timelines. `on_end` fires when
+  a play finishes (after its repeats, never for loops) and is reported to
+  the host like a timeline's.
+- `stop` (a name or a list): a trigger that ends the play at once, without
+  `on_end`.
+- `retrigger` says what the trigger does while the sound already plays:
+  `restart` (default: the play so far stops and a new one begins),
+  `overlap` (another play sounds on top, up to `voices` at once, default
+  4; the oldest stops beyond that: footsteps, flaps, coins) or `ignore`
+  (the play finishes undisturbed).
+- `gain` (default 1): loudness, 0 to 1 and above, multiplied by the gains
+  of the groups above it. Only groups and audio layers have it.
+- `bus` (optional): a name the host may route to an output; nothing in
+  the engine depends on it yet.
+
+An invisible audio layer, or one in an invisible subtree, is not heard,
+like everything else in that subtree resolves to nothing.
+
+The engine never opens an audio device or touches a sample. A host
+registers each sound with only its duration (`Engine::set_sound`), which
+is all the engine needs to loop, repeat and end plays, and reads back what
+should be heard each frame with `Engine::voices()`: one voice per play,
+with a stable id, the sound's name, the position in seconds, the effective
+gain, whether it loops, and the bus. An audio backend diffs that list
+frame by frame (a new id starts at its position, a vanished id stops, a
+changed gain ramps, a position that jumped is resynced); a host with a
+mixer of its own consumes the same list. Positions are a function of
+engine time, so an offline render mixes sound sample-exact against the
+frames, and a seek only needs the backend to resync. A sound registered
+after its layer started playing is heard from where it would be by then;
+until then the play is silent and does not end. The `cuelight-audio` crate
+is that backend: decoding, a mixer, a sound device for the player and a
+WAV file for offline rendering.
 
 ## Fonts
 
