@@ -196,6 +196,23 @@ impl Clip {
         }
     }
 
+    /// The clip's own soundtrack, as interleaved stereo samples at
+    /// `rate`, or `None` when the file has no audio.
+    ///
+    /// A clip is heard by being registered as a sound under the video's
+    /// name, so a host hands these to the engine's `set_sound` and to
+    /// whatever mixes for it; the engine then reports the layer among its
+    /// voices for as long as the picture plays. A host that wants a clip
+    /// seen and not heard simply does not ask for this.
+    ///
+    /// Unlike the pictures, this is decoded in full when asked: a mixer
+    /// needs samples in hand, not a stream. Minutes of audio are tens of
+    /// megabytes, so ask per clip rather than for a whole folder.
+    #[cfg(feature = "ffmpeg-process")]
+    pub fn soundtrack(&self, rate: u32) -> Result<Option<Vec<f32>>, String> {
+        ffmpeg::soundtrack(&self.path, rate)
+    }
+
     /// Whether the clip is still being decoded and has nothing to show.
     pub fn is_warming(&self) -> bool {
         #[cfg(feature = "ffmpeg-process")]
