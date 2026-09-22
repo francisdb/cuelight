@@ -1059,6 +1059,11 @@
             "$ref": "#/$defs/Key"
           }
         },
+        "spin": {
+          "description": "Trigger name, or list of names, that sets the row spinning: every\ncell travels its `turns` and lands on the symbol its text names at\nthat moment, whether or not that is the one it already shows.",
+          "$ref": "#/$defs/Triggers",
+          "default": null
+        },
         "stagger": {
           "description": "Seconds each cell waits behind the one to its right, so a row does\nnot move as one piece. 0 by default.",
           "type": "number",

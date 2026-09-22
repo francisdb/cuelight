@@ -670,6 +670,11 @@ pub struct Reel {
     /// not move as one piece. 0 by default.
     #[serde(default)]
     pub stagger: f64,
+    /// Trigger name, or list of names, that sets the row spinning: every
+    /// cell travels its `turns` and lands on the symbol its text names at
+    /// that moment, whether or not that is the one it already shows.
+    #[serde(default)]
+    pub spin: Triggers,
 }
 
 /// What a reel's symbols are drawn as. The charset stays the ring's
@@ -853,8 +858,15 @@ impl Show {
                 for timeline in &layer.timelines {
                     out.extend(timeline.trigger.iter().map(str::to_owned));
                 }
-                if let LayerKind::Audio { trigger, stop, .. } = &layer.kind {
-                    out.extend(trigger.iter().chain(stop.iter()).map(str::to_owned));
+                match &layer.kind {
+                    LayerKind::Audio { trigger, stop, .. } => {
+                        out.extend(trigger.iter().chain(stop.iter()).map(str::to_owned));
+                    }
+                    LayerKind::Digits {
+                        display: DigitDisplay::Reel(reel),
+                        ..
+                    } => out.extend(reel.spin.iter().map(str::to_owned)),
+                    _ => {}
                 }
                 timelines(layer.children(), out);
             }

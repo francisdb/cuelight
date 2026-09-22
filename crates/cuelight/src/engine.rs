@@ -353,6 +353,9 @@ pub struct Engine {
     /// on its ring: one record per cell, in cell order.
     reel_sites: Vec<(Root, Vec<usize>)>,
     reels: HashMap<(Root, Vec<usize>), Vec<Change>>,
+    /// Reel rows told to spin since the last frame; see
+    /// [`Reel::spin`](crate::model::Reel::spin).
+    spinning: Vec<(Root, Vec<usize>)>,
     active_scene: Option<usize>,
     events: std::collections::VecDeque<Event>,
     load_warnings: Vec<String>,
@@ -436,6 +439,7 @@ impl Engine {
         self.transitions.clear();
         self.debounced.clear();
         self.reels.clear();
+        self.spinning.clear();
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
         self.events.clear();
@@ -631,6 +635,7 @@ impl Engine {
             self.enter_scene(scene);
         }
         self.start_matching(None, |tl| tl.trigger.contains(name));
+        self.set_spinning(name);
         let roots: Vec<Root> = std::iter::once(Root::Show)
             .chain(self.active_scene.map(Root::Scene))
             .collect();
@@ -1087,6 +1092,7 @@ impl Engine {
     fn follow_reels(&mut self) {
         let Some(show) = &self.show else { return };
         let mut reels = std::mem::take(&mut self.reels);
+        let spinning = std::mem::take(&mut self.spinning);
         for site in &self.reel_sites {
             let (root, path) = site;
             if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
@@ -1103,6 +1109,9 @@ impl Engine {
             else {
                 continue;
             };
+            // Told to spin: every cell sets off, including one already
+            // standing where the row is about to land.
+            let spin = spinning.contains(site);
             let count = *digits as usize;
             let ring = reel.characters();
             let roll = reel.roll();
@@ -1141,8 +1150,9 @@ impl Engine {
                 let Some(character) = character else { continue };
                 let change = &mut records[i];
                 // Where it is heading, as a place on the ring: a cell that
-                // is already going there carries on.
-                if change.target.rem_euclid(ring_length) == character {
+                // is already going there carries on, unless the row was
+                // told to spin.
+                if !spin && change.target.rem_euclid(ring_length) == character {
                     continue;
                 }
                 let reached =
@@ -1157,6 +1167,32 @@ impl Engine {
             }
         }
         self.reels = reels;
+    }
+
+    /// Note the reel rows whose `spin` trigger is `name`; the next frame
+    /// sets their cells off.
+    fn set_spinning(&mut self, name: &str) {
+        let Some(show) = &self.show else { return };
+        let mut spinning = Vec::new();
+        for site in &self.reel_sites {
+            let (root, path) = site;
+            if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
+                continue;
+            }
+            let reel = root_layers(show, *root)
+                .and_then(|layers| layer_at(layers, path))
+                .and_then(|layer| match &layer.kind {
+                    LayerKind::Digits {
+                        display: DigitDisplay::Reel(reel),
+                        ..
+                    } => Some(reel),
+                    _ => None,
+                });
+            if reel.is_some_and(|reel| reel.spin.contains(name)) && !self.spinning.contains(site) {
+                spinning.push(site.clone());
+            }
+        }
+        self.spinning.extend(spinning);
     }
 
     /// Where the cells of the reel row at `path` stand on their ring now.
