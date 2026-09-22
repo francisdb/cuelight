@@ -60,6 +60,24 @@ mod common;
 /// (<https://github.com/glfw/glfw/issues/2493>).
 const VSYNC_AFTER_RESIZE: Duration = Duration::from_millis(250);
 
+/// How far the window may be off the show's shape before the player asks
+/// for a better size at startup, in logical pixels.
+const SHAPE_SLACK: f64 = 4.0;
+
+/// A show of `size` fitted into `room` logical pixels, keeping its shape
+/// and never grown beyond its own size.
+fn fit_in((room_width, room_height): (f64, f64), [w, h]: [u32; 2]) -> (f64, f64) {
+    let (width, height) = (f64::from(w), f64::from(h));
+    let fit = (room_width / width).min(room_height / height).min(1.0);
+    (width * fit, height * fit)
+}
+
+/// How much of `monitor` a window may take, in logical pixels.
+fn room_on(monitor: &winit::monitor::MonitorHandle) -> (f64, f64) {
+    let size = monitor.size().to_logical::<f64>(monitor.scale_factor());
+    (size.width * 0.9, size.height * 0.9)
+}
+
 fn fmt_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("{text:?}"),
@@ -169,6 +187,9 @@ struct App {
     fullscreen: bool,
     /// The window's newest size, waiting for the next redraw.
     pending_size: Option<(u32, u32)>,
+    /// Whether the window has been given the show's shape, which happens
+    /// once, on the compositor's first answer.
+    fitted: bool,
     mailbox_while_resizing: bool,
     /// When the surface last changed size, while it still presents with
     /// mailbox because of that.
@@ -205,6 +226,50 @@ impl App {
             .window
             .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
         state.window.set_cursor_visible(!fullscreen);
+    }
+
+    /// Give the window the show's shape, once, when the compositor has
+    /// answered with the size it grants. The size asked for at creation is
+    /// a guess: a client cannot know which monitor its window will land on
+    /// before it is mapped (on Wayland there is no primary monitor and
+    /// `current_monitor` is still empty here), and a request too large for
+    /// that screen comes back clamped in one direction only, leaving a
+    /// window taller or wider than its content. The granted size says how
+    /// much room there is, so the show's shape goes inside it.
+    fn fit_to_window(&mut self) {
+        if self.fitted {
+            return;
+        }
+        let Some(window) = self.state.as_ref().map(|state| state.window.clone()) else {
+            return;
+        };
+        // The compositor has answered, so this is the one size the player
+        // picks: every later size, a drag or a fullscreen toggle included,
+        // is the user's and is left alone.
+        self.fitted = true;
+        if self.fullscreen {
+            return;
+        }
+        let size = self.engine.show().expect("show loaded").size;
+        let now: LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
+        // What the window has, and no more of the monitor than a window
+        // should take where that monitor is known.
+        let mut room = (now.width, now.height);
+        if let Some(monitor) = window.current_monitor() {
+            let (width, height) = room_on(&monitor);
+            room = (room.0.min(width), room.1.min(height));
+        }
+        let (width, height) = fit_in(room, size);
+        // Never grown, so this only ever asks for less; a few pixels are
+        // the rounding between physical and logical sizes, not a misfit.
+        if now.width - width > SHAPE_SLACK || now.height - height > SHAPE_SLACK {
+            log::debug!(
+                "fitting the window to the show: {width:.0}x{height:.0} logical instead of {:.0}x{:.0}",
+                now.width,
+                now.height
+            );
+            let _ = window.request_inner_size(LogicalSize::new(width, height));
+        }
     }
 
     /// Apply one console command; returns false when the player should quit.
@@ -427,16 +492,17 @@ impl ApplicationHandler for App {
         let [w, h] = self.engine.show().expect("show loaded").size;
         // The show at its own size, but never more than most of the screen:
         // a large show on a scaled display would otherwise open as big as
-        // the compositor allows, which looks like fullscreen.
-        let (mut width, mut height) = (f64::from(w), f64::from(h));
-        if let Some(monitor) = event_loop.primary_monitor() {
-            let room = monitor.size().to_logical::<f64>(monitor.scale_factor());
-            let fit = (room.width * 0.9 / width).min(room.height * 0.9 / height);
-            if fit < 1.0 {
-                width *= fit;
-                height *= fit;
-            }
-        }
+        // the compositor allows, which looks like fullscreen. Which screen
+        // that is can only be guessed here (Wayland has no primary monitor
+        // and tells a client nothing about placement before the window is
+        // mapped), so `fit_to_monitor` corrects it once the window is up.
+        let guess = event_loop
+            .primary_monitor()
+            .or_else(|| event_loop.available_monitors().next());
+        let room = guess
+            .as_ref()
+            .map_or((f64::INFINITY, f64::INFINITY), room_on);
+        let (width, height) = fit_in(room, [w, h]);
         let window = Arc::new(
             event_loop
                 .create_window(
@@ -508,6 +574,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(size) => {
                 if size.width > 0 && size.height > 0 {
                     self.pending_size = Some((size.width, size.height));
+                    self.fit_to_window();
                 }
             }
             WindowEvent::Occluded(occluded) => {
@@ -669,6 +736,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         state: None,
         fullscreen: cli.fullscreen,
         pending_size: None,
+        fitted: false,
         mailbox_while_resizing: false,
         resized_at: None,
         redraw_at: None,
