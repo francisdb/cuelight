@@ -30,6 +30,8 @@
 //! gain nodes (the `audio` module). Browsers keep audio silent until the page has
 //! been clicked or typed into; the player resumes its context on the first
 //! such gesture, and `player.audioRunning` says whether it has.
+//! `player.audioEnabled = false` silences a show and keeps it silent
+//! through later gestures; `true` lets it through again.
 //!
 //! WebGPU only: without it `CuelightPlayer.create` rejects with a message
 //! saying so. The crate is empty on targets other than `wasm32`.
@@ -404,6 +406,29 @@ impl CuelightPlayer {
     pub fn resume_audio(&self) {
         if let Some(audio) = &self.inner.borrow().audio {
             audio.resume();
+        }
+    }
+
+    /// Whether the page wants sound: on by default. Off silences the show
+    /// (every voice stops and its audio context is suspended) and stays off
+    /// through clicks and key presses; on lets sound through again, with
+    /// plays picking up at their current positions. On a page the browser
+    /// has not seen a gesture on yet, sound still waits for one:
+    /// `audioRunning` is the truth. `false` when the browser gave no audio
+    /// context.
+    #[wasm_bindgen(getter, js_name = audioEnabled)]
+    pub fn audio_enabled(&self) -> bool {
+        self.inner
+            .borrow()
+            .audio
+            .as_ref()
+            .is_some_and(audio::WebAudio::enabled)
+    }
+
+    #[wasm_bindgen(setter, js_name = audioEnabled)]
+    pub fn set_audio_enabled(&self, enabled: bool) {
+        if let Some(audio) = &mut self.inner.borrow_mut().audio {
+            audio.set_enabled(enabled);
         }
     }
 

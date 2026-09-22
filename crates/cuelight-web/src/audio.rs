@@ -31,6 +31,9 @@ pub struct WebAudio {
     context: AudioContext,
     sounds: HashMap<String, AudioBuffer>,
     playing: HashMap<u64, Playing>,
+    /// Whether the page wants sound at all; off keeps the context
+    /// suspended whatever gestures come in.
+    enabled: bool,
 }
 
 impl WebAudio {
@@ -41,6 +44,7 @@ impl WebAudio {
             context: AudioContext::new()?,
             sounds: HashMap::new(),
             playing: HashMap::new(),
+            enabled: true,
         })
     }
 
@@ -57,9 +61,42 @@ impl WebAudio {
     }
 
     /// Ask the context to run; only honored from a user gesture, which is
-    /// why the player calls it on the first click or key press.
+    /// why the player calls it on the first click or key press. Does
+    /// nothing while sound is disabled.
     pub fn resume(&self) {
-        let _ = self.context.resume();
+        if self.enabled {
+            let _ = self.context.resume();
+        }
+    }
+
+    /// Whether the page wants sound.
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Let sound through, or silence it. Off stops every voice and
+    /// suspends the context, and nothing is scheduled again until it is
+    /// on: no gesture brings it back, and no stale sources pile up in the
+    /// suspended graph to burst out on resume. Plays go on in engine time
+    /// meanwhile; when sound returns, the next frame's [`apply`] starts
+    /// them afresh at their current positions.
+    ///
+    /// [`apply`]: WebAudio::apply
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if enabled {
+            let _ = self.context.resume();
+        } else {
+            self.stop_all();
+            let _ = self.context.suspend();
+        }
+    }
+
+    fn stop_all(&mut self) {
+        let now = self.context.current_time();
+        for id in self.playing.keys().copied().collect::<Vec<_>>() {
+            self.stop(id, now);
+        }
     }
 
     /// Whether sound is actually coming out, or the context still waits
@@ -72,6 +109,12 @@ impl WebAudio {
     /// a new id starts at its position, a missing id fades out, a gain
     /// change ramps, a position far from the voice's is restarted there.
     pub fn apply(&mut self, voices: &[Voice]) {
+        // Silenced: nothing plays and nothing is scheduled; see
+        // `set_enabled`.
+        if !self.enabled {
+            self.stop_all();
+            return;
+        }
         let now = self.context.current_time();
         for voice in voices {
             let drifted = self.playing.get(&voice.id).is_some_and(|p| {

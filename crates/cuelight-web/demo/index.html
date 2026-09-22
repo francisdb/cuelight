@@ -18,7 +18,7 @@
 <body>
 <main>
   <canvas id="canvas"></canvas>
-  <section><label>show <select id="shows"></select></label> <button id="driver" hidden></button> <span id="scene"></span></section>
+  <section><label>show <select id="shows"></select></label> <button id="driver" hidden></button> <label><input type="checkbox" id="sound" checked> sound</label> <span id="scene"></span></section>
   <section id="actions"></section>
   <section id="variables"></section>
   <div id="log"></div>
@@ -81,6 +81,7 @@ setInterval(() => {
 }, 200);
 
 $("driver").onclick = () => (player.driverPlaying ? player.driverPause() : player.driverPlay());
+$("sound").onchange = () => (player.audioEnabled = $("sound").checked);
 $("shows").onchange = () => play($("shows").value).catch((e) => log(e.message ?? e, true));
 
 try {
