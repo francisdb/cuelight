@@ -7,9 +7,16 @@ use std::sync::Arc;
 /// from clicking.
 const RAMP: f64 = 0.005;
 
-/// How far a voice may drift from the position the engine reports before
-/// it is moved there. Live, the engine's position is a frame and a device
-/// buffer old; a seek is much more than that.
+/// How far a voice's distance from the position the engine reports may
+/// change between two lists before it is moved there.
+///
+/// What is measured is the change, not the distance. A voice that simply
+/// runs behind is normal and stays that way: the engine's position is a
+/// frame and a device buffer old to begin with, and a device that was
+/// asleep when the sound started can be most of a second behind for as
+/// long as it plays. A seek is not that. A seek moves the position in one
+/// step, so it shows up as the distance jumping, and only that is worth
+/// throwing away the sound in hand for.
 const RESYNC: f64 = 0.25;
 
 /// One voice being played.
@@ -20,6 +27,9 @@ struct Playing {
     /// Position in the sound, in its own frames; fractional between two.
     cursor: f64,
     looping: bool,
+    /// How far behind the engine's position this voice last was, so a
+    /// seek can be told from a voice that is merely late.
+    behind: f64,
     /// The gain applied now, on its way to `target`.
     gain: f32,
     target: f32,
@@ -59,8 +69,12 @@ impl Mixer {
 
     /// Make what plays match `voices`, the engine's list for this frame:
     /// a new id starts at its position, a missing id fades out, a gain
-    /// change ramps, a position far from the voice's is jumped to. Voices
-    /// of sounds without samples are left for a later call.
+    /// change ramps, and a position that *jumped* away from the voice's is
+    /// moved to. A voice that is merely running behind is left where it
+    /// is: a device that was asleep when the sound started is late
+    /// through no seek, and chasing the engine there would throw away the
+    /// start of the sound. Voices of sounds without samples are left for
+    /// a later call.
     pub fn apply(&mut self, voices: &[Voice]) {
         for voice in voices {
             match self.playing.iter_mut().find(|p| p.id == voice.id) {
@@ -75,8 +89,11 @@ impl Mixer {
                         let duration = playing.sound.duration();
                         drift = (drift + duration / 2.0).rem_euclid(duration) - duration / 2.0;
                     }
-                    if drift.abs() > RESYNC {
+                    if (drift - playing.behind).abs() > RESYNC {
                         playing.cursor = voice.position * rate;
+                        playing.behind = 0.0;
+                    } else {
+                        playing.behind = drift;
                     }
                 }
                 None => {
@@ -92,6 +109,7 @@ impl Mixer {
                         sound: sound.clone(),
                         cursor,
                         looping: voice.looping,
+                        behind: 0.0,
                         gain: 0.0,
                         target: voice.gain as f32,
                         ending: false,
@@ -243,6 +261,34 @@ mod tests {
         assert_eq!(mixer.playing[0].cursor, 1000.0);
         mixer.apply(&[voice(1, 3.0, 1.0, false)]);
         assert_eq!(mixer.playing[0].cursor, 3000.0);
+    }
+
+    /// A device that was asleep when the sound started is most of a
+    /// second behind by the time it produces anything. The engine's
+    /// position runs on regardless, so the voice is far from where the
+    /// engine says it is, through no seek: the sound must play from its
+    /// start, not skip to the middle.
+    #[test]
+    fn a_device_that_woke_late_does_not_lose_the_start() {
+        let mut mixer = Mixer::new(1000);
+        mixer.set_sound("tone", tone(1000, 5000));
+        mixer.apply(&[voice(1, 0.0, 1.0, false)]);
+        assert_eq!(mixer.playing[0].cursor, 0.0);
+        // Six hundred milliseconds of waking, a frame's worth at a time,
+        // while nothing is rendered.
+        let mut at = 0.0;
+        while at < 0.6 {
+            at += 1.0 / 60.0;
+            mixer.apply(&[voice(1, at, 1.0, false)]);
+        }
+        assert_eq!(
+            mixer.playing[0].cursor, 0.0,
+            "the wake was mistaken for a seek and the start was thrown away"
+        );
+
+        // A real seek still moves it: the distance jumps in one step.
+        mixer.apply(&[voice(1, at + 2.0, 1.0, false)]);
+        assert!((mixer.playing[0].cursor - (at + 2.0) * 1000.0).abs() < 1e-6);
     }
 
     #[test]

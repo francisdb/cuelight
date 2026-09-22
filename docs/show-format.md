@@ -474,7 +474,11 @@ with a stable id, the sound's name, the position in seconds, the effective
 gain, whether it loops, and the bus. An audio backend diffs that list
 frame by frame (a new id starts at its position, a vanished id stops, a
 changed gain ramps, a position that jumped is resynced); a host with a
-mixer of its own consumes the same list. Positions are a function of
+mixer of its own consumes the same list. What a backend must not do is
+resync a voice that is merely *behind*: a sound device that was asleep
+when the sound started can be most of a second late, and the position the
+engine reports runs on regardless. Chasing it there throws away the start
+of the sound. Only a position that moves in one step is a seek. Positions are a function of
 engine time, so an offline render mixes sound sample-exact against the
 frames, and a seek only needs the backend to resync. A sound registered
 after its layer started playing is heard from where it would be by then;
