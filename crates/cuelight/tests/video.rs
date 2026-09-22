@@ -449,3 +449,95 @@ fn a_default_pick_is_not_reported_as_an_unknown_field() {
         engine.load_warnings()
     );
 }
+
+/// An engine with a 2 second clip whose soundtrack the host has also
+/// registered, which is how a host says a clip has one.
+fn with_sound(layers: &str) -> Engine {
+    let mut engine = Engine::new();
+    engine.set_video("intro", 2.0, [16.0, 8.0]).unwrap();
+    engine.set_sound("intro", 2.0).unwrap();
+    engine.load_show(&show(layers)).unwrap();
+    engine
+}
+
+#[test]
+fn a_clip_with_a_soundtrack_is_heard_while_it_plays() {
+    let mut engine = with_sound(INTRO);
+    assert!(engine.voices().unwrap().is_empty(), "nothing plays yet");
+
+    engine.trigger("play");
+    engine.advance_frame(0.5);
+    let heard = engine.voices().unwrap();
+    assert_eq!(heard.len(), 1);
+    assert_eq!(heard[0].sound, "intro");
+    assert_eq!(heard[0].layer, "intro");
+    assert!((heard[0].position - 0.5).abs() < 1e-9);
+    assert!((heard[0].gain - 1.0).abs() < 1e-9);
+
+    // One play, one id: the picture and the sound are the same play, so a
+    // host can see they belong together.
+    assert_eq!(heard[0].id, engine.videos().unwrap()[0].id);
+    assert!((heard[0].position - engine.videos().unwrap()[0].position).abs() < 1e-9);
+
+    // It ends with the picture.
+    engine.advance_frame(2.0);
+    assert!(engine.voices().unwrap().is_empty());
+}
+
+#[test]
+fn a_clip_the_host_registered_no_sound_for_stays_silent() {
+    // The tripwire the other way round: a clip is heard only when the host
+    // has handed over a soundtrack for it.
+    let mut engine = engine(INTRO);
+    engine.trigger("play");
+    engine.advance_frame(0.5);
+    assert_eq!(engine.videos().unwrap().len(), 1, "the picture plays");
+    assert!(engine.voices().unwrap().is_empty(), "and makes no sound");
+}
+
+#[test]
+fn a_clips_sound_follows_its_picture_round_a_loop() {
+    let mut engine = with_sound(
+        r#"{ "name": "intro", "type": "video", "video": "intro",
+             "trigger": "play", "loop": true }"#,
+    );
+    engine.trigger("play");
+    engine.advance_frame(2.5);
+    let heard = engine.voices().unwrap();
+    assert_eq!(heard.len(), 1);
+    assert!(heard[0].looping);
+    // Wrapped on the picture's length, not the soundtrack's, so the two
+    // cannot drift apart over a long loop.
+    assert!((heard[0].position - 0.5).abs() < 1e-9, "{heard:?}");
+    assert!((heard[0].position - engine.videos().unwrap()[0].position).abs() < 1e-9);
+}
+
+#[test]
+fn a_clip_can_be_played_silently() {
+    let mut engine = with_sound(
+        r#"{ "name": "intro", "type": "video", "video": "intro",
+             "trigger": "play", "gain": 0 }"#,
+    );
+    engine.trigger("play");
+    engine.advance_frame(0.5);
+    assert_eq!(
+        engine.voices().unwrap()[0].gain,
+        0.0,
+        "a backdrop should be able to keep its pictures and lose its sound"
+    );
+    assert_eq!(engine.videos().unwrap().len(), 1, "the picture plays on");
+}
+
+#[test]
+fn a_group_turns_down_the_clips_below_it() {
+    let mut engine = with_sound(
+        r#"{ "name": "room", "type": "group", "gain": 0.5, "children": [
+             { "name": "intro", "type": "video", "video": "intro",
+               "trigger": "play", "gain": 0.8, "bus": "music" } ] }"#,
+    );
+    engine.trigger("play");
+    engine.advance_frame(0.25);
+    let heard = engine.voices().unwrap();
+    assert!((heard[0].gain - 0.4).abs() < 1e-9, "{heard:?}");
+    assert_eq!(heard[0].bus.as_deref(), Some("music"));
+}
