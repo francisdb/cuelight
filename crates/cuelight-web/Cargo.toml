@@ -23,7 +23,19 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 serde_json = "1"
 console_error_panic_hook = "0.1"
 web-sys = { version = "0.3", features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
     "CssStyleDeclaration",
+    "Document",
+    "EventTarget",
+    "GainNode",
     "HtmlCanvasElement",
     "HtmlElement",
     "Navigator",
