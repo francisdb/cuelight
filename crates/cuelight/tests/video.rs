@@ -315,3 +315,137 @@ fn an_idle_layer_pointed_at_a_clip_plays_it() {
     assert_eq!(playing[0].video, "other");
     assert!((playing[0].position - 0.25).abs() < 1e-9, "{playing:?}");
 }
+
+#[test]
+fn a_layer_of_several_clips_shows_the_next_one_each_play() {
+    let mut engine = Engine::new();
+    for name in ["one", "two", "three"] {
+        engine.set_video(name, 1.0, [8.0, 8.0]).unwrap();
+    }
+    engine
+        .load_show(
+            r#"{ "name": "between", "size": [64, 32],
+                 "layers": [ { "name": "filler", "type": "video",
+                               "video": ["one", "two", "three"],
+                               "trigger": "next" } ] }"#,
+        )
+        .unwrap();
+    let mut shown = Vec::new();
+    for _ in 0..4 {
+        engine.trigger("next");
+        engine.advance_frame(0.0);
+        shown.push(engine.videos().unwrap()[0].video.clone());
+        engine.advance_frame(1.5);
+    }
+    assert_eq!(shown, ["one", "two", "three", "one"]);
+    // It waits to be played: a list is not a playlist that runs on by
+    // itself once the first clip ends.
+    engine.advance_frame(5.0);
+    assert!(engine.videos().unwrap().is_empty());
+}
+
+#[test]
+fn a_layer_that_is_pointed_somewhere_ignores_its_own_list() {
+    let mut engine = Engine::new();
+    for name in ["one", "two", "asked"] {
+        engine.set_video(name, 1.0, [8.0, 8.0]).unwrap();
+    }
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "asked" },
+                 "layers": [ { "name": "picture", "type": "video", "video": ["one", "two"],
+                               "trigger": "go",
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.trigger("go");
+    engine.advance_frame(0.0);
+    assert_eq!(engine.videos().unwrap()[0].video, "asked");
+}
+
+#[test]
+fn queue_lets_a_clip_finish_then_plays_the_next() {
+    let mut engine = Engine::new();
+    engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();
+    engine.set_video("two", 1.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "one" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "trigger": "go", "retrigger": "queue",
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.trigger("go");
+    engine.advance_frame(0.4);
+    // A second call while the first plays waits rather than cutting in.
+    engine.set_variable("clip", "two");
+    engine.trigger("go");
+    engine.advance_frame(0.0);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing.len(), 1, "one layer shows one picture");
+    assert_eq!(playing[0].video, "one", "the first clip was cut off");
+
+    // Once the first is done, the one that waited plays, from the top.
+    engine.advance_frame(0.7);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing[0].video, "two");
+    assert!(playing[0].position < 0.2, "{playing:?}");
+}
+
+#[test]
+fn ignore_drops_a_trigger_that_arrives_mid_clip() {
+    let mut engine = Engine::new();
+    engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();
+    engine.set_video("two", 1.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "one" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "trigger": "go", "retrigger": "ignore",
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.trigger("go");
+    engine.advance_frame(0.4);
+    engine.set_variable("clip", "two");
+    engine.trigger("go");
+    engine.advance_frame(0.0);
+    assert_eq!(engine.videos().unwrap()[0].video, "one");
+    // Dropped, not queued: nothing follows.
+    engine.advance_frame(0.7);
+    assert!(engine.videos().unwrap().is_empty());
+}
+
+#[test]
+fn a_video_layer_cannot_overlap_itself() {
+    let mut engine = Engine::new();
+    engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();
+    let e = engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32],
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "trigger": "go", "retrigger": "overlap" } ] }"#,
+        )
+        .unwrap_err();
+    assert!(format!("{e}").contains("one picture at a time"), "{e}");
+}
+
+#[test]
+fn a_default_pick_is_not_reported_as_an_unknown_field() {
+    let mut engine = Engine::new();
+    engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32],
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "pick": "in_order", "retrigger": "restart",
+                               "rest": 0, "trigger": "go" } ] }"#,
+        )
+        .unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+}

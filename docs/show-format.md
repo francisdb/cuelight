@@ -418,8 +418,16 @@ controlled the way a timeline is, with the same names and meanings:
 - `retrigger` says what the trigger does while the sound already plays:
   `restart` (default: the play so far stops and a new one begins),
   `overlap` (another play sounds on top, up to `voices` at once, default
-  4; the oldest stops beyond that: footsteps, flaps, coins) or `ignore`
-  (the play finishes undisturbed).
+  4; the oldest stops beyond that: footsteps, flaps, coins), `ignore`
+  (the play finishes undisturbed) or `queue` (the play finishes, then the
+  one that waited begins; up to `voices` wait at once and the rest are
+  dropped).
+- `rest` (default 0): the least seconds between one play starting and the
+  next. A trigger that arrives sooner is dropped, whatever `retrigger`
+  would otherwise do with it and whether or not anything is playing: a
+  switch that chatters, or an event a game fires every frame while a
+  condition holds, then plays a sound at a sane rate instead of a buzz.
+  Video layers take it too.
 - `gain` (default 1): loudness, 0 to 1 and above, multiplied by the gains
   of the groups above it. Only groups and audio layers have it.
 - `bus` (optional): a name the host may route to an output; nothing in
@@ -427,6 +435,36 @@ controlled the way a timeline is, with the same names and meanings:
 
 An invisible audio layer, or one in an invisible subtree, is not heard,
 like everything else in that subtree resolves to nothing.
+
+### One of several
+
+`sound` takes a list, and each play uses one of them. Three recordings of
+the same knock stop a bumper sounding like a tape loop, and it is the
+same idea on a video layer: a handful of clips to fill a gap, a set of
+idle animations that should not cycle visibly.
+
+```json
+{ "name": "knock", "type": "audio", "sound": ["knock1", "knock2", "knock3"],
+  "pick": "random", "trigger": "hit" }
+```
+
+`pick` says which one a play takes:
+
+- `in_order` (default): the next one each play, wrapping round. A single
+  name is this, trivially.
+- `random`: any of them, which may be the one that just played.
+- `shuffle`: all of them in a scrambled order, then scrambled again, so
+  nothing is skipped and nothing repeats until the rest have had a turn.
+
+A list is not a playlist: the layer plays once per trigger like any
+other, it does not run on to the next by itself.
+
+None of this rolls dice. A pick is a function of how many times the layer
+has played, so a show plays the same way every run, which is what
+rendering it to a file needs, and two layers holding the same list still
+pick apart. A host that wants a show to differ between runs seeds the
+engine (`Engine::set_seed`, the clock will do): the same seed always
+plays the same way.
 
 The engine never opens an audio device or touches a sample. A host
 registers each sound with only its duration (`Engine::set_sound`), which
@@ -456,10 +494,14 @@ current frame. It takes the playhead a sound takes and means it the same
 way: `trigger` or `autoplay` starts it, `delay`, `loop`, `repeat` and
 `on_end` behave as on a sound or a timeline, and `stop` ends it without
 firing `on_end`. What it does not take is what only makes sense for
-sound: a picture shows one thing at a time, so a trigger restarts it
-rather than overlapping it, and there is no gain or bus. `size` scales
+sound: a picture shows one thing at a time, so it cannot `overlap` and
+there is no gain or bus. It does take the other three `retrigger` modes,
+and they are how a layer fed by a driver arbitrates: `restart` (default)
+cuts to whatever it is asked for last, `ignore` protects the clip that is
+running, `queue` plays each in turn. Pointing a layer somewhere new
+counts as asking it to play, so the same rule applies. `size` scales
 the picture as it does on an image; without it the video's own size is
-used.
+used. `video` takes a list and a `pick` like a sound does.
 
 `video` is a bindable property, so one layer can show whatever it is
 pointed at rather than needing a layer per clip: bind it to a
@@ -475,7 +517,7 @@ shows nothing, rather than holding its last frame, so whatever is behind
 it comes through; a layer that should stay visible loops.
 
 ```json
-{ "name": "screen", "type": "video", "video": "attract", "autoplay": true,
+{ "name": "backdrop", "type": "video", "video": "attract", "autoplay": true,
   "bindings": [ { "property": "video", "variable": "clip" } ] }
 ```
 
