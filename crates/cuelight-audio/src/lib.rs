@@ -8,7 +8,10 @@
 //! - [`Sound`]: a decoded sound file (WAV, FLAC, Ogg Vorbis, MP3), which
 //!   also gives the duration the engine needs.
 //! - [`Mixer`]: plays a voice list. [`Mixer::apply`] takes the list each
-//!   frame and starts, stops, retunes and resyncs its voices to match;
+//!   frame and starts, stops, retunes and resyncs its voices to match
+//!   (only on a seek: a voice that merely runs behind the engine, as it
+//!   does when the sound device was asleep when the sound started, keeps
+//!   the start of its sound rather than skipping to the middle);
 //!   [`Mixer::render`] fills a buffer of interleaved stereo samples.
 //!   Called in a plain loop it renders a show's sound offline, sample-exact
 //!   against the frames ([`write_wav`] saves it).

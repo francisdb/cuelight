@@ -1367,7 +1367,8 @@ impl Engine {
     /// over, at its position and effective gain. The audio twin of
     /// [`resolved_layers`](Engine::resolved_layers): a backend diffs it
     /// frame by frame (start what is new, stop what is gone, ramp gains,
-    /// resync a position that jumped) and hosts that mix themselves read
+    /// resync a position that jumped, but not one merely running behind)
+    /// and hosts that mix themselves read
     /// the same list.
     pub fn voices(&self) -> Result<Vec<Voice>, Error> {
         let show = self.show.as_ref().ok_or(Error::NoShow)?;

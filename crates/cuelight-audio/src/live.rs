@@ -14,9 +14,18 @@ enum Command {
     Voices(Vec<Voice>),
 }
 
-/// How long the device stays open after the last voice stops, so the gaps
-/// in a show do not open and close it over and over.
-const LINGER: Duration = Duration::from_secs(3);
+/// How long the device stays open after the last voice stops.
+///
+/// Long enough that the gaps in a show do not open and close it over and
+/// over, and long enough to matter for a second reason: while a stream is
+/// open the sound card stays awake. Closed, it is free to suspend, and
+/// waking it again takes time no one can control. An HDMI output on this
+/// machine takes about six hundred milliseconds, which is a sound that
+/// starts visibly after the picture it belongs to. The mixer no longer
+/// loses the start of that sound (see `RESYNC` in the mixer), but late is
+/// still late, so it is worth not paying at all between one cue and the
+/// next.
+const LINGER: Duration = Duration::from_secs(10);
 
 /// How long to wait before trying a device that would not open again.
 const RETRY: Duration = Duration::from_secs(5);
@@ -141,6 +150,7 @@ impl Output {
         if self.retry_at.is_some_and(|at| Instant::now() < at) {
             return;
         }
+        let started = Instant::now();
         let (tx, rx) = channel();
         let built = match self.format {
             cpal::SampleFormat::F32 => build::<f32>(&self.device, &self.config, rx),
@@ -170,8 +180,9 @@ impl Output {
             let _ = tx.send(Command::Sound(name.clone(), sound.clone()));
         }
         log::debug!(
-            "audio: something to play, device open with {} sound(s)",
-            self.sounds.len()
+            "audio: something to play, device open with {} sound(s) in {:.0} ms",
+            self.sounds.len(),
+            started.elapsed().as_secs_f64() * 1000.0
         );
         self.live = Some(Live {
             commands: tx,
@@ -188,10 +199,19 @@ fn build<T: SizedSample + FromSample<f32>>(
     let channels = usize::from(config.channels.max(1));
     let mut mixer = Mixer::new(config.sample_rate);
     let mut stereo: Vec<f32> = Vec::new();
+    let asked = Instant::now();
+    let mut first = true;
     device
         .build_output_stream(
             *config,
             move |data: &mut [T], _| {
+                if first {
+                    first = false;
+                    log::debug!(
+                        "audio: first block asked for {:.0} ms after the device opened",
+                        asked.elapsed().as_secs_f64() * 1000.0
+                    );
+                }
                 while let Ok(command) = commands.try_recv() {
                     match command {
                         Command::Sound(name, sound) => mixer.set_sound(&name, sound),
