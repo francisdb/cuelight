@@ -322,7 +322,11 @@ Layer kinds:
     the text asks of it that the ring does not carry, so a ring can hold
     letters, punctuation or a blank as well as digits.
   - `font`: a style from the show's `fonts`, bitmap or outline, that a
-    symbol is drawn in as its own character.
+    symbol is drawn in as its own character. Characters are centred on
+    their ink rather than on the line they are laid out in, so a ring of
+    digits sits in the middle of its cell instead of high, and the whole
+    ring is measured at once so the row keeps still while it rolls: a ring
+    holding a descender reserves room for it, one of digits does not.
   - `cells`: artwork for the symbols instead, one entry per character of
     the charset: `{ "vectors": ["cherry", "bar", "seven"] }` or
     `{ "images": [...] }`, named as the host registered them. The charset

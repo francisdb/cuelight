@@ -415,3 +415,21 @@ fn a_documented_null_is_not_reported_as_not_understood() {
         .unwrap();
     assert!(engine.load_warnings().is_empty());
 }
+
+#[test]
+fn a_character_sits_in_the_middle_of_its_cell() {
+    // The test font's characters are 3 tall in a line of 4: the line
+    // reserves a descender they never use, so centring the line would
+    // leave a bigger gap below the ink than above it.
+    let engine = engine(ROLL);
+    let layers = engine.resolved_layers().unwrap();
+    let ResolvedShape::Bitmap { y, height, .. } = layers[1].shape else {
+        panic!("a cell draws its character, got {:?}", layers[1].shape)
+    };
+    let cell = 10.0;
+    let (above, below) = (y, cell - (y + height));
+    assert!(
+        (above - below).abs() < 0.001,
+        "ink {height} tall at {y}: {above} above, {below} below"
+    );
+}

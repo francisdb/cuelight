@@ -30,6 +30,37 @@ pub(crate) struct Layout {
 /// block aligned in `container` (its own size when `None`) and, for
 /// multi-line text that is not left aligned, each line within the
 /// container's width. `None` when the font cannot be read.
+/// How high the ink of `characters` reaches and how far it falls at
+/// `size`, measured down from the top of the line they are laid out in,
+/// with the line's own height. `None` when the font cannot be read.
+///
+/// A line reserves room for descenders whether or not the characters use
+/// any; the ink is what is actually drawn.
+pub(crate) fn ink(font: &FontData, size: f64, characters: &[char]) -> Option<(f64, f64, f64)> {
+    let font = FontRef::new(&font.data).ok()?;
+    let px = Size::new(size as f32);
+    let metrics = font.metrics(px, LocationRef::default());
+    let glyph_metrics = font.glyph_metrics(px, LocationRef::default());
+    let charmap = font.charmap();
+    let (ascent, descent) = (f64::from(metrics.ascent), f64::from(metrics.descent));
+    let line = ascent - descent + f64::from(metrics.leading);
+    let (mut top, mut bottom) = (f64::MAX, f64::MIN);
+    for character in characters {
+        let id = charmap.map(*character)?;
+        let Some(bounds) = glyph_metrics.bounds(id) else {
+            continue;
+        };
+        if bounds.y_min == bounds.y_max {
+            continue;
+        }
+        // Font coordinates count up from the baseline, a laid out line
+        // counts down from its top.
+        top = top.min(ascent - f64::from(bounds.y_max));
+        bottom = bottom.max(ascent - f64::from(bounds.y_min));
+    }
+    (top <= bottom).then_some((top, bottom, line))
+}
+
 pub(crate) fn layout(
     font: &FontData,
     text: &str,
