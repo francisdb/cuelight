@@ -185,3 +185,133 @@ fn rejects_bad_videos() {
     assert!(Engine::new().set_video("x", 0.0, [4.0, 4.0]).is_err());
     assert!(Engine::new().set_video("x", 1.0, [0.0, 4.0]).is_err());
 }
+
+#[test]
+fn a_bound_name_lets_one_layer_show_anything() {
+    let mut engine = Engine::new();
+    engine.set_video("intro", 2.0, [16.0, 8.0]).unwrap();
+    engine.set_video("bonus", 4.0, [32.0, 16.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "intro" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "intro",
+                               "autoplay": true,
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.advance_frame(0.5);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing[0].video, "intro");
+    assert!((playing[0].position - 0.5).abs() < 1e-9);
+    let first = playing[0].id;
+
+    // Point it at another clip: that one plays, from the top.
+    engine.set_variable("clip", "bonus");
+    engine.advance_frame(0.25);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing.len(), 1, "one layer, one picture");
+    assert_eq!(playing[0].video, "bonus");
+    assert!((playing[0].position - 0.25).abs() < 1e-9, "{playing:?}");
+    assert_ne!(playing[0].id, first, "a new play, so a host starts over");
+}
+
+#[test]
+fn a_layer_draws_and_measures_the_clip_it_is_pointed_at() {
+    let mut engine = Engine::new();
+    engine.set_video("intro", 2.0, [16.0, 8.0]).unwrap();
+    engine.set_video("bonus", 4.0, [32.0, 16.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "intro" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "intro",
+                               "autoplay": true,
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    frame(&mut engine, "intro", [16, 8]);
+    frame(&mut engine, "bonus", [32, 16]);
+    let drawn = |e: &Engine| match &e.resolved_layers().unwrap()[0].shape {
+        ResolvedShape::Image {
+            image,
+            width,
+            height,
+            ..
+        } => (image.clone(), *width, *height),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(drawn(&engine), ("intro".to_owned(), 16.0, 8.0));
+    engine.set_variable("clip", "bonus");
+    engine.advance_frame(0.0);
+    // The other clip, at its own size.
+    assert_eq!(drawn(&engine), ("bonus".to_owned(), 32.0, 16.0));
+}
+
+#[test]
+fn a_layer_ends_on_the_clip_it_is_playing() {
+    let mut engine = Engine::new();
+    engine.set_video("short", 1.0, [8.0, 8.0]).unwrap();
+    engine.set_video("long", 10.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "long" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "long",
+                               "autoplay": true, "on_end": "done",
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.advance_frame(2.0);
+    assert!(
+        !engine.videos().unwrap().is_empty(),
+        "the long one plays on"
+    );
+    // Switched to a short clip: it ends after its own length, not the
+    // length of the one it replaced.
+    engine.set_variable("clip", "short");
+    engine.advance_frame(0.5);
+    assert!(!engine.videos().unwrap().is_empty());
+    engine.advance_frame(0.6);
+    assert!(engine.videos().unwrap().is_empty());
+    assert_eq!(engine.drain_events(), vec![Event::Trigger("done".into())]);
+}
+
+#[test]
+fn a_video_that_has_ended_shows_nothing() {
+    let mut engine = engine(INTRO);
+    engine.trigger("play");
+    frame(&mut engine, "intro", [16, 8]);
+    assert_eq!(engine.resolved_layers().unwrap().len(), 1);
+    // Past its end: the layer is done, so a background behind it shows
+    // through rather than its last frame staying visible.
+    engine.advance_frame(3.0);
+    assert!(engine.videos().unwrap().is_empty());
+    assert!(
+        engine.resolved_layers().unwrap().is_empty(),
+        "a finished video kept drawing its last frame"
+    );
+}
+
+#[test]
+fn an_idle_layer_pointed_at_a_clip_plays_it() {
+    let mut engine = Engine::new();
+    engine.set_video("short", 1.0, [8.0, 8.0]).unwrap();
+    engine.set_video("other", 5.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "short" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "short",
+                               "autoplay": true,
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    engine.advance_frame(1.5);
+    assert!(engine.videos().unwrap().is_empty(), "the short clip ended");
+
+    // The layer sat idle; naming another clip starts it, as asking for a
+    // clip is the whole of what a host says.
+    engine.set_variable("clip", "other");
+    engine.advance_frame(0.25);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing.len(), 1);
+    assert_eq!(playing[0].video, "other");
+    assert!((playing[0].position - 0.25).abs() < 1e-9, "{playing:?}");
+}
