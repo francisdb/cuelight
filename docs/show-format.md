@@ -319,18 +319,33 @@ Layer kinds:
   - `charset` (default `0123456789`): the characters on the ring, in the
     order they pass by. A cell shows nothing for a character that is not on
     it, so a ring can hold letters, symbols or a blank as well as digits.
-  - `duration`, `ease`, `direction` and `offset` say how a cell moves one
-    character, and mean what they do on a binding's
-    [transition](#transitions): `forward` is a wheel that only turns one
-    way, an `offset` settles a cell against its stop. A change of several
-    characters steps through every character in between, one `duration`
-    each.
+  - `duration`, `ease`, `direction` and `offset` say how a cell moves, and
+    mean what they do on a binding's [transition](#transitions):
+    `forward` is a wheel that only turns one way, an `offset` settles a
+    cell against its stop.
+  - `step` (default 1): how far a cell travels in one move, in characters.
+    One means it lands on every character on the way, each taking
+    `duration`, which is how a counter or a split-flap board reads. `null`
+    makes the whole journey a single move instead, so `duration` covers
+    all of it and `ease` shapes the journey rather than each character:
+    that is how a wheel spins, and how a meter whose lowest digit never
+    stops rolling behaves.
+  - `turns` (default 0): whole turns of the ring a cell adds before it
+    lands. A spinning wheel takes a few; with `step` set to `null` the
+    characters fly past and the ease brings it to rest.
+  - `window` (default 1): how many characters of the ring the cell shows
+    at once, stacked, with the one it stands on in the middle. A reel
+    behind a tall window shows its neighbours, as a slot machine does; the
+    row's height is shared between them.
   - `stagger` (default 0): seconds each cell waits behind the one to its
     right, so a row does not move as one piece.
 
   Each cell keeps its own place on the ring, so a change moves only the
   cells it reaches: going from `109` to `119` rolls the tens wheel and
-  leaves the others standing. A cell shows the character it stands on and
+  leaves the others standing. Where a cell stands is counted straight
+  rather than around the ring, so a journey can be longer than one turn,
+  and a cell that is stopped mid-travel carries on from exactly where it
+  stands. A cell shows the character it stands on and
   the one coming up behind it, clipped to the cell, which is what makes a
   roll look like a wheel rather than a fade.
 - `audio`: a sound, played like a timeline is; draws nothing. See

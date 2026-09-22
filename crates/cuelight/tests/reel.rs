@@ -180,3 +180,74 @@ fn rejects_bad_reels() {
         "starts and ends at 0",
     );
 }
+
+#[test]
+fn a_window_shows_several_characters_at_once() {
+    let windowed = engine(r#"{ "font": "cell", "duration": 0.1, "window": 3 }"#);
+    let (_, characters) = &cells(&windowed)[0];
+    // Three in the window, plus the one waiting to come up.
+    assert_eq!(characters.len(), 4);
+    // Each a third of the ten high row apart, the middle one in place.
+    for pair in characters.windows(2) {
+        assert!((pair[1] - pair[0] - 10.0 / 3.0).abs() < 1e-9, "{pair:?}");
+    }
+    // One is on its way out at the top, the rest stand in the window.
+    assert!(characters[0] < 0.0, "{characters:?}");
+    assert!(
+        characters[1] > 0.0 && characters[2] < 10.0,
+        "{characters:?}"
+    );
+}
+
+#[test]
+fn turns_spin_the_cell_round_before_it_lands() {
+    let mut engine = engine(
+        r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 2, "direction": "forward" }"#,
+    );
+    let at_rest = cells(&engine)[0].1[0];
+    engine.set_variable("score", "1");
+    // One move for the whole journey: two turns plus one character.
+    engine.advance_frame(0.25);
+    let halfway = cells(&engine)[0].1[0];
+    assert!(halfway != at_rest, "the cell is spinning");
+    engine.advance_frame(0.25);
+    assert!(
+        (cells(&engine)[0].1[0] - at_rest).abs() < 1e-9,
+        "and lands on its character"
+    );
+    engine.advance_frame(1.0);
+    assert!(
+        (cells(&engine)[0].1[0] - at_rest).abs() < 1e-9,
+        "and stays there"
+    );
+}
+
+#[test]
+fn a_spin_passes_every_character_on_the_way() {
+    let mut engine = engine(
+        r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 1, "direction": "forward" }"#,
+    );
+    engine.set_variable("score", "5");
+    // A ring of ten, one extra turn plus five: fifteen characters pass.
+    let mut seen = 0;
+    let mut previous = cells(&engine)[0].1[0];
+    for _ in 0..500 {
+        engine.advance_frame(0.001);
+        let now = cells(&engine)[0].1[0];
+        // Each character that slides off the top wraps the offset back.
+        if now > previous {
+            seen += 1;
+        }
+        previous = now;
+    }
+    assert_eq!(seen, 15, "every character of the journey passed the window");
+}
+
+#[test]
+fn rejects_a_window_of_nothing() {
+    let err = Engine::new()
+        .load_show(&show(r#"{ "font": "cell", "duration": 0.1, "window": 0 }"#))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("window"), "{err}");
+}
