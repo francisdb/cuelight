@@ -3,10 +3,10 @@ use crate::sound::Sound;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 use cuelight::Voice;
-use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// What the game thread tells the mixer on the device thread.
 enum Command {
@@ -14,62 +14,41 @@ enum Command {
     Voices(Vec<Voice>),
 }
 
-/// How long the device stays open after the last voice stops.
-///
-/// Long enough that the gaps in a show do not open and close it over and
-/// over, and long enough to matter for a second reason: while a stream is
-/// open the sound card stays awake. Closed, it is free to suspend, and
-/// waking it again takes time no one can control. An HDMI output on this
-/// machine takes about six hundred milliseconds, which is a sound that
-/// starts visibly after the picture it belongs to. The mixer no longer
-/// loses the start of that sound (see `RESYNC` in the mixer), but late is
-/// still late, so it is worth not paying at all between one cue and the
-/// next.
-const LINGER: Duration = Duration::from_secs(10);
-
-/// How long to wait before trying a device that would not open again.
-const RETRY: Duration = Duration::from_secs(5);
-
-/// The open device and the mixer running on its thread.
-struct Live {
-    commands: Sender<Command>,
-    _stream: cpal::Stream,
-}
-
-/// The default sound device playing a [`Mixer`], opened only while there
-/// is something to hear.
+/// The default sound device playing a [`Mixer`].
 ///
 /// The device asks for blocks on its own thread and the mixer runs there;
 /// this side only queues commands: sounds to know and, once per frame, the
-/// engine's voice list.
+/// engine's voice list. Dropping it stops the sound and closes the device.
 ///
-/// Opening this does not open the device. A show is mostly silence, and an
-/// audio stream that exists all the same is one the desktop lists as an
-/// application making sound, which is untrue and hard to ignore in a
-/// volume mixer. The device opens on the first voice and closes again
-/// after a few seconds of quiet. A voice carries the position it should be
-/// at, so a sound that starts while the device is opening is heard from
-/// where it would be rather than late. Dropping this stops the sound.
+/// Opening one opens the device and holds it for as long as it lives. Both
+/// halves of that are deliberate.
+///
+/// Whether to open it at all is the host's call, not this type's: a host
+/// asks [`Show::has_sound`](cuelight::Show::has_sound) and does not build
+/// an `Output` for a show that cannot make a sound, so such a show is
+/// never listed by a desktop as an application making one.
+///
+/// For a show that can, the device is opened at once rather than at its
+/// first cue. An idle sound card is free to suspend and waking one is slow
+/// enough to hear: an HDMI output here takes about six hundred
+/// milliseconds, which is a cue arriving visibly after the picture it
+/// belongs to. Opening early spends that while the show is loading, where
+/// nobody is listening, instead of inserting it in front of the first
+/// sound. Finding the device and starting the stream takes about ten
+/// milliseconds, so it does not hold up the show.
 pub struct Output {
-    device: cpal::Device,
-    config: cpal::StreamConfig,
-    format: cpal::SampleFormat,
+    commands: Sender<Command>,
     rate: u32,
     channels: u16,
-    /// The sounds the mixer should know. Kept on this side because the
-    /// mixer goes away with the device and has to be told again.
-    sounds: BTreeMap<String, Arc<Sound>>,
-    live: Option<Live>,
-    /// Since when nothing has been playing.
-    quiet_since: Option<Instant>,
-    /// When it is worth trying a device that failed to open again.
-    retry_at: Option<Instant>,
+    /// Set by the device's own thread the first time it asks for audio.
+    ready: Arc<AtomicBool>,
+    _stream: cpal::Stream,
 }
 
 impl Output {
-    /// Find the default output device and the configuration it wants.
-    /// Nothing is opened until something plays.
+    /// Open the default output device in its default configuration.
     pub fn open() -> Result<Output, String> {
+        let opening = Instant::now();
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -80,24 +59,47 @@ impl Output {
         let format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
         let (rate, channels) = (config.sample_rate, config.channels);
+        let (tx, rx) = channel();
+        let ready = Arc::new(AtomicBool::new(false));
+        let stream = match format {
+            cpal::SampleFormat::F32 => build::<f32>(&device, &config, rx, &ready),
+            cpal::SampleFormat::I16 => build::<i16>(&device, &config, rx, &ready),
+            cpal::SampleFormat::U16 => build::<u16>(&device, &config, rx, &ready),
+            cpal::SampleFormat::I32 => build::<i32>(&device, &config, rx, &ready),
+            cpal::SampleFormat::F64 => build::<f64>(&device, &config, rx, &ready),
+            other => return Err(format!("unsupported sample format {other}")),
+        }?;
+        stream
+            .play()
+            .map_err(|e| format!("starting the stream: {e}"))?;
         log::info!(
-            "audio: {} at {rate} Hz, {channels} channel(s), {format}; \
-             opened while something is playing",
+            "audio: {} at {rate} Hz, {channels} channel(s), {format}, open in {:.0} ms",
             device
                 .description()
-                .map_or_else(|_| "output device".to_owned(), |d| d.to_string())
+                .map_or_else(|_| "output device".to_owned(), |d| d.to_string()),
+            opening.elapsed().as_secs_f64() * 1000.0
         );
         Ok(Output {
-            device,
-            config,
-            format,
+            commands: tx,
             rate,
             channels,
-            sounds: BTreeMap::new(),
-            live: None,
-            quiet_since: None,
-            retry_at: None,
+            ready,
+            _stream: stream,
         })
+    }
+
+    /// Whether the device has started asking for audio.
+    ///
+    /// Opening a stream is quick; a sound card that was suspended waking
+    /// up behind it is not, and until it does nothing that is played will
+    /// be heard. A host that wants to know whether a cue will be heard
+    /// when it is fired, rather than a moment later, can ask this. It goes
+    /// true once and stays true.
+    ///
+    /// Nothing is lost by playing before then: the mixer keeps the start
+    /// of a sound whose device woke late rather than skipping into it.
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Relaxed)
     }
 
     /// The device's sample rate.
@@ -109,85 +111,14 @@ impl Output {
         self.channels
     }
 
-    /// Whether the device is open at the moment.
-    pub fn is_open(&self) -> bool {
-        self.live.is_some()
-    }
-
     /// Hand the mixer the samples of sound `name`.
-    pub fn set_sound(&mut self, name: &str, sound: Arc<Sound>) {
-        if let Some(live) = &self.live {
-            let _ = live
-                .commands
-                .send(Command::Sound(name.to_owned(), sound.clone()));
-        }
-        self.sounds.insert(name.to_owned(), sound);
+    pub fn set_sound(&self, name: &str, sound: Arc<Sound>) {
+        let _ = self.commands.send(Command::Sound(name.to_owned(), sound));
     }
 
-    /// Hand the mixer this frame's voice list; see [`Mixer::apply`]. This
-    /// is also what opens and closes the device.
-    pub fn apply(&mut self, voices: &[Voice]) {
-        if voices.is_empty() {
-            let quiet_since = *self.quiet_since.get_or_insert_with(Instant::now);
-            if self.live.is_some() && quiet_since.elapsed() >= LINGER {
-                log::debug!("audio: nothing playing, closing the device");
-                self.live = None;
-                return;
-            }
-        } else {
-            self.quiet_since = None;
-            if self.live.is_none() {
-                self.start();
-            }
-        }
-        if let Some(live) = &self.live {
-            let _ = live.commands.send(Command::Voices(voices.to_vec()));
-        }
-    }
-
-    /// Open the device and tell the fresh mixer every sound it knows.
-    fn start(&mut self) {
-        if self.retry_at.is_some_and(|at| Instant::now() < at) {
-            return;
-        }
-        let started = Instant::now();
-        let (tx, rx) = channel();
-        let built = match self.format {
-            cpal::SampleFormat::F32 => build::<f32>(&self.device, &self.config, rx),
-            cpal::SampleFormat::I16 => build::<i16>(&self.device, &self.config, rx),
-            cpal::SampleFormat::U16 => build::<u16>(&self.device, &self.config, rx),
-            cpal::SampleFormat::I32 => build::<i32>(&self.device, &self.config, rx),
-            cpal::SampleFormat::F64 => build::<f64>(&self.device, &self.config, rx),
-            other => Err(format!("unsupported sample format {other}")),
-        };
-        let stream = match built.and_then(|stream| {
-            stream
-                .play()
-                .map_err(|e| format!("starting the stream: {e}"))?;
-            Ok(stream)
-        }) {
-            Ok(stream) => stream,
-            Err(e) => {
-                log::warn!("audio: {e}");
-                self.retry_at = Some(Instant::now() + RETRY);
-                return;
-            }
-        };
-        self.retry_at = None;
-        // The mixer went away with the last device, so this one is told
-        // every sound again before it is told what to play.
-        for (name, sound) in &self.sounds {
-            let _ = tx.send(Command::Sound(name.clone(), sound.clone()));
-        }
-        log::debug!(
-            "audio: something to play, device open with {} sound(s) in {:.0} ms",
-            self.sounds.len(),
-            started.elapsed().as_secs_f64() * 1000.0
-        );
-        self.live = Some(Live {
-            commands: tx,
-            _stream: stream,
-        });
+    /// Hand the mixer this frame's voice list; see [`Mixer::apply`].
+    pub fn apply(&self, voices: &[Voice]) {
+        let _ = self.commands.send(Command::Voices(voices.to_vec()));
     }
 }
 
@@ -195,21 +126,21 @@ fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     commands: Receiver<Command>,
+    ready: &Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let channels = usize::from(config.channels.max(1));
+    let ready = ready.clone();
+    let opened = Instant::now();
     let mut mixer = Mixer::new(config.sample_rate);
     let mut stereo: Vec<f32> = Vec::new();
-    let asked = Instant::now();
-    let mut first = true;
     device
         .build_output_stream(
             *config,
             move |data: &mut [T], _| {
-                if first {
-                    first = false;
+                if !ready.swap(true, Ordering::Relaxed) {
                     log::debug!(
-                        "audio: first block asked for {:.0} ms after the device opened",
-                        asked.elapsed().as_secs_f64() * 1000.0
+                        "audio: device asking for blocks {:.0} ms after it opened",
+                        opened.elapsed().as_secs_f64() * 1000.0
                     );
                 }
                 while let Ok(command) = commands.try_recv() {
