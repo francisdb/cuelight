@@ -1545,6 +1545,90 @@ impl Engine {
         }
     }
 
+    /// Add the artwork of ring place `index` to the draw list, fitted into
+    /// a box of `size` at the item's origin and centred in it, so a symbol
+    /// keeps its shape whatever shape the cells are.
+    fn push_artwork(
+        &self,
+        out: &mut Vec<ResolvedLayer>,
+        placed: &Placed,
+        cells: &crate::model::ReelCells,
+        index: usize,
+        [box_width, box_height]: [f64; 2],
+    ) {
+        use crate::model::ReelCells;
+        let Some(name) = cells.at(index) else { return };
+        let [x, y] = placed.origin;
+        // How the artwork's own size fits the box, and where that leaves it.
+        let fitted = |width: f64, height: f64| {
+            let fit = (box_width / width).min(box_height / height);
+            (
+                fit,
+                (box_width - width * fit) / 2.0,
+                (box_height - height * fit) / 2.0,
+            )
+        };
+        match cells {
+            ReelCells::Vectors(_) => {
+                // Missing artwork is skipped, as a missing image is.
+                let Some(data) = self.vectors.get(name) else {
+                    return;
+                };
+                if data.width <= 0.0 || data.height <= 0.0 {
+                    return;
+                }
+                let (fit, left, top) = fitted(data.width, data.height);
+                let unit = fit * placed.scale;
+                let origin = [x + left * placed.scale, y + top * placed.scale];
+                for item in &data.paths {
+                    out.push(ResolvedLayer {
+                        name: placed.name.to_owned(),
+                        shape: ResolvedShape::Path {
+                            elements: item
+                                .elements
+                                .iter()
+                                .map(|e| {
+                                    e.map(|[px, py]| [origin[0] + px * unit, origin[1] + py * unit])
+                                })
+                                .collect(),
+                            stroke: item.stroke.map(|(color, width)| (color, width * unit)),
+                        },
+                        color: item.fill.unwrap_or([0; 4]),
+                        opacity: placed.opacity,
+                        blend: placed.blend,
+                        transform: placed.transform,
+                    });
+                }
+            }
+            ReelCells::Images(_) => {
+                let Some(data) = self.images.get(name) else {
+                    return;
+                };
+                let (natural_width, natural_height) =
+                    (f64::from(data.width), f64::from(data.height));
+                if natural_width <= 0.0 || natural_height <= 0.0 {
+                    return;
+                }
+                let (fit, left, top) = fitted(natural_width, natural_height);
+                out.push(ResolvedLayer {
+                    name: placed.name.to_owned(),
+                    shape: ResolvedShape::Image {
+                        image: name.to_owned(),
+                        source: None,
+                        x: x + left * placed.scale,
+                        y: y + top * placed.scale,
+                        width: natural_width * fit * placed.scale,
+                        height: natural_height * fit * placed.scale,
+                    },
+                    color: [255; 4],
+                    opacity: placed.opacity,
+                    blend: placed.blend,
+                    transform: placed.transform,
+                });
+            }
+        }
+    }
+
     /// Add a reel row to the draw list: each cell a window on its ring,
     /// showing the character it stands on and the one coming after it,
     /// slid by how far between the two it is. A cell whose character is
@@ -1608,16 +1692,15 @@ impl Engine {
                     origin: [cell_x, y + slide * character_h],
                     ..*placed
                 };
-                let mut buffer = [0u8; 4];
-                let character = ring[on].encode_utf8(&mut buffer);
-                self.push_text(
-                    out,
-                    &placed,
-                    &reel.font,
-                    character,
-                    Some(cell),
-                    Align::Center,
-                );
+                match (&reel.cells, &reel.font) {
+                    (Some(cells), _) => self.push_artwork(out, &placed, cells, on, cell),
+                    (None, Some(font)) => {
+                        let mut buffer = [0u8; 4];
+                        let character = ring[on].encode_utf8(&mut buffer);
+                        self.push_text(out, &placed, font, character, Some(cell), Align::Center);
+                    }
+                    (None, None) => {}
+                }
             }
             out.push(marker(ResolvedShape::ClipEnd));
         }
@@ -2039,7 +2122,7 @@ fn validate(show: &Show) -> Result<(), Error> {
                 LayerKind::Digits {
                     display: DigitDisplay::Reel(reel),
                     ..
-                } => Some(&reel.font),
+                } => reel.font.as_ref(),
                 _ => None,
             };
             if let Some(font) = font.filter(|font| !show.fonts.contains_key(*font)) {
@@ -2059,6 +2142,14 @@ fn validate(show: &Show) -> Result<(), Error> {
                     Some("needs a duration above 0")
                 } else if !reel.stagger.is_finite() || reel.stagger < 0.0 {
                     Some("needs a stagger of 0 or more")
+                } else if reel.font.is_none() && reel.cells.is_none() {
+                    Some("needs a font for its characters, or cells to draw instead")
+                } else if reel
+                    .cells
+                    .as_ref()
+                    .is_some_and(|cells| cells.len() != reel.charset.chars().count())
+                {
+                    Some("needs one cell for every character of its charset")
                 } else if reel.window == 0 {
                     Some("needs a window of at least one character")
                 } else if reel

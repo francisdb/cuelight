@@ -251,3 +251,116 @@ fn rejects_a_window_of_nothing() {
         .to_string();
     assert!(err.contains("window"), "{err}");
 }
+
+/// A square of vector artwork `size` wide, so its fit into a cell is easy
+/// to read off the draw list.
+fn square(size: f64) -> cuelight::Vector {
+    use cuelight::{PathElement, VectorPath};
+    cuelight::Vector {
+        width: size,
+        height: size,
+        paths: vec![VectorPath {
+            elements: vec![
+                PathElement::MoveTo([0.0, 0.0]),
+                PathElement::LineTo([size, 0.0]),
+                PathElement::LineTo([size, size]),
+                PathElement::Close,
+            ],
+            fill: Some([255, 0, 0, 255]),
+            stroke: None,
+        }],
+    }
+}
+
+#[test]
+fn cells_can_be_vector_artwork_instead_of_characters() {
+    let mut engine = Engine::new();
+    for (name, size) in [("cherry", 20.0), ("bar", 20.0)] {
+        engine.set_vector(name, square(size)).unwrap();
+    }
+    engine
+        .load_show(&show(
+            r#"{ "charset": "cb", "cells": { "vectors": ["cherry", "bar"] },
+                 "duration": 0.1, "direction": "forward" }"#,
+        ))
+        .unwrap();
+    engine.set_variable("score", "c");
+    engine.advance_frame(0.0);
+    let paths: Vec<_> = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .filter(|l| matches!(l.shape, ResolvedShape::Path { .. }))
+        .collect();
+    // One path per artwork: the one it stands on and the one behind it.
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths[0].color, [255, 0, 0, 255]);
+    // A 20 wide square fits a 10x10 cell: half size, filling it.
+    let ResolvedShape::Path { ref elements, .. } = paths[0].shape else {
+        unreachable!()
+    };
+    let corner = match elements[1] {
+        cuelight::PathElement::LineTo(point) => point,
+        other => panic!("{other:?}"),
+    };
+    assert!((corner[0] - (20.0 + 10.0)).abs() < 1e-9, "{corner:?}");
+}
+
+#[test]
+fn artwork_keeps_its_shape_in_the_cell() {
+    let mut engine = Engine::new();
+    // Twice as wide as it is tall: it fits the cell's width and is
+    // centred in what is left.
+    engine
+        .set_vector(
+            "wide",
+            cuelight::Vector {
+                width: 20.0,
+                height: 10.0,
+                paths: vec![cuelight::VectorPath {
+                    elements: vec![
+                        cuelight::PathElement::MoveTo([0.0, 0.0]),
+                        cuelight::PathElement::LineTo([20.0, 10.0]),
+                    ],
+                    fill: Some([255; 4]),
+                    stroke: None,
+                }],
+            },
+        )
+        .unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "charset": "w", "cells": { "vectors": ["wide"] }, "duration": 0.1 }"#,
+        ))
+        .unwrap();
+    engine.set_variable("score", "w");
+    engine.advance_frame(0.0);
+    let layers = engine.resolved_layers().unwrap();
+    let ResolvedShape::Path { ref elements, .. } = layers[1].shape else {
+        panic!("{:?}", layers[1].shape)
+    };
+    let (start, end) = match (elements[0], elements[1]) {
+        (cuelight::PathElement::MoveTo(a), cuelight::PathElement::LineTo(b)) => (a, b),
+        other => panic!("{other:?}"),
+    };
+    // Half scale across a 10 wide cell, 2.5 down from the cell's top.
+    assert!((end[0] - start[0] - 10.0).abs() < 1e-9, "{start:?} {end:?}");
+    assert!((end[1] - start[1] - 5.0).abs() < 1e-9, "{start:?} {end:?}");
+    assert!((start[1] - 2.5).abs() < 1e-9, "{start:?}");
+}
+
+#[test]
+fn rejects_cells_that_do_not_cover_the_ring() {
+    let err = Engine::new()
+        .load_show(&show(
+            r#"{ "charset": "abc", "cells": { "vectors": ["one"] }, "duration": 0.1 }"#,
+        ))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("one cell for every character"), "{err}");
+    let err = Engine::new()
+        .load_show(&show(r#"{ "charset": "ab", "duration": 0.1 }"#))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("needs a font"), "{err}");
+}

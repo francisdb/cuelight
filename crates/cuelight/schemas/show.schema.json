@@ -1005,11 +1005,22 @@
       ]
     },
     "Reel": {
-      "description": "A row of cells whose characters sit on a ring and roll to the ones the\nlayer's `text` asks for, as the wheels of an odometer, a counter or a\ndeparture board do. Each cell has a place on the ring of its own, so a\nchange moves only the cells it reaches, and `stagger` keeps them from\nmoving in lockstep.\n\nThe characters are drawn in a font style of the show, so the display\nstays sharp at any size and needs no artwork.",
+      "description": "A row of cells carrying a ring of symbols, each rolling to the symbol\nthe layer's `text` asks of it, as the wheels of an odometer, a counter\nor a departure board do. Each cell stands somewhere on the ring of its\nown, so a change moves only the cells it reaches, and `stagger` keeps\nthem from moving in lockstep.\n\nA symbol is named by a character of `charset` and drawn either as that\ncharacter in a font style of the show, which needs no artwork and\nstays sharp at any size, or as the artwork `cells` gives it.",
       "type": "object",
       "properties": {
+        "cells": {
+          "description": "What each symbol looks like, one entry per character of `charset`.\nWithout it a symbol is drawn as its own character, in `font`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReelCells"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "charset": {
-          "description": "The characters on the ring, in the order they pass by. A cell shows\na blank for anything the text asks for that is not on it.",
+          "description": "The characters naming the ring's symbols, in the order they pass\nby. A cell shows nothing for anything the text asks of it that the\nring does not carry.",
           "type": "string",
           "default": "0123456789"
         },
@@ -1025,7 +1036,7 @@
           ]
         },
         "duration": {
-          "description": "Seconds one character step takes; above 0.",
+          "description": "Seconds one move takes; above 0.",
           "type": "number",
           "format": "double"
         },
@@ -1035,11 +1046,14 @@
           "default": "linear"
         },
         "font": {
-          "description": "Font style from the show's `fonts` the characters are drawn in.",
-          "type": "string"
+          "description": "Font style from the show's `fonts` the symbols are drawn in as\ntheir own characters, when `cells` does not put artwork on the ring\ninstead.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "offset": {
-          "description": "Motion added on top of a move, in characters: keys like a binding\ntransition's `offset`, so a cell can settle against its stop.",
+          "description": "Motion added on top of a move, in symbols: keys like a binding\ntransition's `offset`, so a cell can settle against its stop.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Key"
@@ -1052,7 +1066,7 @@
           "default": 0.0
         },
         "step": {
-          "description": "How far a cell travels in one move, in characters: one by default,\nso it lands on every character on the way, as a counter does.\n`null` makes the whole journey one move instead, which is how a\nwheel spins: `duration` then covers all of it and `ease` shapes the\nspin rather than each character.",
+          "description": "How far a cell travels in one move, in symbols: one by default, so\nit lands on every symbol on the way, as a counter does. `null`\nmakes the whole journey one move instead, which is how a wheel\nspins: `duration` then covers all of it and `ease` shapes the spin\nrather than each symbol.",
           "type": [
             "number",
             "null"
@@ -1061,14 +1075,14 @@
           "default": 1.0
         },
         "turns": {
-          "description": "Extra whole turns of the ring a cell makes before it lands, on top\nof the distance to its character. 0 by default; a spinning wheel\ntakes a few.",
+          "description": "Extra whole turns of the ring a cell makes before it lands, on top\nof the distance to its symbol. 0 by default; a spinning wheel takes\na few.",
           "type": "integer",
           "format": "uint32",
           "default": 0,
           "minimum": 0
         },
         "window": {
-          "description": "How many characters of the ring the cell shows at once, stacked\nwith the one it stands on in the middle. 1 by default; a wheel\nbehind a window several characters tall shows more.",
+          "description": "How many symbols of the ring the cell shows at once, stacked with\nthe one it stands on in the middle. 1 by default; a wheel behind a\ntall window shows its neighbours as well.",
           "type": "integer",
           "format": "uint32",
           "default": 1,
@@ -1076,8 +1090,44 @@
         }
       },
       "required": [
-        "font",
         "duration"
+      ]
+    },
+    "ReelCells": {
+      "description": "What a reel's symbols are drawn as. The charset stays the ring's\nidentity, so a show still says which symbol a cell lands on by its\ncharacter; this only says what that symbol looks like.",
+      "oneOf": [
+        {
+          "description": "Vector artwork the host registered, by name, one per symbol.\nArtwork scales with the row, so a reel of pictures is as sharp as\none of letters.",
+          "type": "object",
+          "properties": {
+            "vectors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "vectors"
+          ]
+        },
+        {
+          "description": "Images the host registered, by name, one per symbol.",
+          "type": "object",
+          "properties": {
+            "images": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "images"
+          ]
+        }
       ]
     },
     "Retrigger": {
