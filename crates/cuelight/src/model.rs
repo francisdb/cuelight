@@ -597,6 +597,16 @@ fn default_charset() -> String {
     "0123456789".to_owned()
 }
 
+/// One character at a time, the way a wheel that lands on every character
+/// travels.
+fn default_reel_step() -> Option<f64> {
+    Some(1.0)
+}
+
+fn default_window() -> u32 {
+    1
+}
+
 /// A row of cells whose characters sit on a ring and roll to the ones the
 /// layer's `text` asks for, as the wheels of an odometer, a counter or a
 /// departure board do. Each cell has a place on the ring of its own, so a
@@ -623,7 +633,24 @@ pub struct Reel {
     /// `forward` for a wheel that only turns one way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<Direction>,
-    /// Motion added on top of a step, in characters: keys like a binding
+    /// How far a cell travels in one move, in characters: one by default,
+    /// so it lands on every character on the way, as a counter does.
+    /// `null` makes the whole journey one move instead, which is how a
+    /// wheel spins: `duration` then covers all of it and `ease` shapes the
+    /// spin rather than each character.
+    #[serde(default = "default_reel_step", skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    /// Extra whole turns of the ring a cell makes before it lands, on top
+    /// of the distance to its character. 0 by default; a spinning wheel
+    /// takes a few.
+    #[serde(default)]
+    pub turns: u32,
+    /// How many characters of the ring the cell shows at once, stacked
+    /// with the one it stands on in the middle. 1 by default; a wheel
+    /// behind a window several characters tall shows more.
+    #[serde(default = "default_window")]
+    pub window: u32,
+    /// Motion added on top of a move, in characters: keys like a binding
     /// transition's `offset`, so a cell can settle against its stop.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offset: Vec<Key>,
@@ -639,17 +666,40 @@ impl Reel {
         self.charset.chars().collect()
     }
 
-    /// How a cell moves from one place on the ring to another: a
-    /// transition on a ring as long as the charset, a character at a time.
+    /// How many characters the ring holds.
+    pub fn ring(&self) -> f64 {
+        self.charset.chars().count().max(1) as f64
+    }
+
+    /// How a cell travels from one place to another. The places are
+    /// counted straight, not around a ring, so a journey can be longer
+    /// than one turn; where a cell stands is that count folded back onto
+    /// the ring.
     pub fn roll(&self) -> Transition {
         Transition {
             duration: self.duration,
             ease: self.ease,
-            wrap: Some(self.charset.chars().count().max(1) as f64),
-            direction: self.direction,
-            step: Some(1.0),
+            wrap: None,
+            direction: None,
+            step: self.step,
             offset: self.offset.clone(),
         }
+    }
+
+    /// Where a cell standing at `from` travels to show the character at
+    /// `character` on the ring: the way round `direction` asks for, plus
+    /// the turns it takes before landing.
+    pub fn travel(&self, from: f64, character: f64) -> f64 {
+        let ring = self.ring();
+        let forward = (character - from).rem_euclid(ring);
+        let step = match self.direction.unwrap_or_default() {
+            Direction::Backward => forward - ring,
+            Direction::Shortest if forward > ring / 2.0 => forward - ring,
+            _ => forward,
+        };
+        // Turns go the way the cell is already travelling.
+        let turns = f64::from(self.turns) * ring;
+        from + step + if step < 0.0 { -turns } else { turns }
     }
 }
 

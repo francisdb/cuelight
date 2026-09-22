@@ -1136,10 +1136,13 @@ impl Engine {
                     started: self.time,
                 },
             );
-            for (i, target) in wanted.into_iter().enumerate() {
-                let Some(target) = target else { continue };
+            let ring_length = reel.ring();
+            for (i, character) in wanted.into_iter().enumerate() {
+                let Some(character) = character else { continue };
                 let change = &mut records[i];
-                if change.target == target {
+                // Where it is heading, as a place on the ring: a cell that
+                // is already going there carries on.
+                if change.target.rem_euclid(ring_length) == character {
                     continue;
                 }
                 let reached =
@@ -1148,7 +1151,7 @@ impl Engine {
                 let delay = (count - 1 - i) as f64 * reel.stagger.max(0.0);
                 *change = Change {
                     start: reached,
-                    target,
+                    target: reel.travel(reached, character),
                     started: self.time + delay,
                 };
             }
@@ -1565,15 +1568,17 @@ impl Engine {
         let scale = placed.scale;
         // The cell's box in the layer's own units, for the font to lay a
         // character out in, and on the canvas, for placing it.
-        let cell = [width / count as f64, height];
-        let (cell_w, cell_h) = (cell[0] * scale, cell[1] * scale);
+        let window = reel.window.max(1);
+        let cell = [width / count as f64, height / f64::from(window)];
+        let (cell_w, character_h) = (cell[0] * scale, cell[1] * scale);
+        let cell_h = character_h * f64::from(window);
+        // Where the character a cell stands on sits in its window.
+        let middle = (f64::from(window) - 1.0) / 2.0;
         for (i, character) in cells(text, count, justify).into_iter().enumerate() {
             if character.is_none_or(|c| !ring.contains(&c)) {
                 continue;
             }
             let position = positions.get(i).copied().unwrap_or_default();
-            let index = position.rem_euclid(ring.len() as f64);
-            let (on, between) = (index.floor(), index.fract());
             let cell_x = x + i as f64 * cell_w;
             let marker = |shape| ResolvedLayer {
                 name: placed.name.to_owned(),
@@ -1592,16 +1597,19 @@ impl Engine {
                     height: cell_h,
                 }),
             }));
-            // The character on its way out, and the one coming up from
-            // below it.
-            for (step, slide) in [(0.0, -between), (1.0, 1.0 - between)] {
-                let at = (on + step).rem_euclid(ring.len() as f64) as usize;
+            // Every character the window can see, from the one leaving at
+            // its top to the one coming up at its bottom.
+            let first = (position - middle).floor();
+            for k in 0..=window {
+                let at = first + f64::from(k);
+                let slide = at - position + middle;
+                let on = at.rem_euclid(ring.len() as f64) as usize;
                 let placed = Placed {
-                    origin: [cell_x, y + slide * cell_h],
+                    origin: [cell_x, y + slide * character_h],
                     ..*placed
                 };
                 let mut buffer = [0u8; 4];
-                let character = ring[at].encode_utf8(&mut buffer);
+                let character = ring[on].encode_utf8(&mut buffer);
                 self.push_text(
                     out,
                     &placed,
@@ -2051,6 +2059,13 @@ fn validate(show: &Show) -> Result<(), Error> {
                     Some("needs a duration above 0")
                 } else if !reel.stagger.is_finite() || reel.stagger < 0.0 {
                     Some("needs a stagger of 0 or more")
+                } else if reel.window == 0 {
+                    Some("needs a window of at least one character")
+                } else if reel
+                    .step
+                    .is_some_and(|step| !step.is_finite() || step <= 0.0)
+                {
+                    Some("needs a step above 0, or none at all to travel in one move")
                 } else {
                     offset_problem(&reel.offset)
                 };

@@ -1039,7 +1039,7 @@
           "type": "string"
         },
         "offset": {
-          "description": "Motion added on top of a step, in characters: keys like a binding\ntransition's `offset`, so a cell can settle against its stop.",
+          "description": "Motion added on top of a move, in characters: keys like a binding\ntransition's `offset`, so a cell can settle against its stop.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Key"
@@ -1050,6 +1050,29 @@
           "type": "number",
           "format": "double",
           "default": 0.0
+        },
+        "step": {
+          "description": "How far a cell travels in one move, in characters: one by default,\nso it lands on every character on the way, as a counter does.\n`null` makes the whole journey one move instead, which is how a\nwheel spins: `duration` then covers all of it and `ease` shapes the\nspin rather than each character.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": 1.0
+        },
+        "turns": {
+          "description": "Extra whole turns of the ring a cell makes before it lands, on top\nof the distance to its character. 0 by default; a spinning wheel\ntakes a few.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "window": {
+          "description": "How many characters of the ring the cell shows at once, stacked\nwith the one it stands on in the middle. 1 by default; a wheel\nbehind a window several characters tall shows more.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
         }
       },
       "required": [
