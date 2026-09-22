@@ -42,23 +42,30 @@ pub struct ImageData {
     revision: u64,
 }
 
+/// The next revision for anything a renderer caches by it. One sequence
+/// for the whole process, so a cache shared between engines (a host
+/// playing several shows, tests sharing a renderer) cannot mistake one
+/// engine's asset for another's.
+fn next_revision() -> u64 {
+    static REVISION: AtomicU64 = AtomicU64::new(0);
+    REVISION.fetch_add(1, Ordering::Relaxed) + 1
+}
+
 impl ImageData {
-    /// Engine-unique, increasing with every [`Engine::set_image`] call.
-    /// Lets renderers cache GPU resources per upload instead of comparing
-    /// pixels. Engine-generated bitmaps ([`ResolvedShape::Bitmap`]) number
-    /// their revisions in a separate, process-wide sequence.
+    /// Unique to this upload for as long as the process runs. Lets
+    /// renderers cache GPU resources per upload instead of comparing
+    /// pixels.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// Wrap engine-generated pixels with a fresh bitmap revision.
+    /// Wrap engine-generated pixels with a fresh revision.
     fn generated(rgba: Rgba) -> Self {
-        static REVISION: AtomicU64 = AtomicU64::new(0);
         Self {
             width: rgba.width,
             height: rgba.height,
             pixels: rgba.pixels.into(),
-            revision: REVISION.fetch_add(1, Ordering::Relaxed) + 1,
+            revision: next_revision(),
         }
     }
 }
@@ -157,8 +164,9 @@ pub struct FontData {
 }
 
 impl FontData {
-    /// Engine-unique per registration, so renderers can cache their font
-    /// object per upload instead of comparing bytes.
+    /// Unique to this registration for as long as the process runs, so
+    /// renderers can cache their font object per upload instead of
+    /// comparing bytes.
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -322,12 +330,9 @@ pub struct Engine {
     show: Option<Show>,
     variables: BTreeMap<String, Value>,
     images: BTreeMap<String, ImageData>,
-    image_revision: u64,
     vectors: BTreeMap<String, Vector>,
     fonts: BTreeMap<String, RegisteredFont>,
     outline_fonts: BTreeMap<String, FontData>,
-    #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
-    font_revision: u64,
     text_cache: Mutex<TextCache>,
     /// Registered sounds and their durations in seconds.
     sounds: BTreeMap<String, f64>,
@@ -482,14 +487,13 @@ impl Engine {
                 pixels.len()
             )));
         }
-        self.image_revision += 1;
         self.images.insert(
             name.to_owned(),
             ImageData {
                 width,
                 height,
                 pixels,
-                revision: self.image_revision,
+                revision: next_revision(),
             },
         );
         Ok(())
@@ -548,13 +552,12 @@ impl Engine {
         let data = bytes.into();
         crate::outline::validate(&data)
             .map_err(|e| Error::InvalidFont(format!("{name:?}: {e}")))?;
-        self.font_revision += 1;
         self.fonts.remove(name);
         self.outline_fonts.insert(
             name.to_owned(),
             FontData {
                 data,
-                revision: self.font_revision,
+                revision: next_revision(),
             },
         );
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
@@ -1748,7 +1751,11 @@ impl Engine {
                         }
                     }
                     LayerKind::Image {
-                        image, size, sheet, ..
+                        image,
+                        size,
+                        sheet,
+                        tint,
+                        ..
                     } => {
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
@@ -1772,7 +1779,8 @@ impl Engine {
                                     width: width * scale,
                                     height: height * scale,
                                 },
-                                color: [255, 255, 255, 255],
+                                // Validated at load.
+                                color: tint.as_deref().and_then(parse_color).unwrap_or([255; 4]),
                                 opacity,
                                 blend: layer.blend,
                                 transform,
@@ -2141,6 +2149,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                     "layer {:?} has an anchor, but no content box",
                     layer.name
                 )));
+            }
+            if let LayerKind::Image {
+                tint: Some(tint), ..
+            } = &layer.kind
+            {
+                parse_color(tint).ok_or_else(|| Error::InvalidColor(tint.clone()))?;
             }
             if let LayerKind::Audio {
                 looping,

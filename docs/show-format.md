@@ -266,7 +266,11 @@ Layer kinds:
   `[width, height]` scales the image into the canvas; omitted, it draws at
   its natural pixel size. Images are host assets, not show content: a
   layer whose image is not (yet) registered is skipped, so hosts can
-  stream assets in after `load_show`.
+  stream assets in after `load_show`. Optional `tint` (`#RRGGBB` or
+  `#RRGGBBAA`) multiplies the image's colors, leaving its transparency
+  alone: white changes nothing, a color stains the art (a coloured bulb
+  behind white artwork, one sprite reused in several colors, a worn look
+  over a clean texture).
 - `text`: `text` (use `\n` for line breaks) drawn in `font`, a style
   declared in the show's `fonts` (see [Fonts](#fonts)). Optional `size`
   `[width, height]` is a box whose top-left corner sits at the layer's

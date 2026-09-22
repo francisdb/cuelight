@@ -461,6 +461,11 @@ pub enum LayerKind {
         /// Base cell index for sheets (row-major, 0 is the top-left cell).
         #[serde(default)]
         frame: f64,
+        /// Color the image is multiplied by, `#RRGGBB` or `#RRGGBBAA`:
+        /// white leaves it alone, a color stains it (a lamp behind white
+        /// art, a worn look, one sprite in several colors).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<String>,
     },
     /// Text in a bitmap font style from the show's `fonts`. With `size` the
     /// text is aligned inside that box (its top-left corner at the layer's

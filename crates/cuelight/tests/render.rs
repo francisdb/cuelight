@@ -251,3 +251,35 @@ fn a_blended_group_is_composited_as_one_picture() {
         [r, g, b]
     );
 }
+
+#[test]
+fn a_tint_stains_an_image_and_leaves_its_transparency() {
+    // A 2x1 image: an opaque white pixel and a transparent one.
+    let show = r##"{ "name": "tint", "size": [4, 2], "background": "#0000FF", "layers": [
+        { "name": "art", "type": "image", "image": "art", "size": [4, 2], "tint": "#FF8000" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine
+        .set_image("art", 2, 1, vec![255, 255, 255, 255, 255, 255, 255, 0])
+        .unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // White times the tint is the tint; the clear half keeps the background.
+    assert_eq!(pixel(&frame, 0, 0), [255, 128, 0, 255]);
+    assert_eq!(pixel(&frame, 3, 0), [0, 0, 255, 255]);
+}
+
+#[test]
+fn an_untinted_image_is_unchanged() {
+    let show = r##"{ "name": "plain", "size": [4, 2], "background": "#0000FF", "layers": [
+        { "name": "art", "type": "image", "image": "art", "size": [4, 2] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine
+        .set_image("art", 1, 1, vec![255, 128, 0, 255])
+        .unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 0, 0), [255, 128, 0, 255]);
+    assert_eq!(pixel(&frame, 3, 1), [255, 128, 0, 255]);
+}
