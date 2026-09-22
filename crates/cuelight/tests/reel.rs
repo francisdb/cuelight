@@ -433,3 +433,57 @@ fn a_character_sits_in_the_middle_of_its_cell() {
         "ink {height} tall at {y}: {above} above, {below} below"
     );
 }
+
+/// How many characters slide past the window over `frames` of 1 ms: each
+/// one that leaves the top wraps the offset back.
+fn passing(engine: &mut Engine, frames: usize) -> usize {
+    let mut seen = 0;
+    let mut previous = cells(engine)[0].1[0];
+    for _ in 0..frames {
+        engine.advance_frame(0.001);
+        let now = cells(engine)[0].1[0];
+        if now > previous {
+            seen += 1;
+        }
+        previous = now;
+    }
+    seen
+}
+
+#[test]
+fn a_spin_trigger_moves_a_cell_that_is_asked_for_what_it_shows() {
+    let mut engine = engine(
+        r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 2,
+             "direction": "forward", "spin": "spin" }"#,
+    );
+    assert!(engine.show().unwrap().triggers().contains("spin"));
+
+    // Asked for the symbol it already shows: nothing happens, which is
+    // what a binding means everywhere else.
+    engine.set_variable("score", "0");
+    assert_eq!(passing(&mut engine, 500), 0, "a wheel moved unasked");
+
+    // Told to spin, with the same symbol still asked for: it travels its
+    // two turns of a ring of ten and lands back where it was.
+    engine.trigger("spin");
+    assert_eq!(
+        passing(&mut engine, 500),
+        20,
+        "the wheel stood still through its spin"
+    );
+    assert_eq!(passing(&mut engine, 500), 0, "and stays put afterwards");
+}
+
+#[test]
+fn a_spin_lands_on_what_the_text_says_at_that_moment() {
+    let mut engine = engine(
+        r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 1,
+             "direction": "forward", "spin": ["spin", "go"] }"#,
+    );
+    // A new symbol and a spin in the same breath: one journey of a turn
+    // plus the two characters to the new symbol, not two journeys.
+    engine.set_variable("score", "2");
+    engine.trigger("go");
+    assert_eq!(passing(&mut engine, 500), 12);
+    assert_eq!(passing(&mut engine, 500), 0, "and stays there");
+}

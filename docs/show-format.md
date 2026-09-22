@@ -360,6 +360,16 @@ Layer kinds:
     does; the row's height is shared between them.
   - `stagger` (default 0): seconds each cell waits behind the one to its
     right, so a row does not move as one piece.
+  - `spin` (a trigger name or a list): fires the row off. Every cell
+    travels its `turns` and lands on the symbol its text names at that
+    moment, whether or not that is the one it already shows. Without it a
+    cell only moves when the symbol it is asked for changes, which is
+    what a binding means everywhere else, and a wheel asked for what it
+    already carries would stand still while its neighbours spin. A host
+    that already fires a trigger for the lever and the sound lets the
+    reels hear it too, and the value still says where they land: set it
+    and fire in the same breath and the wheel makes one journey to the
+    new symbol, not two.
 
   A row is one value across several cells, which is what a counter or a
   board line is. Things that move independently are independent rows: a
