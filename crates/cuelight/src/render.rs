@@ -895,7 +895,12 @@ impl Presenter {
         // Dots are made of canvas pixels, so they need the frame at its own
         // size as well.
         if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth && dots.is_none() {
+            // Only the canvas shows: what a show parks outside it must not
+            // leak into the letterbox, as it cannot on the native texture.
+            let [w, h] = size.map(f64::from);
+            scene.push_clip_layer(Fill::NonZero, placement, &Rect::new(0.0, 0.0, w, h));
             scene.append(&content, Some(placement));
+            scene.pop_layer();
         } else {
             if self.native.as_ref().is_some_and(|n| n.size != size) {
                 if let Some(old) = self.native.take() {

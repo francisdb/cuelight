@@ -425,12 +425,24 @@ impl ApplicationHandler for App {
             return;
         }
         let [w, h] = self.engine.show().expect("show loaded").size;
+        // The show at its own size, but never more than most of the screen:
+        // a large show on a scaled display would otherwise open as big as
+        // the compositor allows, which looks like fullscreen.
+        let (mut width, mut height) = (f64::from(w), f64::from(h));
+        if let Some(monitor) = event_loop.primary_monitor() {
+            let room = monitor.size().to_logical::<f64>(monitor.scale_factor());
+            let fit = (room.width * 0.9 / width).min(room.height * 0.9 / height);
+            if fit < 1.0 {
+                width *= fit;
+                height *= fit;
+            }
+        }
         let window = Arc::new(
             event_loop
                 .create_window(
                     Window::default_attributes()
                         .with_title("cuelight: player")
-                        .with_inner_size(LogicalSize::new(w * 2, h * 2)),
+                        .with_inner_size(LogicalSize::new(width, height)),
                 )
                 .expect("create window"),
         );

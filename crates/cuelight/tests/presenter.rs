@@ -256,3 +256,25 @@ fn dots_pass_shows_canvas_pixels_as_dots_on_black() {
     let plain = present(&mut gpu, &mut presenter, &engine, [w, h]);
     assert!(near(plain[(10 * w + 10) as usize], [255, 128, 0, 255]));
 }
+
+#[test]
+fn nothing_outside_the_canvas_reaches_the_letterbox() {
+    let Some(mut gpu) = gpu() else { return };
+    // A 4x2 full-color show with a white shape parked below its canvas.
+    let show = r##"{ "name": "parked", "size": [4, 2], "background": "#000000", "layers": [
+        { "name": "sun", "type": "shape", "shape": { "rect": [0, 2, 4, 4] }, "fill": "#FFFFFF" },
+        { "name": "in", "type": "shape", "shape": { "rect": [0, 0, 4, 2] }, "fill": "#FF0000" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let mut presenter = Presenter::new();
+    // 8x8 target: 2x scale, the canvas on rows 2 to 5, letterbox around.
+    let (w, h) = (8u32, 8u32);
+    let pixels = present(&mut gpu, &mut presenter, &engine, [w, h]);
+    let at = |x: u32, y: u32| pixels[(y * w + x) as usize];
+    assert_eq!(at(4, 2), [255, 0, 0, 255]);
+    assert_eq!(at(4, 5), [255, 0, 0, 255]);
+    // Below the canvas the parked shape would have painted; it must not.
+    assert_eq!(at(4, 6), [0, 0, 0, 255]);
+    assert_eq!(at(4, 7), [0, 0, 0, 255]);
+}
