@@ -3,12 +3,13 @@
 //! driver script.
 //!
 //! ```sh
-//! cuelight-player path/to/show[.json] [path/to/driver.json]
+//! cuelight-player path/to/show[.json|.cuelight] [path/to/driver.json]
 //! ```
 //!
 //! Loading is [`cuelight_loader`]'s: a show folder holds `show.json`, an
 //! optional `test-driver.json` (picked up automatically) and `assets/` with
-//! images and `fonts/`; next to a loose show file the driver is
+//! images, `fonts/` and `sounds/`; a `.cuelight` file is that folder
+//! packed; next to a loose show file the driver is
 //! `<show>.test-driver.json`. Without a show the built-in demo plays.
 //!
 //! The player prints the show's actions (trigger names) and variables: type
@@ -560,7 +561,8 @@ fn main() -> std::process::ExitCode {
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
-    /// Show folder or loose show file; the built-in demo when omitted.
+    /// Show folder, packed show (.cuelight) or loose show file; the
+    /// built-in demo when omitted.
     show: Option<std::path::PathBuf>,
     /// Driver script to play instead of the one found next to the show.
     driver: Option<std::path::PathBuf>,
@@ -581,14 +583,13 @@ const DEMO_DRIVER: &str = include_str!("../demo/test-driver.json");
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut engine = Engine::new();
-    let mut driver = None;
     // Sound is optional: without a device the show still plays.
     let audio = if cli.no_audio {
         None
     } else {
         Output::open().map_err(|e| log::warn!("no sound: {e}")).ok()
     };
-    match &cli.show {
+    let driver = match &cli.show {
         Some(path) => {
             let loaded = cuelight_loader::load(&mut engine, path)?;
             log::info!(
@@ -601,31 +602,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             for skipped in &loaded.skipped {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }
-            for path in &loaded.sounds {
-                let name = path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                match Sound::from_file(path) {
+            for file in &loaded.sounds {
+                match Sound::decode(&file.extension, &file.bytes) {
                     Ok(sound) => {
-                        engine.set_sound(&name, sound.duration())?;
+                        engine.set_sound(&file.name, sound.duration())?;
                         if let Some(audio) = &audio {
-                            audio.set_sound(&name, Arc::new(sound));
+                            audio.set_sound(&file.name, Arc::new(sound));
                         }
                     }
-                    Err(e) => log::warn!("skipping sound {path:?}: {e}"),
+                    Err(e) => log::warn!("skipping sound {:?}: {e}", file.name),
                 }
             }
-            if let Some(path) = cli.driver.as_ref().or(loaded.driver.as_ref()) {
-                driver = Some(Driver::from_file(path)?);
+            match &cli.driver {
+                Some(path) => Some(Driver::from_file(path)?),
+                None => loaded.driver,
             }
         }
         None => {
             log::info!("no show given, playing the built-in demo");
             engine.load_show(DEMO_SHOW)?;
-            driver = Some(Driver::from_json(DEMO_DRIVER)?);
+            Some(Driver::from_json(DEMO_DRIVER)?)
         }
-    }
+    };
     for field in engine.load_warnings() {
         log::warn!("show field {field:?} is not understood and was ignored");
     }

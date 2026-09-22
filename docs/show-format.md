@@ -36,7 +36,7 @@ switchable views inside it (see [Scenes](#scenes)).
 
 ## On disk
 
-A show exists in two forms:
+A show exists in three forms:
 
 - A **loose file**: one `.json` document, self-sufficient as long as the
   show needs no images. A driver script for it is conventionally named
@@ -56,7 +56,15 @@ A show exists in two forms:
                         .ogg, .mp3)
   ```
 
-Either way the engine only ever receives the single JSON document through
+- A **packed show**: the folder as one file, `myshow.cuelight`, a plain
+  zip with the folder's contents at its root (`show.json`, the driver,
+  `assets/...`). The `cuelight-pack` tool of `cuelight-loader` writes it;
+  any zip tool opens it, and a zip that wraps the folder in a directory is
+  accepted too. Media that is already compressed (PNG, Ogg, MP3, FLAC) is
+  stored as is, the rest deflated. The player and the loader open it like
+  the folder.
+
+Any of these forms is loaded the same way: the engine only ever receives the single JSON document through
 `load_show` plus `set_image`, `set_vector`, `set_font` and `set_sound`
 calls; it does no file I/O itself. Resolving a folder (reading the manifest, decoding and
 registering `assets/`, picking up the driver) is host-side convention,

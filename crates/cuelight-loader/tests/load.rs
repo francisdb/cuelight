@@ -18,11 +18,10 @@ fn loads_a_show_folder_with_assets_and_driver() {
     assert!(loaded.fonts.is_empty());
     assert!(loaded.skipped.is_empty());
     assert!(loaded.show.ends_with("beacon/show.json"));
-    assert!(loaded
-        .driver
-        .as_ref()
-        .unwrap()
-        .ends_with("beacon/test-driver.json"));
+    assert_eq!(
+        loaded.driver,
+        Some(Driver::from_file(shows().join("beacon/test-driver.json")).unwrap())
+    );
     assert!(engine.image("orb").is_some());
     // the orb image resolves, so its asset really was registered first
     let layers = engine.resolved_layers().unwrap();
@@ -35,10 +34,10 @@ fn loads_a_show_folder_with_assets_and_driver() {
 fn loads_a_loose_show_and_finds_its_driver() {
     let mut engine = Engine::new();
     let loaded = load(&mut engine, shows().join("minigolf.json")).unwrap();
-    assert!(loaded
-        .driver
-        .unwrap()
-        .ends_with("minigolf.test-driver.json"));
+    assert_eq!(
+        loaded.driver,
+        Some(Driver::from_file(shows().join("minigolf.test-driver.json")).unwrap())
+    );
     let loaded = load(&mut engine, shows().join("slideshow.json")).unwrap();
     assert_eq!(loaded.driver, None);
 }
@@ -194,10 +193,7 @@ fn loading_from_memory_matches_loading_from_disk() {
     assert_eq!(in_memory.images, on_disk.images);
     assert_eq!(in_memory.fonts, on_disk.fonts);
     assert!(in_memory.skipped.is_empty());
-    assert_eq!(
-        in_memory.driver,
-        Some(Driver::from_file(on_disk.driver.unwrap()).unwrap())
-    );
+    assert_eq!(in_memory.driver, on_disk.driver);
     assert_eq!(
         from_memory.resolved_layers().unwrap(),
         from_disk.resolved_layers().unwrap()
@@ -263,4 +259,52 @@ fn converts_an_svg_into_vector_artwork() {
         panic!("{:?}", layers[0].shape);
     };
     assert_eq!(elements[0], PathElement::MoveTo([4.0, 0.0]));
+}
+
+#[cfg(feature = "pack")]
+#[test]
+fn a_packed_show_loads_like_its_folder() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-pack-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("beacon.cuelight");
+    let files = cuelight_loader::pack(shows().join("beacon"), &out).unwrap();
+    assert!(files >= 2, "{files}");
+
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load(&mut engine, &out).unwrap();
+    assert_eq!(loaded.images, ["orb"]);
+    assert_eq!(loaded.show, out);
+    assert!(loaded.driver.is_some());
+    assert!(engine.show().is_some());
+
+    // The same bytes, unpacked, are the folder's files.
+    let unpacked = cuelight_loader::read_pack(&out).unwrap();
+    assert!(unpacked.contains_key("show.json"));
+    assert!(unpacked.contains_key("assets/orb.png"));
+    assert_eq!(
+        unpacked["show.json"],
+        std::fs::read(shows().join("beacon/show.json")).unwrap()
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(feature = "pack")]
+#[test]
+fn a_zip_wrapping_the_folder_unpacks_too() {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        writer.add_directory("beacon/", options).unwrap();
+        writer.start_file("beacon/show.json", options).unwrap();
+        writer
+            .write_all(b"{ \"name\": \"b\", \"size\": [8, 8] }")
+            .unwrap();
+        writer.finish().unwrap();
+    }
+    let files = cuelight_loader::unpack(&cursor.into_inner()).unwrap();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["show.json"]);
+    assert!(cuelight_loader::unpack(b"not a zip").is_err());
 }

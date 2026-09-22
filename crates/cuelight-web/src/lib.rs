@@ -13,8 +13,10 @@
 //! ```
 //!
 //! The show folder needs a `manifest.json` (the `cuelight-manifest` tool of
-//! `cuelight-loader` writes it): a browser cannot list a directory. Its
-//! `test-driver.json`, when there is one, starts playing right away.
+//! `cuelight-loader` writes it): a browser cannot list a directory. A
+//! packed show (`shows/beacon.cuelight`) needs nothing: it is one fetch,
+//! unpacked here. Either way its `test-driver.json`, when there is one,
+//! starts playing right away.
 //!
 //! The page sizes the canvas with CSS; the player keeps the canvas's pixel
 //! size in step with it and fits the show inside. Frames follow
@@ -80,9 +82,14 @@ async fn fetch(url: &str) -> Result<Vec<u8>, JsValue> {
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
-/// Fetch the show folder at `base` (ending in `/`): its manifest, then the
-/// files it lists, all at once.
+/// Fetch a show: a packed `.cuelight` file, unpacked here, or the folder
+/// at `base` (ending in `/`): its manifest, then the files it lists, all
+/// at once.
 async fn fetch_show(base: &str) -> Result<BTreeMap<String, Vec<u8>>, JsValue> {
+    if base.ends_with(".cuelight") {
+        let bytes = fetch(base).await?;
+        return cuelight_loader::unpack(&bytes).map_err(|e| error(format!("{base}: {e}")));
+    }
     let manifest_url = format!("{base}{MANIFEST_FILE}");
     let manifest = String::from_utf8(fetch(&manifest_url).await?)
         .map_err(|e| e.to_string())
@@ -290,7 +297,7 @@ impl CuelightPlayer {
             ));
         }
 
-        let base = if url.is_empty() || url.ends_with('/') {
+        let base = if url.is_empty() || url.ends_with('/') || url.ends_with(".cuelight") {
             url
         } else {
             format!("{url}/")
@@ -319,23 +326,16 @@ impl CuelightPlayer {
             }
         };
         if let Some(audio) = &mut audio {
-            for path in &loaded.sounds {
-                let Some(bytes) = files.get(path) else {
-                    continue;
-                };
-                let name = path
-                    .rsplit('/')
-                    .next()
-                    .and_then(|file| file.rsplit_once('.'))
-                    .map_or(path.as_str(), |(stem, _)| stem);
-                match audio.decode(name, bytes).await {
+            for file in &loaded.sounds {
+                match audio.decode(&file.name, &file.bytes).await {
                     Ok(duration) => {
-                        if let Err(e) = engine.set_sound(name, duration) {
-                            warnings.push(format!("sound {path:?}: {e}"));
+                        if let Err(e) = engine.set_sound(&file.name, duration) {
+                            warnings.push(format!("sound {:?}: {e}", file.name));
                         }
                     }
                     Err(e) => warnings.push(format!(
-                        "sound {path:?} could not be decoded: {}",
+                        "sound {:?} could not be decoded: {}",
+                        file.name,
                         js_error_text(&e)
                     )),
                 }

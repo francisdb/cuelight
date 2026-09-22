@@ -72,12 +72,23 @@ pub struct LoadedFiles {
     pub images: Vec<String>,
     pub fonts: Vec<String>,
     pub vectors: Vec<String>,
-    /// Sound files in `assets/sounds/` (their paths in `files`), for the
-    /// host to decode and register; see [`Loaded::sounds`](crate::Loaded::sounds).
-    pub sounds: Vec<String>,
+    /// Sound files from `assets/sounds/`, for the host to decode and
+    /// register; see [`Loaded::sounds`](crate::Loaded::sounds).
+    pub sounds: Vec<SoundFile>,
     /// Asset files left alone because support for their format is not
     /// compiled in.
     pub skipped: Vec<String>,
+}
+
+/// A sound file of a show, undecoded: the engine registers it by
+/// `name` with the duration the host's audio backend finds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SoundFile {
+    /// The file's stem, the name audio layers use.
+    pub name: String,
+    /// Lowercase file extension, picking the decoder.
+    pub extension: String,
+    pub bytes: Vec<u8>,
 }
 
 /// Load a show folder held in memory into `engine`: `files` maps paths
@@ -162,7 +173,11 @@ pub fn load_from_memory(
                 loaded.fonts.push(stem.to_owned());
             }
             "assets/sounds" if SOUND_EXTENSIONS.contains(&extension.as_str()) => {
-                loaded.sounds.push(path.clone());
+                loaded.sounds.push(SoundFile {
+                    name: stem.to_owned(),
+                    extension,
+                    bytes: bytes.clone(),
+                });
             }
             _ => {}
         }
