@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, DigitDisplay, Layer, LayerKind, Output, Pass, Property, Retrigger,
-    Scaling, Shape, Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, Blend, DigitDisplay, Layer, LayerKind, Output, Pass, Property,
+    Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::path::{self, PathElement};
@@ -1412,15 +1412,23 @@ impl Engine {
                     // Heard, not seen.
                     LayerKind::Audio { .. } => {}
                     LayerKind::Group { children, clip, .. } => {
-                        if let Some(clip) = clip {
+                        // A blended group is composited as one picture.
+                        let mut marker = |shape: ResolvedShape| {
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
-                                shape: ResolvedShape::ClipBegin {
-                                    shape: Box::new(resolve_shape(clip, x, y, scale, None)),
-                                },
+                                shape,
                                 color: [0; 4],
                                 opacity,
+                                blend: Blend::Normal,
                                 transform,
+                            });
+                        };
+                        if layer.blend != Blend::Normal {
+                            marker(ResolvedShape::BlendBegin { blend: layer.blend });
+                        }
+                        if let Some(clip) = clip {
+                            marker(ResolvedShape::ClipBegin {
+                                shape: Box::new(resolve_shape(clip, x, y, scale, None)),
                             });
                         }
                         self.walk(root, children, path, m, opacity, out)?;
@@ -1430,6 +1438,17 @@ impl Engine {
                                 shape: ResolvedShape::ClipEnd,
                                 color: [0; 4],
                                 opacity,
+                                blend: Blend::Normal,
+                                transform,
+                            });
+                        }
+                        if layer.blend != Blend::Normal {
+                            out.push(ResolvedLayer {
+                                name: layer.name.clone(),
+                                shape: ResolvedShape::BlendEnd,
+                                color: [0; 4],
+                                opacity,
+                                blend: Blend::Normal,
                                 transform,
                             });
                         }
@@ -1454,6 +1473,7 @@ impl Engine {
                             shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
                             opacity,
+                            blend: layer.blend,
                             transform,
                         });
                     }
@@ -1475,6 +1495,7 @@ impl Engine {
                                     },
                                     color: item.fill.unwrap_or([0; 4]),
                                     opacity,
+                                    blend: layer.blend,
                                     transform,
                                 });
                             }
@@ -1507,6 +1528,7 @@ impl Engine {
                                 },
                                 color: [255, 255, 255, 255],
                                 opacity,
+                                blend: layer.blend,
                                 transform,
                             });
                         }
@@ -1545,6 +1567,7 @@ impl Engine {
                                         shape: ResolvedShape::Polygon { points },
                                         color,
                                         opacity,
+                                        blend: layer.blend,
                                         transform,
                                     });
                                 }
@@ -1572,6 +1595,7 @@ impl Engine {
                                     },
                                     color: [255, 255, 255, 255],
                                     opacity,
+                                    blend: layer.blend,
                                     transform,
                                 });
                             }
@@ -1604,6 +1628,7 @@ impl Engine {
                                     },
                                     color: style.map_or([255; 4], |s| rgba(&s.color)),
                                     opacity,
+                                    blend: layer.blend,
                                     transform,
                                 });
                             }
@@ -1982,6 +2007,9 @@ pub struct ResolvedLayer {
     pub color: [u8; 4],
     /// Effective opacity in [0, 1] (tree-multiplied).
     pub opacity: f64,
+    /// How the item combines with what was painted before it. Markers
+    /// (clips, blend groups) carry `Normal`.
+    pub blend: Blend,
     /// Applied to the shape's coordinates to place it on the canvas. The
     /// identity for anything only translated and uniformly scaled, which is
     /// then already in canvas coordinates; a rotation or an uneven scale
@@ -2012,6 +2040,14 @@ pub enum ResolvedShape {
     },
     /// End the innermost clip.
     ClipEnd,
+    /// Start a group that is composited as one picture with `blend`, until
+    /// the matching [`ResolvedShape::BlendEnd`]. Nests with clips: a
+    /// clipped blended group opens the blend first.
+    BlendBegin {
+        blend: Blend,
+    },
+    /// End the innermost blend group.
+    BlendEnd,
     /// A filled polygon (a segment of a segment display), closed
     /// implicitly.
     Polygon {

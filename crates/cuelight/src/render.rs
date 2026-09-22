@@ -10,13 +10,15 @@
 
 use crate::engine::{Engine, ResolvedShape};
 use crate::lru::ByteLru;
-use crate::model::{parse_color, DotShape, OutputMode, Pass, Scaling};
+use crate::model::{parse_color, Blend, DotShape, OutputMode, Pass, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use crate::path::PathElement;
 use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
-use vello::peniko::{Blob, Color, Extend, Fill, ImageAlphaType, ImageBrush, ImageFormat, Mix};
+use vello::peniko::{
+    BlendMode, Blob, Color, Compose, Extend, Fill, ImageAlphaType, ImageBrush, ImageFormat, Mix,
+};
 use vello::wgpu;
 
 #[derive(Debug, thiserror::Error)]
@@ -191,12 +193,26 @@ pub fn build_vello_scene(
 ) -> Result<vello::Scene, RenderError> {
     let mut show = vello::Scene::new();
     show.draw_image(&ImageBrush::new(images.keepalive()), Affine::IDENTITY);
+    let canvas = engine.show().map_or(Rect::ZERO, |s| {
+        Rect::new(0.0, 0.0, f64::from(s.size[0]), f64::from(s.size[1]))
+    });
     for layer in engine.resolved_layers()? {
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
         let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
         let placement = Affine::new(layer.transform.0);
+        // A blended item is drawn into a layer of its own, as big as the
+        // item, that is composited with the blend on the way out.
+        let blended = blend_mode(layer.blend).map(|mode| {
+            let bounds = bounds(&layer.shape).map_or(canvas, |b| placement.transform_rect_bbox(b));
+            show.push_layer(Fill::NonZero, mode, 1.0, Affine::IDENTITY, &bounds);
+        });
         match layer.shape {
+            ResolvedShape::BlendBegin { blend } => {
+                let mode = blend_mode(blend).unwrap_or(Mix::Normal.into());
+                show.push_layer(Fill::NonZero, mode, 1.0, Affine::IDENTITY, &canvas);
+            }
+            ResolvedShape::BlendEnd => show.pop_layer(),
             ResolvedShape::Rect {
                 x,
                 y,
@@ -333,6 +349,9 @@ pub fn build_vello_scene(
                 show.draw_image(brush.as_ref(), transform);
             }
         }
+        if blended.is_some() {
+            show.pop_layer();
+        }
     }
     Ok(show)
 }
@@ -351,6 +370,62 @@ fn bez_path(elements: &[PathElement]) -> BezPath {
         }
     }
     path
+}
+
+/// vello's blend for a layer's `blend`; `None` for plain painting, which
+/// needs no layer.
+fn blend_mode(blend: Blend) -> Option<BlendMode> {
+    Some(match blend {
+        Blend::Normal => return None,
+        Blend::Add => Compose::Plus.into(),
+        Blend::Screen => Mix::Screen.into(),
+        Blend::Multiply => Mix::Multiply.into(),
+    })
+}
+
+/// The rectangle an item paints in, for sizing its blend layer; `None`
+/// where it is not cheap to know.
+fn bounds(shape: &ResolvedShape) -> Option<Rect> {
+    Some(match *shape {
+        ResolvedShape::Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+        | ResolvedShape::Image {
+            x,
+            y,
+            width,
+            height,
+            ..
+        }
+        | ResolvedShape::Bitmap {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => Rect::new(x, y, x + width, y + height),
+        ResolvedShape::Circle { cx, cy, radius } => {
+            Rect::new(cx - radius, cy - radius, cx + radius, cy + radius)
+        }
+        ResolvedShape::Polygon { ref points } => {
+            let (&[x0, y0], rest) = points.split_first()?;
+            rest.iter().fold(Rect::new(x0, y0, x0, y0), |r, &[x, y]| {
+                r.union_pt(vello::kurbo::Point::new(x, y))
+            })
+        }
+        ResolvedShape::Path {
+            ref elements,
+            stroke,
+        } => {
+            let [x, y, w, h] = crate::path::bounds(elements)?;
+            let half = stroke.map_or(0.0, |(_, width)| width / 2.0);
+            Rect::new(x - half, y - half, x + w + half, y + h + half)
+        }
+        _ => return None,
+    })
 }
 
 /// Where a `show` sized canvas lands in a `target` sized surface: uniform

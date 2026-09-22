@@ -43,9 +43,9 @@ pub use engine::{
 };
 pub use font::BitmapFont;
 pub use model::{
-    Align, Binding, Border, DigitDisplay, Direction, DotShape, Dots, FontStyle, Justify, Key,
-    Layer, LayerKind, NumberFormat, Output, OutputMode, Pass, Property, Retrigger, Scaling, Scene,
-    SegmentStyle, Shape, Sheet, Show, Stroke, Timeline, Track, Transition, Triggers, FORMAT,
+    Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, FontStyle, Justify,
+    Key, Layer, LayerKind, NumberFormat, Output, OutputMode, Pass, Property, Retrigger, Scaling,
+    Scene, SegmentStyle, Shape, Sheet, Show, Stroke, Timeline, Track, Transition, Triggers, FORMAT,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use path::{PathData, PathElement};

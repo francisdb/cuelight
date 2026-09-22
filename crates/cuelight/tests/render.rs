@@ -203,3 +203,51 @@ fn a_rotated_group_turns_its_clip_and_children() {
     assert_eq!(pixel(&frame, 9, 11), [0, 0, 0, 255]);
     assert_eq!(pixel(&frame, 7, 5), [0, 0, 0, 255]);
 }
+
+#[test]
+fn blend_modes_combine_with_what_is_beneath() {
+    // A mid gray base with three gray squares over it, one per blend.
+    let show = r##"{ "name": "blend", "size": [24, 8], "background": "#808080", "layers": [
+        { "name": "add", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#404040", "blend": "add" },
+        { "name": "screen", "type": "shape", "shape": { "rect": [8, 0, 8, 8] }, "fill": "#808080", "blend": "screen" },
+        { "name": "multiply", "type": "shape", "shape": { "rect": [16, 0, 8, 8] }, "fill": "#808080", "blend": "multiply" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    let near = |[r, g, b, a]: [u8; 4], want: u8| {
+        assert!(
+            a == 255 && [r, g, b].iter().all(|c| c.abs_diff(want) <= 2),
+            "{:?} vs {want}",
+            [r, g, b]
+        );
+    };
+    // 0.5 + 0.25
+    near(pixel(&frame, 4, 4), 192);
+    // 1 - 0.5 * 0.5
+    near(pixel(&frame, 12, 4), 191);
+    // 0.5 * 0.5
+    near(pixel(&frame, 20, 4), 64);
+}
+
+#[test]
+fn a_blended_group_is_composited_as_one_picture() {
+    // Two overlapping white shapes in an additive group: inside the group
+    // they paint over each other (one white), and the group adds once.
+    let show = r##"{ "name": "group", "size": [8, 8], "background": "#404040", "layers": [
+        { "name": "glow", "type": "group", "blend": "add", "children": [
+            { "name": "a", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#404040" },
+            { "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#404040" }
+        ] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    let [r, g, b, _] = pixel(&frame, 4, 4);
+    // 0.25 + 0.25, not 0.25 + 0.25 + 0.25.
+    assert!(
+        [r, g, b].iter().all(|c| c.abs_diff(128) <= 2),
+        "{:?}",
+        [r, g, b]
+    );
+}
