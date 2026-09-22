@@ -311,6 +311,9 @@ struct Sounding {
     id: u64,
     /// Engine time it was triggered at; the delay counts from here.
     started: f64,
+    /// What it is playing. A video layer's name can be bound, and
+    /// pointing it at another clip starts that one from the top.
+    playing: String,
 }
 
 /// What the engine knows of a video: how long it runs and how big it is.
@@ -416,6 +419,9 @@ pub struct Engine {
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
     debounced: HashMap<TransitionSite, Settling>,
+    /// What each video layer last played, so pointing one somewhere new
+    /// can be told from one that simply finished.
+    shown: HashMap<(Root, Vec<usize>), String>,
     /// Every reel row, found once at load, and where each of its cells is
     /// on its ring: one record per cell, in cell order.
     reel_sites: Vec<(Root, Vec<usize>)>,
@@ -509,6 +515,7 @@ impl Engine {
         self.debounced.clear();
         self.reels.clear();
         self.spinning.clear();
+        self.shown.clear();
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
         self.events.clear();
@@ -701,10 +708,16 @@ impl Engine {
 
     /// How long the content of a playhead runs, whichever registry it
     /// comes from; `None` while the host has not registered it.
-    fn media_duration(&self, media: &crate::model::Media<'_>) -> Option<f64> {
+    fn media_duration(&self, media: &crate::model::Media<'_>, playing: &str) -> Option<f64> {
+        // What it is playing, which a bound video name may have changed.
+        let name = if playing.is_empty() {
+            media.name
+        } else {
+            playing
+        };
         match media.kind {
-            MediaKind::Sound => self.sounds.get(media.name).copied(),
-            MediaKind::Video => self.videos.get(media.name).map(|video| video.duration),
+            MediaKind::Sound => self.sounds.get(name).copied(),
+            MediaKind::Video => self.videos.get(name).map(|video| video.duration),
         }
     }
 
@@ -728,13 +741,14 @@ impl Engine {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if self.is_visible(root, layer, path) {
-                if let LayerKind::Video { video, .. } = &layer.kind {
+                if let LayerKind::Video { .. } = &layer.kind {
                     let media = layer.kind.media();
                     let plays = self
                         .sounding
                         .iter()
                         .filter(|s| s.root == root && s.layer_path == *path);
                     for play in plays {
+                        let video = &play.playing;
                         let (Some(media), Some(info)) = (media, self.videos.get(video)) else {
                             continue;
                         };
@@ -818,6 +832,69 @@ impl Engine {
                     self.play(root, path);
                 }
             }
+        }
+    }
+
+    /// The video layers that are pointed at a clip they are not showing:
+    /// idle layers whose bound name has changed since they last played.
+    fn repointed(&self) -> Vec<(Root, Vec<usize>)> {
+        let Some(show) = &self.show else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let roots = std::iter::once(Root::Show).chain(self.active_scene.map(Root::Scene));
+        for root in roots {
+            let Some(layers) = root_layers(show, root) else {
+                continue;
+            };
+            let mut paths = Vec::new();
+            fn walk(layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
+                for (i, layer) in layers.iter().enumerate() {
+                    path.push(i);
+                    if matches!(layer.kind, LayerKind::Video { .. }) {
+                        out.push(path.clone());
+                    }
+                    walk(layer.children(), path, out);
+                    path.pop();
+                }
+            }
+            walk(layers, &mut Vec::new(), &mut paths);
+            for path in paths {
+                let idle = !self
+                    .sounding
+                    .iter()
+                    .any(|play| play.root == root && play.layer_path == path);
+                if !idle {
+                    continue;
+                }
+                let now = self.media_name(root, &path);
+                // Nothing to show, or the clip it last finished: it stays
+                // as it is until it is pointed somewhere new.
+                let shown = self.shown.get(&(root, path.clone()));
+                if !now.is_empty() && shown.is_some_and(|last| *last != now) {
+                    out.push((root, path));
+                }
+            }
+        }
+        out
+    }
+
+    /// What the layer at `path` is set to play now: the asset its
+    /// playhead names, after any binding.
+    fn media_name(&self, root: Root, path: &[usize]) -> String {
+        let layer = self
+            .show
+            .as_ref()
+            .and_then(|show| root_layers(show, root))
+            .and_then(|layers| layer_at(layers, path));
+        let Some(layer) = layer else {
+            return String::new();
+        };
+        match &layer.kind {
+            LayerKind::Video { .. } => self.text(root, layer, path, Property::Video),
+            other => other
+                .media()
+                .map_or_else(String::new, |media| media.name.to_owned()),
         }
     }
 
@@ -905,11 +982,14 @@ impl Engine {
             }
         }
         self.next_voice += 1;
+        let playing = self.media_name(root, &path);
+        self.shown.insert((root, path.clone()), playing.clone());
         self.sounding.push(Sounding {
             root,
             layer_path: path,
             id: self.next_voice,
             started: self.time,
+            playing,
         });
     }
 
@@ -980,6 +1060,28 @@ impl Engine {
         self.settle_debounces(dt);
         self.follow_transitions();
         self.follow_reels();
+        // A layer pointed at another clip shows that one, from the top,
+        // whether or not it was showing anything before: that is what an
+        // event asking for a clip means.
+        let pointed: Vec<(usize, String)> = self
+            .sounding
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let now = self.media_name(s.root, &s.layer_path);
+                (now != s.playing).then_some((i, now))
+            })
+            .collect();
+        for (i, now) in pointed {
+            let play = &mut self.sounding[i];
+            play.playing = now;
+            play.started = self.time;
+            self.next_voice += 1;
+            play.id = self.next_voice;
+        }
+        for (root, path) in self.repointed() {
+            self.play(root, path);
+        }
         self.time += dt;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
@@ -1019,7 +1121,7 @@ impl Engine {
                 continue;
             }
             // Content the host has not registered yet has no end.
-            let Some(duration) = self.media_duration(&media) else {
+            let Some(duration) = self.media_duration(&media, &s.playing) else {
                 continue;
             };
             let plays = media.repeat.unwrap_or(1.0).max(0.0);
@@ -1558,6 +1660,9 @@ impl Engine {
                 }
                 _ => None,
             },
+            // Any name will do: a video nobody registered simply has no
+            // frames, as an unregistered image has no pixels.
+            Property::Video => Some(Value::Text(value.to_text())),
             // Only declared font styles apply.
             Property::Font => match value {
                 Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {
@@ -1596,9 +1701,10 @@ impl Engine {
                 let [w, h] = size.unwrap_or([data.width, data.height]);
                 [0.0, 0.0, w, h]
             }
-            LayerKind::Video { video, size, .. } => {
+            LayerKind::Video { size, .. } => {
                 // Its own size until a frame says otherwise, so a layer has
                 // a box before the host has decoded anything.
+                let video = &self.media_name(root, path);
                 let info = self.videos.get(video);
                 let natural = info.map(|info| [info.width, info.height]).or_else(|| {
                     let frame = self.images.get(video)?;
@@ -2143,10 +2249,17 @@ impl Engine {
                             }
                         }
                     }
-                    LayerKind::Video { video, size, .. } => {
-                        // The frame the host last handed over, if any: a
-                        // video layer draws nothing until one arrives.
-                        if let Some(frame) = self.images.get(video) {
+                    LayerKind::Video { size, .. } => {
+                        // The frame the host last handed over for whatever
+                        // is playing. Nothing playing draws nothing, so
+                        // what is behind shows through when a clip ends,
+                        // and nothing is drawn before a frame arrives.
+                        let video = &self.media_name(root, path);
+                        let playing = self
+                            .sounding
+                            .iter()
+                            .any(|play| play.root == root && play.layer_path == *path);
+                        if let Some(frame) = playing.then(|| self.images.get(video)).flatten() {
                             let natural = self.videos.get(video).map_or(
                                 [f64::from(frame.width), f64::from(frame.height)],
                                 |info| [info.width, info.height],
@@ -2155,7 +2268,7 @@ impl Engine {
                             out.push(ResolvedLayer {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
-                                    image: video.clone(),
+                                    image: video.to_owned(),
                                     source: None,
                                     x,
                                     y,

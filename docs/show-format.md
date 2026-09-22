@@ -461,6 +461,24 @@ rather than overlapping it, and there is no gain or bus. `size` scales
 the picture as it does on an image; without it the video's own size is
 used.
 
+`video` is a bindable property, so one layer can show whatever it is
+pointed at rather than needing a layer per clip: bind it to a
+variable, and setting that variable plays another clip from the top, at
+its own size and for its own length. This holds whether or not the
+layer is playing: naming a clip is the whole of what a host has to say,
+so a layer that has run out starts the next one it is pointed at. A
+name nothing registered simply shows nothing, as an unregistered image
+does.
+
+A video layer draws only while a play is running. Once a clip ends it
+shows nothing, rather than holding its last frame, so whatever is behind
+it comes through; a layer that should stay visible loops.
+
+```json
+{ "name": "screen", "type": "video", "video": "attract", "autoplay": true,
+  "bindings": [ { "property": "video", "variable": "clip" } ] }
+```
+
 **The engine decodes nothing.** It knows a video only by what
 `Engine::set_video(name, duration, size)` tells it: the length, so it can
 loop, repeat and end a play, and the size, so the layer has a box before
@@ -532,7 +550,7 @@ A binding wires a layer property to a variable, evaluated every frame:
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`, `scale_x`, `scale_y`, `rotation`, `frame`
-for sprite sheet images, and `gain` for groups and audio layers. `visible` can be bound but not keyframed.
+for sprite sheet images, and `gain` for groups and audio layers. `visible` and a video layer's `video` can be bound but not keyframed.
 
 A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted

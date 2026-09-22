@@ -896,6 +896,10 @@ pub enum Property {
     Text,
     /// The font style of a text layer; bindable, not animatable.
     Font,
+    /// The video a video layer plays; bindable, not animatable. Binding
+    /// it lets one layer show whatever it is pointed at, rather than
+    /// needing a layer per clip.
+    Video,
     /// Sprite sheet cell of an image layer: rounded down and clamped to
     /// the sheet, so a linear key from 0 to n steps through n cells.
     Frame,
@@ -915,7 +919,7 @@ impl Property {
     pub fn is_numeric(self) -> bool {
         !matches!(
             self,
-            Property::Text | Property::Font | Property::Visible | Property::Tint
+            Property::Text | Property::Font | Property::Visible | Property::Tint | Property::Video
         )
     }
 }
@@ -1070,6 +1074,7 @@ impl Layer {
                 Value::Text(text.clone())
             }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
+            (Property::Video, LayerKind::Video { video, .. }) => Value::Text(video.clone()),
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
             (Property::Tint, LayerKind::Image { tint, .. }) => {
                 Value::Text(tint.clone().unwrap_or_default())
@@ -1078,7 +1083,12 @@ impl Layer {
                 Value::Number(*gain)
             }
             (
-                Property::Text | Property::Font | Property::Frame | Property::Gain | Property::Tint,
+                Property::Text
+                | Property::Font
+                | Property::Frame
+                | Property::Gain
+                | Property::Tint
+                | Property::Video,
                 _,
             ) => return None,
         })

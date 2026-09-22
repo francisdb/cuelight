@@ -1062,6 +1062,11 @@
           "const": "font"
         },
         {
+          "description": "The video a video layer plays; bindable, not animatable. Binding\nit lets one layer show whatever it is pointed at, rather than\nneeding a layer per clip.",
+          "type": "string",
+          "const": "video"
+        },
+        {
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"
