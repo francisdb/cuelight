@@ -963,6 +963,14 @@ impl Show {
     /// its own layers or any scene's. A host that opens a sound device
     /// can skip doing so entirely for a show that is silent by
     /// construction.
+    ///
+    /// This is exactly the set of layers
+    /// [`Engine::voices`](crate::Engine::voices) reports, which is what a
+    /// sound device is fed. A video layer is not one of them: the engine
+    /// reports a video's playhead and the host draws its frames, and
+    /// nothing in this engine carries a video's own soundtrack. Should
+    /// that ever change, this has to count video layers too, or a host
+    /// would leave the device shut on a show that ought to be heard.
     pub fn has_sound(&self) -> bool {
         fn any(layers: &[Layer]) -> bool {
             layers
