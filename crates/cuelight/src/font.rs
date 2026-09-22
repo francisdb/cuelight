@@ -346,6 +346,33 @@ impl StyledFont {
     /// within the container's width. Returns the bitmap and its top-left
     /// offset from the container origin (glyphs may overhang the
     /// container).
+    /// How high the ink of `characters` reaches and how far it falls,
+    /// measured down from the top of the line they are laid out in, with
+    /// the border that is drawn around them. `None` when the font has
+    /// none of them.
+    ///
+    /// The line reserves room for descenders whether or not the
+    /// characters use any, so digits and capitals sit above the middle of
+    /// it. What is drawn is the ink, so a display that wants its
+    /// characters centred wants this rather than the line.
+    pub fn ink(&self, characters: &[char]) -> Option<(f64, f64)> {
+        let border = f64::from(self.extra_advance / 2);
+        let (mut top, mut bottom) = (f64::MAX, f64::MIN);
+        for glyph in characters.iter().filter_map(|c| self.glyph(*c)) {
+            if glyph.width == 0 || glyph.height == 0 {
+                continue;
+            }
+            top = top.min(f64::from(glyph.yoffset) - border);
+            bottom = bottom.max(f64::from(glyph.yoffset + glyph.height) + border);
+        }
+        (top <= bottom).then_some((top, bottom))
+    }
+
+    /// The height of one line, what the block of a single character is.
+    pub fn line(&self) -> f64 {
+        f64::from(self.font.line_height)
+    }
+
     pub fn rasterize(
         &self,
         text: &str,

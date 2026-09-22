@@ -1629,6 +1629,55 @@ impl Engine {
         }
     }
 
+    /// How far down a character has to move for the ink of `characters`
+    /// to sit in the middle of the box it is laid out in, rather than the
+    /// line they share. 0 when the font cannot say.
+    ///
+    /// A line reserves room for descenders whether the characters use any
+    /// or not, so a row of digits drawn in it sits high and leaves a gap
+    /// beneath. Measuring the whole ring at once, rather than each symbol
+    /// as it comes, keeps the row still while it rolls: a ring that holds
+    /// a descender reserves it, one of digits does not.
+    fn ink_centring(&self, style_name: &str, characters: &[char]) -> f64 {
+        let Some(style) = self
+            .show
+            .as_ref()
+            .and_then(|show| show.fonts.get(style_name))
+        else {
+            return 0.0;
+        };
+        #[cfg(feature = "outline-fonts")]
+        if let (Some(font), Some(size)) = (self.outline_fonts.get(&style.file), style.size) {
+            if let Some((top, bottom, line)) = crate::outline::ink(font, size, characters) {
+                return (line - (bottom - top)) / 2.0 - top;
+            }
+        }
+        let Some(registered) = self.fonts.get(&style.file) else {
+            return 0.0;
+        };
+        let cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let styled = cache.styled.get(style_name).cloned();
+        drop(cache);
+        let styled = styled.unwrap_or_else(|| {
+            // Colors were validated at load.
+            let rgb = |c: &str| {
+                let [r, g, b, _] = parse_color(c).unwrap_or([255; 4]);
+                [r, g, b]
+            };
+            let border = style.border.as_ref().map(|b| (rgb(&b.color), b.width));
+            Arc::new(StyledFont::new(
+                &registered.font,
+                &registered.pages,
+                rgb(&style.color),
+                border,
+            ))
+        });
+        match styled.ink(characters) {
+            Some((top, bottom)) => (styled.line() - (bottom - top)) / 2.0 - top,
+            None => 0.0,
+        }
+    }
+
     /// Add a reel row to the draw list: each cell a window on its ring,
     /// showing the character it stands on and the one coming after it,
     /// slid by how far between the two it is. A cell whose character is
@@ -1658,6 +1707,13 @@ impl Engine {
         let cell_h = character_h * f64::from(window);
         // Where the character a cell stands on sits in its window.
         let middle = (f64::from(window) - 1.0) / 2.0;
+        // A cell is a window its symbol should sit in the middle of, so
+        // the characters are centred on their ink, as artwork is on its
+        // own box, rather than on the line they are laid out in.
+        let centring = match (&reel.cells, &reel.font) {
+            (None, Some(font)) => self.ink_centring(font, &ring) * scale,
+            _ => 0.0,
+        };
         for (i, character) in cells(text, count, justify).into_iter().enumerate() {
             if character.is_none_or(|c| !ring.contains(&c)) {
                 continue;
@@ -1689,7 +1745,7 @@ impl Engine {
                 let slide = at - position + middle;
                 let on = at.rem_euclid(ring.len() as f64) as usize;
                 let placed = Placed {
-                    origin: [cell_x, y + slide * character_h],
+                    origin: [cell_x, y + slide * character_h + centring],
                     ..*placed
                 };
                 match (&reel.cells, &reel.font) {
