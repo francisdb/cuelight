@@ -330,7 +330,34 @@ pub fn build_vello_scene(
                         height / f64::from(pixels.height),
                     );
                 let brush = ImageBrush::new(pixels).with_alpha(layer.opacity as f32);
+                // A tint multiplies the image where it is opaque, so the
+                // image goes into a layer of its own and the color is
+                // composited into it.
+                let tint = (layer.color != [255; 4]).then(|| {
+                    let rect = Rect::new(x, y, x + width, y + height);
+                    show.push_layer(Fill::NonZero, Mix::Normal, 1.0, placement, &rect);
+                    rect
+                });
                 show.draw_image(brush.as_ref(), transform);
+                if let Some(rect) = tint {
+                    show.push_layer(
+                        Fill::NonZero,
+                        BlendMode::new(Mix::Multiply, Compose::SrcIn),
+                        1.0,
+                        placement,
+                        &rect,
+                    );
+                    let [r, g, b, a] = layer.color;
+                    show.fill(
+                        Fill::NonZero,
+                        placement,
+                        Color::from_rgba8(r, g, b, a),
+                        None,
+                        &rect,
+                    );
+                    show.pop_layer();
+                    show.pop_layer();
+                }
             }
             ResolvedShape::Bitmap {
                 image,

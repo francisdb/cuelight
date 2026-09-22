@@ -627,6 +627,13 @@
               "maxItems": 2,
               "minItems": 2
             },
+            "tint": {
+              "description": "Color the image is multiplied by, `#RRGGBB` or `#RRGGBBAA`:\nwhite leaves it alone, a color stains it (a lamp behind white\nart, a worn look, one sprite in several colors).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "const": "image"
