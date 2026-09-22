@@ -204,7 +204,8 @@ group children behind whatever follows the group. Every layer has:
   show). Without an anchor, images put their top-left corner and shapes
   their local origin at x/y. Groups cannot be anchored.
 - `visible` (default true): invisible layers (and their subtrees) resolve
-  to nothing.
+  to nothing and are not heard. Bindable (on when the binding's number is
+  not 0), not keyframed.
 - `bindings`, `timelines`: see below.
 
 Layer kinds:
@@ -363,7 +364,7 @@ A binding wires a layer property to a variable, evaluated every frame:
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`, `frame` for sprite sheet images, and `gain`
-for groups and audio layers.
+for groups and audio layers. `visible` can be bound but not keyframed.
 
 A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
@@ -388,9 +389,27 @@ the active player's score:
 { "property": "font", "variable": "player", "map": { "2": "score_active" }, "default": "score_inactive" }
 ```
 
-Font bindings may only map to declared font styles; `text` and `font`
-can be bound but not keyframed. Binding or keyframing a property the
-layer's kind does not have (`font` on a shape) is rejected at load.
+Font bindings may only map to declared font styles; `text`, `font` and
+`visible` can be bound but not keyframed. Binding or keyframing a property
+the layer's kind does not have (`font` on a shape) is rejected at load.
+
+Two more knobs sit on a binding, for inputs that are levels or that
+flicker:
+
+- `threshold`: the value becomes 1 at or above this level and 0 below,
+  before `scale` and `offset`. A lamp whose brightness arrives as a float
+  lights at a half; with a `transition` it warms up from there. On a
+  `visible` binding it is the level the layer shows from.
+- `debounce`: seconds a new value has to hold before it reaches the
+  property. Shorter changes (a strobing lamp, a switch that bounces) never
+  show. At load and on entering a scene the current value applies at once.
+
+The order is: `debounce`, then `map`, `threshold`, `scale` and `offset`,
+then `transition`.
+
+```json
+{ "property": "visible", "variable": "lamp_41", "threshold": 0.5, "debounce": 0.05 }
+```
 
 ### Transitions
 

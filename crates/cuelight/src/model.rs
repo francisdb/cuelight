@@ -597,12 +597,15 @@ pub enum Property {
     Frame,
     /// Loudness of an audio layer or a group's subtree.
     Gain,
+    /// Whether the layer (and its subtree) shows and sounds; bindable,
+    /// not animatable. Bound, it is on when the binding's number is not 0.
+    Visible,
 }
 
 impl Property {
     /// Whether the property holds a number; only those can be keyframed.
     pub fn is_numeric(self) -> bool {
-        !matches!(self, Property::Text | Property::Font)
+        !matches!(self, Property::Text | Property::Font | Property::Visible)
     }
 }
 
@@ -655,6 +658,7 @@ impl Layer {
             (Property::X, _) => Value::Number(self.x),
             (Property::Y, _) => Value::Number(self.y),
             (Property::Opacity, _) => Value::Number(self.opacity),
+            (Property::Visible, _) => Value::Bool(self.visible),
             (Property::Scale, _) => Value::Number(self.scale),
             (Property::Text, LayerKind::Text { text, .. } | LayerKind::Digits { text, .. }) => {
                 Value::Text(text.clone())
@@ -679,7 +683,8 @@ impl Layer {
 /// With `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)
 /// is looked up first and the mapped value, or `default` when it is not
 /// listed, takes the variable's place. Without either, the binding does
-/// not apply and the property keeps its base value.
+/// not apply and the property keeps its base value. The order is:
+/// `debounce`, `map`, `threshold`, `scale` and `offset`, `transition`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Binding {
@@ -698,6 +703,17 @@ pub struct Binding {
     /// Value for variable values `map` does not list.
     #[serde(default)]
     pub default: Option<Value>,
+    /// A level: the value becomes 1 at or above it and 0 below, before
+    /// `scale` and `offset` apply. A lamp that lights when a brightness
+    /// passes a half, a `visible` that follows a level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    /// Seconds a new value has to hold before it reaches the property;
+    /// changes shorter than that (a strobing lamp, a bouncing switch)
+    /// never show. When a show loads or a scene is entered the value
+    /// applies at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debounce: Option<f64>,
     /// Ease toward a new value instead of jumping to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
