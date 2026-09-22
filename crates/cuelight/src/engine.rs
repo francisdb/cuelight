@@ -63,8 +63,19 @@ impl ImageData {
     }
 }
 
-/// A binding that has a transition: layer tree, layer path, binding index.
+/// A binding with a transition or a debounce: layer tree, layer path,
+/// binding index.
 type TransitionSite = (Root, Vec<usize>, usize);
+
+/// A debounced binding's input: the value that reached the property, and
+/// the newer one waiting to have held long enough.
+#[derive(Debug, Clone)]
+struct Settling {
+    settled: Value,
+    candidate: Value,
+    /// Engine time the candidate first appeared.
+    since: f64,
+}
 
 /// A bound value on its way from `start` to `target` since engine time
 /// `started`. The value in between is computed from this, never stepped,
@@ -278,6 +289,10 @@ pub struct Engine {
     /// The change each of them is making; absent until its first frame,
     /// so a property starts at its value instead of easing in.
     transitions: HashMap<TransitionSite, Change>,
+    /// Every binding with a debounce, found once at load, and what each
+    /// has settled on.
+    debounce_sites: Vec<TransitionSite>,
+    debounced: HashMap<TransitionSite, Settling>,
     active_scene: Option<usize>,
     events: std::collections::VecDeque<Event>,
     load_warnings: Vec<String>,
@@ -359,7 +374,8 @@ impl Engine {
         self.playing.clear();
         self.sounding.clear();
         self.transitions.clear();
-        self.transition_sites = transition_sites(&show);
+        self.debounced.clear();
+        (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.events.clear();
         self.time = 0.0;
         self.active_scene = (!show.scenes.is_empty()).then_some(0);
@@ -717,6 +733,7 @@ impl Engine {
         self.sounding.retain(|s| s.root == Root::Show);
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
+        self.debounced.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
         self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
         self.play_autoplay(Root::Scene(scene));
@@ -727,6 +744,7 @@ impl Engine {
     /// fall back to bindings/base values) and fire their `on_end` trigger,
     /// which is also reported through [`drain_events`](Engine::drain_events).
     pub fn advance_frame(&mut self, dt: f64) {
+        self.settle_debounces(dt);
         self.follow_transitions();
         self.time += dt;
         let Some(show) = &self.show else { return };
@@ -874,7 +892,7 @@ impl Engine {
     ) {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
-            if layer.visible {
+            if self.is_visible(root, layer, path) {
                 match &layer.kind {
                     LayerKind::Group { children, .. } => {
                         let gain = chain * self.number(root, layer, path, Property::Gain).max(0.0);
@@ -962,6 +980,47 @@ impl Engine {
         }
     }
 
+    /// Let every binding with a debounce take in its variable: a new value
+    /// becomes the candidate, and a candidate that will have held for the
+    /// debounce time by the end of this step of `dt` settles, so it shows
+    /// in the frame the hold runs out. A first look settles at once.
+    fn settle_debounces(&mut self, dt: f64) {
+        let Some(show) = &self.show else { return };
+        let mut debounced = std::mem::take(&mut self.debounced);
+        for site in &self.debounce_sites {
+            let (root, path, index) = site;
+            if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
+                continue;
+            }
+            let binding = root_layers(show, *root)
+                .and_then(|layers| layer_at(layers, path))
+                .and_then(|layer| layer.bindings.get(*index));
+            let Some((binding, hold)) = binding.and_then(|b| Some((b, b.debounce?))) else {
+                continue;
+            };
+            let Some(value) = self.variables.get(&binding.variable) else {
+                debounced.remove(site);
+                continue;
+            };
+            let settling = debounced.entry(site.clone()).or_insert_with(|| Settling {
+                settled: value.clone(),
+                candidate: value.clone(),
+                since: self.time,
+            });
+            if settling.candidate != *value {
+                settling.candidate = value.clone();
+                settling.since = self.time;
+            }
+            // Tolerant of a hold that ends a rounding error short.
+            if settling.settled != settling.candidate
+                && self.time + dt - settling.since >= hold - 1e-9
+            {
+                settling.settled = settling.candidate.clone();
+            }
+        }
+        self.debounced = debounced;
+    }
+
     /// Note where every binding with a transition is heading, as of now
     /// (inputs arrive between frames): a first look starts the property at
     /// its value, a new target starts a change from the value reached.
@@ -981,7 +1040,7 @@ impl Engine {
             else {
                 continue;
             };
-            let Some(target) = self.binding_number(binding) else {
+            let Some(target) = self.binding_number(site, binding) else {
                 transitions.remove(site);
                 continue;
             };
@@ -1034,7 +1093,7 @@ impl Engine {
         let bindings = layer.bindings.iter().enumerate();
         for (index, b) in bindings.filter(|(_, b)| b.property == prop) {
             let bound = self.in_transition(root, path, index, b).or_else(|| {
-                self.binding_value(b)
+                self.binding_value(&(root, path.to_vec(), index), b)
                     .and_then(|value| self.convert(b, value))
             });
             if let Some(bound) = bound {
@@ -1075,10 +1134,14 @@ impl Engine {
             .map_or_else(String::new, |v| v.to_text())
     }
 
-    /// The value a binding feeds its property: the variable's, or what
-    /// `map`/`default` turn it into. `None` when it does not apply.
-    fn binding_value(&self, b: &Binding) -> Option<Value> {
-        let value = self.variables.get(&b.variable)?;
+    /// The value a binding at `site` feeds its property: the variable's
+    /// (as debounced), or what `map`/`default` turn it into. `None` when
+    /// it does not apply.
+    fn binding_value(&self, site: &TransitionSite, b: &Binding) -> Option<Value> {
+        let value = match (b.debounce, self.debounced.get(site)) {
+            (Some(_), Some(settling)) => &settling.settled,
+            _ => self.variables.get(&b.variable)?,
+        };
         match &b.map {
             None => Some(value.clone()),
             Some(map) => map.get(&value.to_text()).or(b.default.as_ref()).cloned(),
@@ -1086,16 +1149,17 @@ impl Engine {
     }
 
     /// The number a binding's transition eases toward: its value after
-    /// `map`, `scale` and `offset`. `None` when that is not a number.
-    fn binding_number(&self, b: &Binding) -> Option<f64> {
-        let value = self.binding_value(b)?;
+    /// `map`, `threshold`, `scale` and `offset`. `None` when that is not
+    /// a number.
+    fn binding_number(&self, site: &TransitionSite, b: &Binding) -> Option<f64> {
+        let value = self.binding_value(site, b)?;
         let n = match (b.property, &value) {
             (Property::Font, _) => return None,
             (Property::Text, Value::Number(n)) => *n,
             (Property::Text, _) => return None,
             _ => value.as_number(),
         };
-        Some(n * b.scale + b.offset)
+        Some(scaled(b, n))
     }
 
     /// Turn a bound value into what the binding's property holds. `None`
@@ -1103,9 +1167,10 @@ impl Engine {
     fn convert(&self, b: &Binding, value: Value) -> Option<Value> {
         match b.property {
             Property::Text => Some(Value::Text(match value {
-                Value::Number(n) => b.format.format(n * b.scale + b.offset),
+                Value::Number(n) => b.format.format(scaled(b, n)),
                 other => other.to_text(),
             })),
+            Property::Visible => Some(Value::Bool(scaled(b, value.as_number()) != 0.0)),
             // Only declared font styles apply.
             Property::Font => match value {
                 Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {
@@ -1113,7 +1178,18 @@ impl Engine {
                 }
                 _ => None,
             },
-            _ => Some(Value::Number(value.as_number() * b.scale + b.offset)),
+            _ => Some(Value::Number(scaled(b, value.as_number()))),
+        }
+    }
+
+    /// Whether the layer at `path` shows and sounds: its `visible`, as
+    /// bound.
+    fn is_visible(&self, root: Root, layer: &Layer, path: &[usize]) -> bool {
+        match self.resolve(root, layer, path, Property::Visible) {
+            Some(Value::Bool(on)) => on,
+            Some(Value::Number(n)) => n != 0.0,
+            Some(Value::Text(t)) => !t.is_empty(),
+            None => layer.visible,
         }
     }
 
@@ -1260,7 +1336,7 @@ impl Engine {
     ) -> Result<(), Error> {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
-            if layer.visible {
+            if self.is_visible(root, layer, path) {
                 let x = ox + self.number(root, layer, path, Property::X);
                 let y = oy + self.number(root, layer, path, Property::Y);
                 let opacity =
@@ -1484,21 +1560,41 @@ fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
     }
 }
 
-/// Where the show's bindings with a transition are.
-fn transition_sites(show: &Show) -> Vec<TransitionSite> {
-    fn walk(root: Root, layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<TransitionSite>) {
+/// A binding's number after `threshold`, `scale` and `offset`.
+fn scaled(b: &Binding, n: f64) -> f64 {
+    let n = match b.threshold {
+        Some(level) => {
+            if n >= level {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        None => n,
+    };
+    n * b.scale + b.offset
+}
+
+/// Where the show's bindings with a transition are, and those with a
+/// debounce.
+fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<TransitionSite>) {
+    type Sites = (Vec<TransitionSite>, Vec<TransitionSite>);
+    fn walk(root: Root, layers: &[Layer], path: &mut Vec<usize>, out: &mut Sites) {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             for (index, binding) in layer.bindings.iter().enumerate() {
                 if binding.transition.is_some() {
-                    out.push((root, path.clone(), index));
+                    out.0.push((root, path.clone(), index));
+                }
+                if binding.debounce.is_some() {
+                    out.1.push((root, path.clone(), index));
                 }
             }
             walk(root, layer.children(), path, out);
             path.pop();
         }
     }
-    let mut out = Vec::new();
+    let mut out = (Vec::new(), Vec::new());
     walk(Root::Show, &show.layers, &mut Vec::new(), &mut out);
     for (i, scene) in show.scenes.iter().enumerate() {
         walk(Root::Scene(i), &scene.layers, &mut Vec::new(), &mut out);
@@ -1567,10 +1663,23 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
             }
             for binding in &layer.bindings {
+                if binding.threshold.is_some_and(|t| !t.is_finite()) {
+                    return Err(Error::InvalidShow(format!(
+                        "the {:?} binding of layer {:?} needs a finite threshold",
+                        binding.property, layer.name
+                    )));
+                }
+                if binding.debounce.is_some_and(|d| !d.is_finite() || d < 0.0) {
+                    return Err(Error::InvalidShow(format!(
+                        "the {:?} binding of layer {:?} needs a debounce of 0 or more",
+                        binding.property, layer.name
+                    )));
+                }
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
-                    let problem = if binding.property == Property::Font {
-                        Some("is on a font binding, which cannot be eased")
+                    let problem = if matches!(binding.property, Property::Font | Property::Visible)
+                    {
+                        Some("is on a binding that cannot be eased")
                     } else if !positive(transition.duration) {
                         Some("needs a duration above 0")
                     } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {

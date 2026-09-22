@@ -93,9 +93,17 @@
       ]
     },
     "Binding": {
-      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the variable as a\nfont style name.\n\nWith `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)\nis looked up first and the mapped value, or `default` when it is not\nlisted, takes the variable's place. Without either, the binding does\nnot apply and the property keeps its base value.",
+      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the variable as a\nfont style name.\n\nWith `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)\nis looked up first and the mapped value, or `default` when it is not\nlisted, takes the variable's place. Without either, the binding does\nnot apply and the property keeps its base value. The order is:\n`debounce`, `map`, `threshold`, `scale` and `offset`, `transition`.",
       "type": "object",
       "properties": {
+        "debounce": {
+          "description": "Seconds a new value has to hold before it reaches the property;\nchanges shorter than that (a strobing lamp, a bouncing switch)\nnever show. When a show loads or a scene is entered the value\napplies at once.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
         "default": {
           "description": "Value for variable values `map` does not list.",
           "anyOf": [
@@ -136,6 +144,14 @@
           "type": "number",
           "format": "double",
           "default": 1.0
+        },
+        "threshold": {
+          "description": "A level: the value becomes 1 at or above it and 0 below, before\n`scale` and `offset` apply. A lamp that lights when a brightness\npasses a half, a `visible` that follows a level.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         },
         "transition": {
           "description": "Ease toward a new value instead of jumping to it.",
@@ -910,6 +926,11 @@
           "description": "Loudness of an audio layer or a group's subtree.",
           "type": "string",
           "const": "gain"
+        },
+        {
+          "description": "Whether the layer (and its subtree) shows and sounds; bindable,\nnot animatable. Bound, it is on when the binding's number is not 0.",
+          "type": "string",
+          "const": "visible"
         }
       ]
     },
