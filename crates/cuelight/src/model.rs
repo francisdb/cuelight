@@ -959,6 +959,19 @@ impl Show {
         out
     }
 
+    /// Whether anything in the show can make a sound: an audio layer, in
+    /// its own layers or any scene's. A host that opens a sound device
+    /// can skip doing so entirely for a show that is silent by
+    /// construction.
+    pub fn has_sound(&self) -> bool {
+        fn any(layers: &[Layer]) -> bool {
+            layers
+                .iter()
+                .any(|layer| matches!(layer.kind, LayerKind::Audio { .. }) || any(layer.children()))
+        }
+        self.layer_trees().any(any)
+    }
+
     /// Every layer tree of the show: its own layers, then each scene's.
     pub fn layer_trees(&self) -> impl Iterator<Item = &[Layer]> {
         std::iter::once(self.layers.as_slice())

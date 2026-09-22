@@ -274,3 +274,33 @@ fn rejects_bad_audio_layers() {
     );
     assert!(Engine::new().set_sound("s", 0.0).is_err());
 }
+
+#[test]
+fn a_show_says_whether_it_can_make_a_sound() {
+    let mut engine = Engine::new();
+    engine.set_sound("thunder", 2.0).unwrap();
+
+    engine
+        .load_show(
+            r##"{ "name": "quiet", "size": [64, 32],
+                 "layers": [ { "name": "box", "type": "shape", "fill": "#FFFFFF",
+                               "shape": { "rect": [0, 0, 8, 8] } } ] }"##,
+        )
+        .unwrap();
+    assert!(
+        !engine.show().unwrap().has_sound(),
+        "nothing here can be heard, so a host need not open a device"
+    );
+
+    // Buried in a group, and in a scene rather than the show's layers.
+    engine
+        .load_show(
+            r#"{ "name": "loud", "size": [64, 32],
+                 "scenes": [ { "name": "game", "trigger": "start", "layers": [
+                   { "name": "group", "type": "group", "children": [
+                     { "name": "thunder", "type": "audio", "sound": "thunder",
+                       "trigger": "strike" } ] } ] } ] }"#,
+        )
+        .unwrap();
+    assert!(engine.show().unwrap().has_sound());
+}
