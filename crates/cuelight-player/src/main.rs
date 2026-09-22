@@ -386,7 +386,7 @@ impl App {
         }
         self.show_video_frames();
         let Some(state) = &mut self.state else { return };
-        if let Some(audio) = &self.audio {
+        if let Some(audio) = &mut self.audio {
             match self.engine.voices() {
                 Ok(voices) => audio.apply(&voices),
                 Err(e) => log::warn!("voices: {e}"),
@@ -805,11 +805,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = Engine::new();
     #[allow(unused_assignments)]
     let mut videos = Videos::default();
-    // Sound is optional: without a device the show still plays.
-    let audio = if cli.no_audio {
-        None
-    } else {
-        Output::open().map_err(|e| log::warn!("no sound: {e}")).ok()
+    // Sound is optional: without a device the show still plays. The
+    // device is looked for once the show is loaded, since a show with no
+    // audio layer has no use for one.
+    let mut audio = None;
+    let want_audio = |engine: &Engine, audio: &mut Option<Output>| {
+        if cli.no_audio || audio.is_some() {
+            return;
+        }
+        if !engine.show().is_some_and(cuelight::Show::has_sound) {
+            log::debug!("no audio layers in this show; leaving the sound device alone");
+            return;
+        }
+        *audio = Output::open().map_err(|e| log::warn!("no sound: {e}")).ok();
     };
     let driver = match &cli.show {
         Some(path) => {
@@ -825,11 +833,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }
             videos = decode_videos(&mut engine, &loaded.videos);
+            want_audio(&engine, &mut audio);
             for file in &loaded.sounds {
                 match Sound::decode(&file.extension, &file.bytes) {
                     Ok(sound) => {
                         engine.set_sound(&file.name, sound.duration())?;
-                        if let Some(audio) = &audio {
+                        if let Some(audio) = &mut audio {
                             audio.set_sound(&file.name, Arc::new(sound));
                         }
                     }
@@ -844,6 +853,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             log::info!("no show given, playing the built-in demo");
             engine.load_show(DEMO_SHOW)?;
+            want_audio(&engine, &mut audio);
             Some(Driver::from_json(DEMO_DRIVER)?)
         }
     };
