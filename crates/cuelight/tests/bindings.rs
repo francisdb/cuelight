@@ -235,16 +235,83 @@ fn a_tint_binding_must_map_to_colors() {
 }
 
 #[test]
-fn a_tint_cannot_be_eased() {
-    let e = Engine::new()
+fn a_tint_eases_from_one_color_to_another() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
         .load_show(
-            r##"{ "name": "status", "size": [64, 32], "variables": { "state": "ok" },
+            r##"{ "name": "s", "size": [64, 32], "variables": { "state": "ok" },
                   "layers": [ { "name": "light", "type": "image", "image": "lamp",
                                 "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "ok": "#00FF00", "bad": "#FF0000" },
                                                 "transition": { "duration": 1 } } ] } ] }"##,
         )
+        .unwrap();
+    engine.advance_frame(0.0);
+    assert_eq!(tint_of(&engine), [0, 255, 0, 255], "it starts where it is");
+
+    engine.set_variable("state", "bad");
+    engine.advance_frame(0.5);
+    assert_eq!(tint_of(&engine), [128, 128, 0, 255], "halfway between");
+    engine.advance_frame(0.5);
+    assert_eq!(tint_of(&engine), [255, 0, 0, 255], "and arrives");
+    engine.advance_frame(1.0);
+    assert_eq!(tint_of(&engine), [255, 0, 0, 255], "and stays");
+}
+
+#[test]
+fn a_tint_turned_round_halfway_eases_from_the_color_it_reached() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "s", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "ok": "#000000", "bad": "#FFFFFF" },
+                                                "transition": { "duration": 1 } } ] } ] }"##,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+    engine.set_variable("state", "bad");
+    engine.advance_frame(0.5);
+    assert_eq!(tint_of(&engine), [128, 128, 128, 255]);
+    // Sent back before it got there: it eases from grey, not from black.
+    engine.set_variable("state", "ok");
+    engine.advance_frame(0.5);
+    assert_eq!(tint_of(&engine), [64, 64, 64, 255], "it jumped somewhere");
+}
+
+#[test]
+fn an_eased_tint_carries_alpha_too() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "s", "size": [64, 32], "variables": { "state": "on" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "on": "#FFFFFFFF", "off": "#FFFFFF00" },
+                                                "transition": { "duration": 1 } } ] } ] }"##,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+    engine.set_variable("state", "off");
+    engine.advance_frame(0.5);
+    assert_eq!(tint_of(&engine), [255, 255, 255, 128]);
+}
+
+#[test]
+fn a_tint_transition_has_no_use_for_a_ring() {
+    let e = Engine::new()
+        .load_show(
+            r##"{ "name": "s", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "transition": { "duration": 1, "wrap": 10 } } ] } ] }"##,
+        )
         .unwrap_err();
-    assert!(format!("{e}").contains("cannot be eased"), "{e}");
+    assert!(format!("{e}").contains("no use for"), "{e}");
 }
 
 #[test]

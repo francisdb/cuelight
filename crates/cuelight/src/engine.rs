@@ -145,6 +145,37 @@ struct Change {
     started: f64,
 }
 
+/// A color on its way to another one. The same shape as a [`Change`], and
+/// eased by the same transition: one progress from 0 to 1 carries all four
+/// channels, so they arrive together however the ease is shaped.
+#[derive(Debug, Clone, Copy)]
+struct ColorChange {
+    start: [u8; 4],
+    target: [u8; 4],
+    started: f64,
+}
+
+impl ColorChange {
+    /// Where the color has reached, `progress` of the way along.
+    fn value_at(&self, progress: f64) -> [u8; 4] {
+        let mut out = [0u8; 4];
+        for (i, channel) in out.iter_mut().enumerate() {
+            let (from, to) = (f64::from(self.start[i]), f64::from(self.target[i]));
+            *channel = (from + (to - from) * progress).round().clamp(0.0, 255.0) as u8;
+        }
+        out
+    }
+}
+
+/// A color as a show writes one, so a transition's value is a value like
+/// any other.
+fn color_text([r, g, b, a]: [u8; 4]) -> String {
+    match a {
+        255 => format!("#{r:02X}{g:02X}{b:02X}"),
+        _ => format!("#{r:02X}{g:02X}{b:02X}{a:02X}"),
+    }
+}
+
 /// Which layer tree a layer path is rooted in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Root {
@@ -345,6 +376,8 @@ pub struct Engine {
     /// The change each of them is making; absent until its first frame,
     /// so a property starts at its value instead of easing in.
     transitions: HashMap<TransitionSite, Change>,
+    /// The same, for the one property whose value is a color.
+    color_transitions: HashMap<TransitionSite, ColorChange>,
     /// Every binding with a debounce, found once at load, and what each
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
@@ -438,6 +471,7 @@ impl Engine {
         self.playing.clear();
         self.sounding.clear();
         self.transitions.clear();
+        self.color_transitions.clear();
         self.debounced.clear();
         self.reels.clear();
         self.spinning.clear();
@@ -799,6 +833,8 @@ impl Engine {
         self.sounding.retain(|s| s.root == Root::Show);
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
+        self.color_transitions
+            .retain(|(root, ..), _| *root == Root::Show);
         self.debounced.retain(|(root, ..), _| *root == Root::Show);
         self.reels.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
@@ -1216,19 +1252,44 @@ impl Engine {
     fn follow_transitions(&mut self) {
         let Some(show) = &self.show else { return };
         let mut transitions = std::mem::take(&mut self.transitions);
+        let mut colors = std::mem::take(&mut self.color_transitions);
         for site in &self.transition_sites {
             let (root, path, index) = site;
             if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
                 continue;
             }
-            let binding = root_layers(show, *root)
-                .and_then(|layers| layer_at(layers, path))
-                .and_then(|layer| layer.bindings.get(*index));
+            let layer = root_layers(show, *root).and_then(|layers| layer_at(layers, path));
+            let binding = layer.and_then(|layer| layer.bindings.get(*index));
             let Some((binding, transition)) =
                 binding.and_then(|b| Some((b, b.transition.as_ref()?)))
             else {
                 continue;
             };
+            if binding.property == Property::Tint {
+                let target = self
+                    .binding_value(site, binding)
+                    .and_then(|value| self.convert(binding, value))
+                    .map(|value| value.to_text())
+                    .and_then(|text| parse_color(&text));
+                let Some(target) = target else {
+                    colors.remove(site);
+                    continue;
+                };
+                let change = colors.entry(site.clone()).or_insert(ColorChange {
+                    start: target,
+                    target,
+                    started: self.time,
+                });
+                if change.target != target {
+                    let progress = transition.value_at(0.0, 1.0, self.time - change.started);
+                    *change = ColorChange {
+                        start: change.value_at(progress),
+                        target,
+                        started: self.time,
+                    };
+                }
+                continue;
+            }
             let Some(target) = self.binding_number(site, binding) else {
                 transitions.remove(site);
                 continue;
@@ -1249,6 +1310,7 @@ impl Engine {
             }
         }
         self.transitions = transitions;
+        self.color_transitions = colors;
     }
 
     /// What binding `index` of the layer at `path` holds while its
@@ -1261,6 +1323,11 @@ impl Engine {
         b: &Binding,
     ) -> Option<Value> {
         let transition = b.transition.as_ref()?;
+        if b.property == Property::Tint {
+            let change = self.color_transitions.get(&(root, path.to_vec(), index))?;
+            let progress = transition.value_at(0.0, 1.0, self.time - change.started);
+            return Some(Value::Text(color_text(change.value_at(progress))));
+        }
         let change = self.transitions.get(&(root, path.to_vec(), index))?;
         let mut n = transition.value_at(change.start, change.target, self.time - change.started);
         if b.property != Property::Text {
@@ -2310,11 +2377,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
-                    let problem = if matches!(
-                        binding.property,
-                        Property::Font | Property::Visible | Property::Tint
-                    ) {
+                    let ring = transition.wrap.is_some() || transition.direction.is_some();
+                    let problem = if matches!(binding.property, Property::Font | Property::Visible)
+                    {
                         Some("is on a binding that cannot be eased")
+                    } else if binding.property == Property::Tint && ring {
+                        Some("sets wrap or direction, which a color has no use for")
                     } else if !positive(transition.duration) {
                         Some("needs a duration above 0")
                     } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {
