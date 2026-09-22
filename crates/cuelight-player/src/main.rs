@@ -388,7 +388,7 @@ impl App {
         }
         self.show_video_frames();
         let Some(state) = &mut self.state else { return };
-        if let Some(audio) = &mut self.audio {
+        if let Some(audio) = &self.audio {
             match self.engine.voices() {
                 Ok(voices) => audio.apply(&voices),
                 Err(e) => log::warn!("voices: {e}"),
@@ -816,7 +816,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
         if !engine.show().is_some_and(cuelight::Show::has_sound) {
-            log::debug!("no audio layers in this show; leaving the sound device alone");
+            log::debug!("no audio layers in this show; not looking for a sound device");
             return;
         }
         *audio = Output::open().map_err(|e| log::warn!("no sound: {e}")).ok();
@@ -840,7 +840,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 match Sound::decode(&file.extension, &file.bytes) {
                     Ok(sound) => {
                         engine.set_sound(&file.name, sound.duration())?;
-                        if let Some(audio) = &mut audio {
+                        if let Some(audio) = &audio {
                             audio.set_sound(&file.name, Arc::new(sound));
                         }
                     }

@@ -16,11 +16,13 @@
 //!   Called in a plain loop it renders a show's sound offline, sample-exact
 //!   against the frames ([`write_wav`] saves it).
 //! - [`Output`] (feature `live`, on by default): a mixer on a sound
-//!   device's own thread, fed the voice list through a queue. It opens the
-//!   device only while something is playing, since a stream that exists
-//!   through a show's silences is one the desktop lists as an application
-//!   making sound. A host can skip it altogether for a show that cannot
-//!   make one: `Show::has_sound`.
+//!   device's own thread, fed the voice list through a queue. The device
+//!   is opened when it is built and held. Whether to build one at all is
+//!   the host's call: a show that cannot make a sound (`Show::has_sound`)
+//!   never gets an `Output`, so it is never listed by a desktop as an
+//!   application making one, and a show that can has its device awake
+//!   before the first cue rather than waking a sleeping sound card in
+//!   front of it.
 //!
 //! A host that has a mixer of its own can consume the voice list directly
 //! and skip all of this.
