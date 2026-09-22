@@ -587,6 +587,67 @@ pub enum Justify {
     Right,
 }
 
+/// Characters a reel carries when its show does not say.
+fn default_charset() -> String {
+    "0123456789".to_owned()
+}
+
+/// A row of cells whose characters sit on a ring and roll to the ones the
+/// layer's `text` asks for, as the wheels of an odometer, a counter or a
+/// departure board do. Each cell has a place on the ring of its own, so a
+/// change moves only the cells it reaches, and `stagger` keeps them from
+/// moving in lockstep.
+///
+/// The characters are drawn in a font style of the show, so the display
+/// stays sharp at any size and needs no artwork.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Reel {
+    /// The characters on the ring, in the order they pass by. A cell shows
+    /// a blank for anything the text asks for that is not on it.
+    #[serde(default = "default_charset")]
+    pub charset: String,
+    /// Font style from the show's `fonts` the characters are drawn in.
+    pub font: String,
+    /// Seconds one character step takes; above 0.
+    pub duration: f64,
+    /// How a step progresses; the same easings timelines know.
+    #[serde(default)]
+    pub ease: Easing,
+    /// Which way round the ring a cell travels: `shortest` by default,
+    /// `forward` for a wheel that only turns one way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<Direction>,
+    /// Motion added on top of a step, in characters: keys like a binding
+    /// transition's `offset`, so a cell can settle against its stop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offset: Vec<Key>,
+    /// Seconds each cell waits behind the one to its right, so a row does
+    /// not move as one piece. 0 by default.
+    #[serde(default)]
+    pub stagger: f64,
+}
+
+impl Reel {
+    /// The characters of the ring.
+    pub fn characters(&self) -> Vec<char> {
+        self.charset.chars().collect()
+    }
+
+    /// How a cell moves from one place on the ring to another: a
+    /// transition on a ring as long as the charset, a character at a time.
+    pub fn roll(&self) -> Transition {
+        Transition {
+            duration: self.duration,
+            ease: self.ease,
+            wrap: Some(self.charset.chars().count().max(1) as f64),
+            direction: self.direction,
+            step: Some(1.0),
+            offset: self.offset.clone(),
+        }
+    }
+}
+
 /// How the cells of a digit row are drawn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -603,6 +664,8 @@ pub enum DigitDisplay {
         #[serde(default)]
         unlit: Option<String>,
     },
+    /// Cells that roll through a ring of characters, drawn in a font.
+    Reel(Reel),
 }
 
 /// Segment layout of a segment display.

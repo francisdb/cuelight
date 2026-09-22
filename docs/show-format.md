@@ -296,6 +296,39 @@ Layer kinds:
   that are rendered on their own pixel grid (a gray `output.mode`, or
   `pixel_perfect` scaling) the straight bars are a whole number of pixels
   thick, lie on pixel boundaries and end flat, so small displays stay crisp.
+
+  `reel` is a row of wheels: every cell carries a ring of characters and
+  rolls to the one the text asks of it, as an odometer, a counter or a
+  departure board does. The characters are drawn in a font style of the
+  show, so a reel needs no artwork and stays sharp at any size.
+
+  ```json
+  { "type": "digits", "digits": 6, "size": [180, 48], "justify": "right",
+    "display": { "reel": { "font": "score", "charset": "0123456789",
+                           "duration": 0.12, "ease": "quad_in",
+                           "direction": "forward", "stagger": 0.03,
+                           "offset": [ { "t": 0.12, "v": 0 }, { "t": 0.17, "v": 0.12 },
+                                       { "t": 0.22, "v": 0 } ] } } }
+  ```
+
+  - `font`: a style from the show's `fonts`, bitmap or outline.
+  - `charset` (default `0123456789`): the characters on the ring, in the
+    order they pass by. A cell shows nothing for a character that is not on
+    it, so a ring can hold letters, symbols or a blank as well as digits.
+  - `duration`, `ease`, `direction` and `offset` say how a cell moves one
+    character, and mean what they do on a binding's
+    [transition](#transitions): `forward` is a wheel that only turns one
+    way, an `offset` settles a cell against its stop. A change of several
+    characters steps through every character in between, one `duration`
+    each.
+  - `stagger` (default 0): seconds each cell waits behind the one to its
+    right, so a row does not move as one piece.
+
+  Each cell keeps its own place on the ring, so a change moves only the
+  cells it reaches: going from `109` to `119` rolls the tens wheel and
+  leaves the others standing. A cell shows the character it stands on and
+  the one coming up behind it, clipped to the cell, which is what makes a
+  roll look like a wheel rather than a fade.
 - `audio`: a sound, played like a timeline is; draws nothing. See
   [Sound](#sound).
 

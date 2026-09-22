@@ -1,8 +1,8 @@
 use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
-    parse_color, Align, Binding, Blend, DigitDisplay, Layer, LayerKind, Output, Pass, Property,
-    Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
+    parse_color, Align, Binding, Blend, DigitDisplay, Justify, Layer, LayerKind, Output, Pass,
+    Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::path::{self, PathElement};
@@ -344,6 +344,10 @@ pub struct Engine {
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
     debounced: HashMap<TransitionSite, Settling>,
+    /// Every reel row, found once at load, and where each of its cells is
+    /// on its ring: one record per cell, in cell order.
+    reel_sites: Vec<(Root, Vec<usize>)>,
+    reels: HashMap<(Root, Vec<usize>), Vec<Change>>,
     active_scene: Option<usize>,
     events: std::collections::VecDeque<Event>,
     load_warnings: Vec<String>,
@@ -426,7 +430,9 @@ impl Engine {
         self.sounding.clear();
         self.transitions.clear();
         self.debounced.clear();
+        self.reels.clear();
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
+        self.reel_sites = reel_sites(&show);
         self.events.clear();
         self.time = 0.0;
         self.active_scene = (!show.scenes.is_empty()).then_some(0);
@@ -785,6 +791,7 @@ impl Engine {
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
         self.debounced.retain(|(root, ..), _| *root == Root::Show);
+        self.reels.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
         self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
         self.play_autoplay(Root::Scene(scene));
@@ -797,6 +804,7 @@ impl Engine {
     pub fn advance_frame(&mut self, dt: f64) {
         self.settle_debounces(dt);
         self.follow_transitions();
+        self.follow_reels();
         self.time += dt;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
@@ -1068,6 +1076,95 @@ impl Engine {
             }
         }
         self.debounced = debounced;
+    }
+
+    /// Note which character each reel cell is heading for, as of now. A
+    /// cell that is already there is left alone, so a change moves only
+    /// the cells it reaches, each from wherever it stands.
+    fn follow_reels(&mut self) {
+        let Some(show) = &self.show else { return };
+        let mut reels = std::mem::take(&mut self.reels);
+        for site in &self.reel_sites {
+            let (root, path) = site;
+            if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
+                continue;
+            }
+            let layer = root_layers(show, *root).and_then(|layers| layer_at(layers, path));
+            let Some(layer) = layer else { continue };
+            let LayerKind::Digits {
+                digits,
+                justify,
+                display: DigitDisplay::Reel(reel),
+                ..
+            } = &layer.kind
+            else {
+                continue;
+            };
+            let count = *digits as usize;
+            let ring = reel.characters();
+            let roll = reel.roll();
+            let text = self.text(*root, layer, path, Property::Text);
+            let wanted: Vec<Option<f64>> = cells(&text, count, *justify)
+                .into_iter()
+                .map(|c| {
+                    let c = c?;
+                    ring.iter().position(|on| *on == c).map(|i| i as f64)
+                })
+                .collect();
+            let records = reels.entry(site.clone()).or_insert_with(|| {
+                // At load a row stands at what it shows: nothing rolls in.
+                wanted
+                    .iter()
+                    .map(|target| {
+                        let target = target.unwrap_or(0.0);
+                        Change {
+                            start: target,
+                            target,
+                            started: self.time,
+                        }
+                    })
+                    .collect()
+            });
+            records.resize(
+                count,
+                Change {
+                    start: 0.0,
+                    target: 0.0,
+                    started: self.time,
+                },
+            );
+            for (i, target) in wanted.into_iter().enumerate() {
+                let Some(target) = target else { continue };
+                let change = &mut records[i];
+                if change.target == target {
+                    continue;
+                }
+                let reached =
+                    roll.value_at(change.start, change.target, self.time - change.started);
+                // The cell on the right moves first; the rest follow.
+                let delay = (count - 1 - i) as f64 * reel.stagger.max(0.0);
+                *change = Change {
+                    start: reached,
+                    target,
+                    started: self.time + delay,
+                };
+            }
+        }
+        self.reels = reels;
+    }
+
+    /// Where the cells of the reel row at `path` stand on their ring now.
+    fn reel_positions(&self, root: Root, path: &[usize], reel: &crate::model::Reel) -> Vec<f64> {
+        let roll = reel.roll();
+        self.reels
+            .get(&(root, path.to_vec()))
+            .map(|records| {
+                records
+                    .iter()
+                    .map(|c| roll.value_at(c.start, c.target, self.time - c.started))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Note where every binding with a transition is heading, as of now
@@ -1366,6 +1463,155 @@ impl Engine {
         raster
     }
 
+    /// Add `text` in font style `style_name` to the draw list, laid out in
+    /// a box of `size` (the text's own size when `None`) whose top-left
+    /// corner sits at the item's origin. Text layers and the characters of
+    /// a reel both come through here.
+    fn push_text(
+        &self,
+        out: &mut Vec<ResolvedLayer>,
+        placed: &Placed,
+        style_name: &str,
+        text: &str,
+        size: Option<[f64; 2]>,
+        align: Align,
+    ) {
+        let Placed {
+            name,
+            origin: [x, y],
+            scale,
+            opacity,
+            blend,
+            transform,
+        } = *placed;
+        match self.text_draw(style_name, text, size, align) {
+            Some(TextDraw::Bitmap(raster)) => {
+                let [ox, oy] = raster.offset;
+                out.push(ResolvedLayer {
+                    name: name.to_owned(),
+                    shape: ResolvedShape::Bitmap {
+                        x: x + f64::from(ox) * scale,
+                        y: y + f64::from(oy) * scale,
+                        width: f64::from(raster.image.width) * scale,
+                        height: f64::from(raster.image.height) * scale,
+                        image: raster.image.clone(),
+                    },
+                    color: [255, 255, 255, 255],
+                    opacity,
+                    blend,
+                    transform,
+                });
+            }
+            Some(TextDraw::Glyphs {
+                font: data,
+                size: em,
+                glyphs,
+                ..
+            }) if !glyphs.is_empty() => {
+                // Colors were validated at load.
+                let style = self.show.as_ref().and_then(|s| s.fonts.get(style_name));
+                let rgba = |c: &str| parse_color(c).unwrap_or([255; 4]);
+                let border = style
+                    .and_then(|s| s.border.as_ref())
+                    .map(|b| (rgba(&b.color), f64::from(b.width) * scale));
+                out.push(ResolvedLayer {
+                    name: name.to_owned(),
+                    shape: ResolvedShape::GlyphRun {
+                        font: data,
+                        size: em * scale,
+                        glyphs: glyphs
+                            .into_iter()
+                            .map(|g| PlacedGlyph {
+                                id: g.id,
+                                x: x + g.x * scale,
+                                y: y + g.y * scale,
+                            })
+                            .collect(),
+                        border,
+                    },
+                    color: style.map_or([255; 4], |s| rgba(&s.color)),
+                    opacity,
+                    blend,
+                    transform,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// Add a reel row to the draw list: each cell a window on its ring,
+    /// showing the character it stands on and the one coming after it,
+    /// slid by how far between the two it is. A cell whose character is
+    /// not on the ring shows nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn push_reel(
+        &self,
+        out: &mut Vec<ResolvedLayer>,
+        placed: &Placed,
+        reel: &crate::model::Reel,
+        text: &str,
+        [width, height]: [f64; 2],
+        (count, justify): (usize, Justify),
+        positions: Vec<f64>,
+    ) {
+        let ring = reel.characters();
+        if ring.is_empty() || count == 0 {
+            return;
+        }
+        let [x, y] = placed.origin;
+        let scale = placed.scale;
+        // The cell's box in the layer's own units, for the font to lay a
+        // character out in, and on the canvas, for placing it.
+        let cell = [width / count as f64, height];
+        let (cell_w, cell_h) = (cell[0] * scale, cell[1] * scale);
+        for (i, character) in cells(text, count, justify).into_iter().enumerate() {
+            if character.is_none_or(|c| !ring.contains(&c)) {
+                continue;
+            }
+            let position = positions.get(i).copied().unwrap_or_default();
+            let index = position.rem_euclid(ring.len() as f64);
+            let (on, between) = (index.floor(), index.fract());
+            let cell_x = x + i as f64 * cell_w;
+            let marker = |shape| ResolvedLayer {
+                name: placed.name.to_owned(),
+                shape,
+                color: [0; 4],
+                opacity: placed.opacity,
+                blend: Blend::Normal,
+                transform: placed.transform,
+            };
+            // Only what stands in the window shows.
+            out.push(marker(ResolvedShape::ClipBegin {
+                shape: Box::new(ResolvedShape::Rect {
+                    x: cell_x,
+                    y,
+                    width: cell_w,
+                    height: cell_h,
+                }),
+            }));
+            // The character on its way out, and the one coming up from
+            // below it.
+            for (step, slide) in [(0.0, -between), (1.0, 1.0 - between)] {
+                let at = (on + step).rem_euclid(ring.len() as f64) as usize;
+                let placed = Placed {
+                    origin: [cell_x, y + slide * cell_h],
+                    ..*placed
+                };
+                let mut buffer = [0u8; 4];
+                let character = ring[at].encode_utf8(&mut buffer);
+                self.push_text(
+                    out,
+                    &placed,
+                    &reel.font,
+                    character,
+                    Some(cell),
+                    Align::Center,
+                );
+            }
+            out.push(marker(ResolvedShape::ClipEnd));
+        }
+    }
+
     /// Resolve `layers` under `parent`, the placement of the tree above
     /// them, at `oa` opacity.
     fn walk(
@@ -1541,99 +1787,78 @@ impl Engine {
                         ..
                     } => {
                         let text = self.text(root, layer, path, Property::Text);
-                        let DigitDisplay::Segments { style, fill, unlit } = display;
-                        let lit =
-                            parse_color(fill).ok_or_else(|| Error::InvalidColor(fill.clone()))?;
-                        let unlit = unlit
-                            .as_ref()
-                            .map(|c| parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone())))
-                            .transpose()?;
-                        let masks = segments::masks(*style, &text, *digits as usize, *justify);
-                        // Where the frame is made on the canvas's own pixel
-                        // grid (anything but smooth full color, see the
-                        // presenter), segments keep to it.
-                        let output = self.effective_output();
-                        let snap = (output.mode.unwrap_or_default()
-                            != crate::model::OutputMode::Rgb
-                            || output.scaling.unwrap_or_default() == Scaling::PixelPerfect)
-                            && transform == Transform::IDENTITY;
-                        let cell_w = width * scale / f64::from((*digits).max(1));
-                        for (i, mask) in masks.into_iter().enumerate() {
-                            let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
-                            let mut push = |mask: u16, color: [u8; 4]| {
-                                for points in segments::polygons(*style, mask, cell, snap) {
-                                    out.push(ResolvedLayer {
-                                        name: layer.name.clone(),
-                                        shape: ResolvedShape::Polygon { points },
-                                        color,
-                                        opacity,
-                                        blend: layer.blend,
-                                        transform,
-                                    });
+                        let placed = Placed {
+                            name: &layer.name,
+                            origin: [x, y],
+                            scale,
+                            opacity,
+                            blend: layer.blend,
+                            transform,
+                        };
+                        let cells = (*digits as usize, *justify);
+                        match display {
+                            DigitDisplay::Segments { style, fill, unlit } => {
+                                let lit = parse_color(fill)
+                                    .ok_or_else(|| Error::InvalidColor(fill.clone()))?;
+                                let unlit = unlit
+                                    .as_ref()
+                                    .map(|c| {
+                                        parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone()))
+                                    })
+                                    .transpose()?;
+                                let masks = segments::masks(*style, &text, cells.0, cells.1);
+                                // Where the frame is made on the canvas's own
+                                // pixel grid (anything but smooth full color,
+                                // see the presenter), segments keep to it.
+                                let output = self.effective_output();
+                                let snap = (output.mode.unwrap_or_default()
+                                    != crate::model::OutputMode::Rgb
+                                    || output.scaling.unwrap_or_default() == Scaling::PixelPerfect)
+                                    && transform == Transform::IDENTITY;
+                                let cell_w = width * scale / cells.0.max(1) as f64;
+                                for (i, mask) in masks.into_iter().enumerate() {
+                                    let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
+                                    let mut push = |mask: u16, color: [u8; 4]| {
+                                        for points in segments::polygons(*style, mask, cell, snap) {
+                                            out.push(ResolvedLayer {
+                                                name: layer.name.clone(),
+                                                shape: ResolvedShape::Polygon { points },
+                                                color,
+                                                opacity,
+                                                blend: layer.blend,
+                                                transform,
+                                            });
+                                        }
+                                    };
+                                    if let Some(unlit) = unlit {
+                                        push(!mask, unlit);
+                                    }
+                                    push(mask, lit);
                                 }
-                            };
-                            if let Some(unlit) = unlit {
-                                push(!mask, unlit);
                             }
-                            push(mask, lit);
+                            DigitDisplay::Reel(reel) => self.push_reel(
+                                out,
+                                &placed,
+                                reel,
+                                &text,
+                                [*width, *height],
+                                cells,
+                                self.reel_positions(root, path, reel),
+                            ),
                         }
                     }
                     LayerKind::Text { size, align, .. } => {
                         let text = self.text(root, layer, path, Property::Text);
                         let font = self.text(root, layer, path, Property::Font);
-                        match self.text_draw(&font, &text, *size, *align) {
-                            Some(TextDraw::Bitmap(raster)) => {
-                                let [ox, oy] = raster.offset;
-                                out.push(ResolvedLayer {
-                                    name: layer.name.clone(),
-                                    shape: ResolvedShape::Bitmap {
-                                        x: x + f64::from(ox) * scale,
-                                        y: y + f64::from(oy) * scale,
-                                        width: f64::from(raster.image.width) * scale,
-                                        height: f64::from(raster.image.height) * scale,
-                                        image: raster.image.clone(),
-                                    },
-                                    color: [255, 255, 255, 255],
-                                    opacity,
-                                    blend: layer.blend,
-                                    transform,
-                                });
-                            }
-                            Some(TextDraw::Glyphs {
-                                font: data,
-                                size: em,
-                                glyphs,
-                                ..
-                            }) if !glyphs.is_empty() => {
-                                // Colors were validated at load.
-                                let style = self.show.as_ref().and_then(|s| s.fonts.get(&*font));
-                                let rgba = |c: &str| parse_color(c).unwrap_or([255; 4]);
-                                let border = style
-                                    .and_then(|s| s.border.as_ref())
-                                    .map(|b| (rgba(&b.color), f64::from(b.width) * scale));
-                                out.push(ResolvedLayer {
-                                    name: layer.name.clone(),
-                                    shape: ResolvedShape::GlyphRun {
-                                        font: data,
-                                        size: em * scale,
-                                        glyphs: glyphs
-                                            .into_iter()
-                                            .map(|g| PlacedGlyph {
-                                                id: g.id,
-                                                x: x + g.x * scale,
-                                                y: y + g.y * scale,
-                                            })
-                                            .collect(),
-                                        border,
-                                    },
-                                    color: style.map_or([255; 4], |s| rgba(&s.color)),
-                                    opacity,
-                                    blend: layer.blend,
-                                    transform,
-                                });
-                            }
-                            _ => {}
-                        }
+                        let placed = Placed {
+                            name: &layer.name,
+                            origin: [x, y],
+                            scale,
+                            opacity,
+                            blend: layer.blend,
+                            transform,
+                        };
+                        self.push_text(out, &placed, &font, &text, *size, *align);
                     }
                 }
             }
@@ -1643,11 +1868,88 @@ impl Engine {
     }
 }
 
+/// Where a piece of a layer lands, shared by everything the walk adds.
+#[derive(Debug, Clone, Copy)]
+struct Placed<'a> {
+    name: &'a str,
+    /// Top-left corner on the canvas.
+    origin: [f64; 2],
+    scale: f64,
+    opacity: f64,
+    blend: Blend,
+    transform: Transform,
+}
+
+/// The characters of `text` laid into `count` cells, `None` where a cell
+/// has nothing to show. Text longer than the row is cut at the far side
+/// of `justify`, as a digit row's text is.
+fn cells(text: &str, count: usize, justify: Justify) -> Vec<Option<char>> {
+    let characters: Vec<char> = text.chars().collect();
+    match justify {
+        Justify::Right => {
+            let skip = characters.len().saturating_sub(count);
+            let mut out = vec![None; count.saturating_sub(characters.len())];
+            out.extend(characters.into_iter().skip(skip).map(Some));
+            out
+        }
+        _ => {
+            let mut out: Vec<Option<char>> = characters.into_iter().map(Some).collect();
+            out.resize(count, None);
+            out
+        }
+    }
+}
+
+/// Where the show's reel rows are.
+fn reel_sites(show: &Show) -> Vec<(Root, Vec<usize>)> {
+    fn walk(
+        root: Root,
+        layers: &[Layer],
+        path: &mut Vec<usize>,
+        out: &mut Vec<(Root, Vec<usize>)>,
+    ) {
+        for (i, layer) in layers.iter().enumerate() {
+            path.push(i);
+            if let LayerKind::Digits {
+                display: DigitDisplay::Reel(_),
+                ..
+            } = &layer.kind
+            {
+                out.push((root, path.clone()));
+            }
+            walk(root, layer.children(), path, out);
+            path.pop();
+        }
+    }
+    let mut out = Vec::new();
+    walk(Root::Show, &show.layers, &mut Vec::new(), &mut out);
+    for (i, scene) in show.scenes.iter().enumerate() {
+        walk(Root::Scene(i), &scene.layers, &mut Vec::new(), &mut out);
+    }
+    out
+}
+
 fn root_layers(show: &Show, root: Root) -> Option<&[Layer]> {
     match root {
         Root::Show => Some(&show.layers),
         Root::Scene(i) => show.scenes.get(i).map(|s| s.layers.as_slice()),
     }
+}
+
+/// What is wrong with a set of `offset` keys, if anything: they carry
+/// motion added on top of a move, so they run forward from 0 and have to
+/// come back to where they started.
+fn offset_problem(offset: &[crate::model::Key]) -> Option<&'static str> {
+    if offset.windows(2).any(|pair| pair[1].t < pair[0].t)
+        || offset.iter().any(|k| k.t.is_nan() || k.t < 0.0)
+    {
+        return Some("needs offset keys in time order, from 0 on");
+    }
+    let ends = [offset.first(), offset.last()];
+    if ends.iter().flatten().any(|k| k.v != 0.0) {
+        return Some("needs an offset that starts and ends at 0");
+    }
+    None
 }
 
 /// A binding's number after `threshold`, `scale` and `offset`.
@@ -1716,10 +2018,37 @@ fn validate(show: &Show) -> Result<(), Error> {
                     )));
                 }
             }
-            if let LayerKind::Text { font, .. } = &layer.kind {
-                if !show.fonts.contains_key(font) {
+            let font = match &layer.kind {
+                LayerKind::Text { font, .. } => Some(font),
+                LayerKind::Digits {
+                    display: DigitDisplay::Reel(reel),
+                    ..
+                } => Some(&reel.font),
+                _ => None,
+            };
+            if let Some(font) = font.filter(|font| !show.fonts.contains_key(*font)) {
+                return Err(Error::InvalidShow(format!(
+                    "layer {:?} uses undeclared font style {font:?}",
+                    layer.name
+                )));
+            }
+            if let LayerKind::Digits {
+                display: DigitDisplay::Reel(reel),
+                ..
+            } = &layer.kind
+            {
+                let problem = if reel.charset.is_empty() {
+                    Some("needs a charset with a character in it")
+                } else if !(reel.duration.is_finite() && reel.duration > 0.0) {
+                    Some("needs a duration above 0")
+                } else if !reel.stagger.is_finite() || reel.stagger < 0.0 {
+                    Some("needs a stagger of 0 or more")
+                } else {
+                    offset_problem(&reel.offset)
+                };
+                if let Some(problem) = problem {
                     return Err(Error::InvalidShow(format!(
-                        "layer {:?} uses undeclared font style {font:?}",
+                        "reel of layer {:?} {problem}",
                         layer.name
                     )));
                 }
@@ -1778,21 +2107,8 @@ fn validate(show: &Show) -> Result<(), Error> {
                         Some("sets a direction, which needs wrap")
                     } else if transition.step.is_some_and(|step| !positive(step)) {
                         Some("needs a step above 0")
-                    } else if transition
-                        .offset
-                        .windows(2)
-                        .any(|pair| pair[1].t < pair[0].t)
-                        || transition.offset.iter().any(|k| k.t.is_nan() || k.t < 0.0)
-                    {
-                        Some("needs offset keys in time order, from 0 on")
-                    } else if [transition.offset.first(), transition.offset.last()]
-                        .iter()
-                        .flatten()
-                        .any(|k| k.v != 0.0)
-                    {
-                        Some("needs an offset that starts and ends at 0")
                     } else {
-                        None
+                        offset_problem(&transition.offset)
                     };
                     if let Some(problem) = problem {
                         return Err(Error::InvalidShow(format!(

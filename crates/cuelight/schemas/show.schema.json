@@ -252,6 +252,19 @@
           "required": [
             "segments"
           ]
+        },
+        {
+          "description": "Cells that roll through a ring of characters, drawn in a font.",
+          "type": "object",
+          "properties": {
+            "reel": {
+              "$ref": "#/$defs/Reel"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "reel"
+          ]
         }
       ]
     },
@@ -982,6 +995,59 @@
           "type": "string",
           "const": "visible"
         }
+      ]
+    },
+    "Reel": {
+      "description": "A row of cells whose characters sit on a ring and roll to the ones the\nlayer's `text` asks for, as the wheels of an odometer, a counter or a\ndeparture board do. Each cell has a place on the ring of its own, so a\nchange moves only the cells it reaches, and `stagger` keeps them from\nmoving in lockstep.\n\nThe characters are drawn in a font style of the show, so the display\nstays sharp at any size and needs no artwork.",
+      "type": "object",
+      "properties": {
+        "charset": {
+          "description": "The characters on the ring, in the order they pass by. A cell shows\na blank for anything the text asks for that is not on it.",
+          "type": "string",
+          "default": "0123456789"
+        },
+        "direction": {
+          "description": "Which way round the ring a cell travels: `shortest` by default,\n`forward` for a wheel that only turns one way.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Direction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration": {
+          "description": "Seconds one character step takes; above 0.",
+          "type": "number",
+          "format": "double"
+        },
+        "ease": {
+          "description": "How a step progresses; the same easings timelines know.",
+          "$ref": "#/$defs/Easing",
+          "default": "linear"
+        },
+        "font": {
+          "description": "Font style from the show's `fonts` the characters are drawn in.",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Motion added on top of a step, in characters: keys like a binding\ntransition's `offset`, so a cell can settle against its stop.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "stagger": {
+          "description": "Seconds each cell waits behind the one to its right, so a row does\nnot move as one piece. 0 by default.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "font",
+        "duration"
       ]
     },
     "Retrigger": {
