@@ -1,0 +1,175 @@
+//! Decoding by running ffmpeg as a program: it writes raw pixels, we read
+//! them. Nothing is linked and nothing is built, so a host needs only the
+//! ffmpeg most machines already have, and it plays whatever ffmpeg plays.
+
+use crate::{Decode, Video};
+use std::io::Write;
+use std::path::Path;
+use std::process::{Command, Stdio};
+
+/// Where the video is: a file ffmpeg can open and seek in, or bytes fed
+/// to it. A container that keeps its index at the end, as MP4 does,
+/// cannot be read from a pipe at all, so a file is the sure way.
+pub enum Source<'a> {
+    File(&'a Path),
+    Bytes(&'a [u8]),
+}
+
+impl Source<'_> {
+    fn input(&self) -> &std::ffi::OsStr {
+        match self {
+            Source::File(path) => path.as_os_str(),
+            Source::Bytes(_) => std::ffi::OsStr::new("pipe:0"),
+        }
+    }
+
+    fn stdin(&self) -> Stdio {
+        match self {
+            Source::Bytes(_) => Stdio::piped(),
+            Source::File(_) => Stdio::null(),
+        }
+    }
+}
+
+/// Ask ffprobe what the video is, so it can be decoded at its own size.
+fn probe(source: &Source<'_>) -> Option<([u32; 2], f64, f64)> {
+    let mut child = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,r_frame_rate",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1",
+        ])
+        .arg(source.input())
+        .stdin(source.stdin())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let (Source::Bytes(bytes), Some(mut stdin)) = (source, child.stdin.take()) {
+        let _ = stdin.write_all(bytes);
+    }
+    let output = child.wait_with_output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let field = |key: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+            .map(str::trim)
+    };
+    let width: u32 = field("width")?.parse().ok()?;
+    let height: u32 = field("height")?.parse().ok()?;
+    let rate = field("r_frame_rate").and_then(|rate| {
+        let (top, bottom) = rate.split_once('/')?;
+        let (top, bottom): (f64, f64) = (top.parse().ok()?, bottom.parse().ok()?);
+        (bottom > 0.0).then_some(top / bottom)
+    });
+    let duration = field("duration").and_then(|d| d.parse::<f64>().ok());
+    Some((
+        [width, height],
+        rate.unwrap_or(30.0),
+        duration.unwrap_or_default(),
+    ))
+}
+
+/// Decode `bytes` as ffmpeg sees them.
+/// What the video at `path` is, without decoding a frame of it.
+pub fn details(path: &Path, how: Decode) -> Result<crate::Details, String> {
+    let (natural, rate, duration) =
+        probe(&Source::File(path)).ok_or("cannot tell what the video is; ffprobe found nothing")?;
+    let [width, height] = fit(Some(natural), how.size)?;
+    Ok(crate::Details {
+        width,
+        height,
+        rate: how.rate.unwrap_or(rate),
+        duration,
+    })
+}
+
+/// The size to decode at: the video's own, bounded by what was asked for,
+/// keeping its shape and never growing it.
+fn fit(natural: Option<[u32; 2]>, wanted: Option<[u32; 2]>) -> Result<[u32; 2], String> {
+    Ok(match (natural, wanted) {
+        (Some([w, h]), Some([max_w, max_h])) => {
+            let fit = (f64::from(max_w) / f64::from(w))
+                .min(f64::from(max_h) / f64::from(h))
+                .min(1.0);
+            // Even dimensions: most encoders and pixel formats want them.
+            let even = |n: f64| ((n.round() as u32).max(2) / 2) * 2;
+            [even(f64::from(w) * fit), even(f64::from(h) * fit)]
+        }
+        (natural, wanted) => wanted
+            .or(natural)
+            .ok_or("cannot tell how big the video is; ffprobe found nothing")?,
+    })
+}
+
+pub fn decode(source: Source<'_>, how: Decode) -> Result<Video, String> {
+    let probed = probe(&source);
+    let [width, height] = fit(probed.map(|(size, ..)| size), how.size)?;
+    let rate = how.rate.or(probed.map(|(_, rate, _)| rate)).unwrap_or(30.0);
+    if width == 0 || height == 0 || rate <= 0.0 || rate.is_nan() {
+        return Err(format!("{width}x{height} at {rate} fps is not a video"));
+    }
+
+    let mut child = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(source.input())
+        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-s"])
+        .arg(format!("{width}x{height}"))
+        .args(["-r", &rate.to_string(), "pipe:1"])
+        .stdin(source.stdin())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("ffmpeg did not run ({e}); is it installed?"))?;
+    // Feeding and reading at once: a clip is bigger than a pipe buffer, so
+    // writing it all before reading would deadlock.
+    let feeder = match (&source, child.stdin.take()) {
+        (Source::Bytes(bytes), Some(mut stdin)) => {
+            let fed: Vec<u8> = bytes.to_vec();
+            Some(std::thread::spawn(move || {
+                let _ = stdin.write_all(&fed);
+            }))
+        }
+        _ => None,
+    };
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("ffmpeg failed: {e}"))?;
+    if let Some(feeder) = feeder {
+        let _ = feeder.join();
+    }
+    if !output.status.success() {
+        let why = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg failed: {}", why.trim()));
+    }
+
+    let size = width as usize * height as usize * 4;
+    let frames: Vec<Vec<u8>> = output
+        .stdout
+        .chunks_exact(size)
+        .map(<[u8]>::to_vec)
+        .collect();
+    if frames.is_empty() {
+        let why = String::from_utf8_lossy(&output.stderr);
+        let why = why.trim();
+        return Err(match source {
+            // MP4 and friends keep their index at the end of the file.
+            Source::Bytes(_) => format!(
+                "no frames came out of ffmpeg: this container may need a file to seek in rather than a stream. {why}"
+            ),
+            Source::File(_) => format!("no frames came out of ffmpeg. {why}"),
+        });
+    }
+    log::debug!(
+        "decoded {} frames of {width}x{height} at {rate} fps",
+        frames.len()
+    );
+    Video::from_frames([width, height], rate, frames)
+}

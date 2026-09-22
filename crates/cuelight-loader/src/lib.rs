@@ -98,6 +98,12 @@ pub struct Loaded {
     /// engine only needs their durations, so nothing here decodes them; an
     /// audio layer whose sound arrives later plays silently until then.
     pub sounds: Vec<SoundFile>,
+    /// Video files found in `assets/videos/`, as paths, for the host to
+    /// decode and register with `Engine::set_video` (the `cuelight-video`
+    /// crate does). Paths rather than bytes: a decoder wants a file it
+    /// can seek in, and some containers cannot be read as a stream at
+    /// all.
+    pub videos: Vec<PathBuf>,
     /// Asset files (paths within the show) that were left alone because
     /// support for their format is not compiled in; hosts may want to log
     /// them.
@@ -108,6 +114,10 @@ pub struct Loaded {
 /// in `assets/sounds/`: what the `cuelight-audio` crate decodes.
 pub const SOUND_EXTENSIONS: &[&str] = &["wav", "flac", "ogg", "mp3"];
 
+/// File extensions (lowercase) of the video files a show folder may hold
+/// in `assets/videos/`: what the `cuelight-video` crate decodes.
+pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "avi", "mov", "m4v"];
+
 /// Load a show into `engine` from `path`: a show folder, a loose show
 /// file, or a packed show (`.cuelight`). Assets are registered before the
 /// show loads. Fields the engine ignored are available from
@@ -115,8 +125,15 @@ pub const SOUND_EXTENSIONS: &[&str] = &["wav", "flac", "ogg", "mp3"];
 pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadError> {
     let path = path.as_ref();
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut videos: Vec<PathBuf> = Vec::new();
     let show = if path.is_dir() {
         for name in Manifest::for_dir(path)?.files {
+            // Videos stay on disk: a clip is large and a decoder opens it
+            // itself.
+            if name.starts_with("assets/videos/") {
+                videos.push(path.join(&name));
+                continue;
+            }
             files.insert(name.clone(), read(&path.join(&name))?);
         }
         path.join("show.json")
@@ -142,6 +159,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
     })?;
     Ok(Loaded {
         show,
+        videos,
         driver: loaded.driver,
         images: loaded.images,
         fonts: loaded.fonts,

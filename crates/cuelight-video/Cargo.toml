@@ -1,0 +1,19 @@
+[package]
+name = "cuelight-video"
+description = "Video for cuelight hosts: decode clips into frames the engine's video layers draw"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "video", "decoder", "player"]
+categories = ["multimedia::video"]
+
+[dependencies]
+log = "0.4"
+
+[features]
+default = ["ffmpeg-process"]
+# Decode by running ffmpeg as a program and reading raw pixels from it.
+# No library, no linking, no build dependency: only the ffmpeg binary at
+# runtime, which is where most video content already is.
+ffmpeg-process = []

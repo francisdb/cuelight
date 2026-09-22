@@ -5,6 +5,7 @@ members = [
     "crates/cuelight-audio",
     "crates/cuelight-loader",
     "crates/cuelight-player",
+    "crates/cuelight-video",
     "crates/cuelight-web",
 ]
 

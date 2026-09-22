@@ -33,6 +33,8 @@ use cuelight::vello;
 use cuelight::{Engine, Layer, LayerKind, Value};
 use cuelight_audio::{Output, Sound};
 use cuelight_loader::{Driver, DriverPlayer, Step};
+#[cfg(feature = "video")]
+use cuelight_video::{Clip, Decode};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wgpu::CurrentSurfaceTexture;
@@ -173,8 +175,16 @@ struct RenderState {
     surface: RenderSurface<'static>,
 }
 
+/// The videos of the show, decoded, by the name their layers use.
+#[cfg(feature = "video")]
+type Videos = std::collections::BTreeMap<String, Clip>;
+#[cfg(not(feature = "video"))]
+type Videos = ();
+
 struct App {
     engine: Engine,
+    /// What the show's video layers draw, when video is compiled in.
+    videos: Videos,
     actions: Vec<String>,
     driver: Option<DriverPlayer>,
     /// The sound device, when one could be opened and was wanted.
@@ -324,6 +334,37 @@ impl App {
         }
     }
 
+    /// Hand the engine the frame of every video that should be showing.
+    /// This is all a host has to do for video: the engine says what and
+    /// how far in, and a frame is an image like any other.
+    #[cfg(feature = "video")]
+    fn show_video_frames(&mut self) {
+        let playing = self.engine.videos().unwrap_or_default();
+        // A clip nobody is watching stops decoding: a pack names hundreds
+        // and plays a few, and a decoder left open costs a process.
+        for (name, clip) in &mut self.videos {
+            if clip.is_decoding() && !playing.iter().any(|p| p.video == *name) {
+                clip.rest();
+            }
+        }
+        for playing in playing {
+            let Some(clip) = self.videos.get_mut(&playing.video) else {
+                continue;
+            };
+            let details = clip.details();
+            let (width, height) = (details.width, details.height);
+            if let Some(frame) = clip.frame_at(playing.position) {
+                let frame = frame.to_vec();
+                if let Err(e) = self.engine.set_image(&playing.video, width, height, frame) {
+                    log::warn!("video {:?}: {e}", playing.video);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(feature = "video"))]
+    fn show_video_frames(&mut self) {}
+
     fn redraw(&mut self) {
         let now = Instant::now();
         // While we pace the frames ourselves (see the end of this function)
@@ -339,11 +380,12 @@ impl App {
         let dt = elapsed.min(0.1);
         self.last_frame = now;
         self.advance_driver(dt);
-        let Some(state) = &mut self.state else { return };
         self.engine.advance_frame(dt);
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
         }
+        self.show_video_frames();
+        let Some(state) = &mut self.state else { return };
         if let Some(audio) = &self.audio {
             match self.engine.voices() {
                 Ok(voices) => audio.apply(&voices),
@@ -673,9 +715,96 @@ struct Cli {
 const DEMO_SHOW: &str = include_str!("../demo/show.json");
 const DEMO_DRIVER: &str = include_str!("../demo/test-driver.json");
 
+/// Decode the show's videos and tell the engine how long and how big they
+/// are. Without the feature there is nothing to decode and video layers
+/// simply show nothing.
+#[cfg(feature = "video")]
+fn decode_videos(engine: &mut Engine, paths: &[std::path::PathBuf]) -> Videos {
+    let mut videos = Videos::new();
+    // Frames are held in memory here, so a clip is decoded no larger than
+    // the canvas can show: a backglass video is often far bigger than the
+    // show it plays in, and full size would cost gigabytes.
+    let canvas = engine.show().map(|show| show.size);
+    let how = Decode {
+        size: canvas,
+        ..Decode::default()
+    };
+    // Measuring a clip means running a probe, so a show that names
+    // hundreds waits on hundreds of them. They do not depend on each
+    // other, so they run together.
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let opened: Vec<(String, Result<Clip, String>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(path) = paths.get(i) else {
+                            return mine;
+                        };
+                        let name = path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        mine.push((i, name, Clip::open(path, Some(how))));
+                    }
+                })
+            })
+            .collect();
+        let mut all: Vec<_> = workers
+            .into_iter()
+            .filter_map(|worker| worker.join().ok())
+            .flatten()
+            .collect();
+        // Back into the show's own order, so the log reads like the folder.
+        all.sort_by_key(|(i, ..)| *i);
+        all.into_iter()
+            .map(|(_, name, clip)| (name, clip))
+            .collect()
+    });
+    for (name, opened) in opened {
+        let started = Instant::now();
+        match opened {
+            Ok(clip) => {
+                let details = clip.details();
+                log::debug!(
+                    "video {name:?}: {:.1}s at {}x{}, measured in {:.0} ms",
+                    details.duration,
+                    details.width,
+                    details.height,
+                    started.elapsed().as_secs_f64() * 1000.0
+                );
+                if let Err(e) = engine.set_video(&name, details.duration, details.size()) {
+                    log::warn!("video {name:?}: {e}");
+                    continue;
+                }
+                videos.insert(name, clip);
+            }
+            Err(e) => log::warn!("skipping video {name:?}: {e}"),
+        }
+    }
+    videos
+}
+
+#[cfg(not(feature = "video"))]
+fn decode_videos(_: &mut Engine, paths: &[std::path::PathBuf]) -> Videos {
+    if !paths.is_empty() {
+        log::warn!(
+            "{} video(s) in the show, but this player was built without video support",
+            paths.len()
+        );
+    }
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut engine = Engine::new();
+    #[allow(unused_assignments)]
+    let mut videos = Videos::default();
     // Sound is optional: without a device the show still plays.
     let audio = if cli.no_audio {
         None
@@ -695,6 +824,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             for skipped in &loaded.skipped {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }
+            videos = decode_videos(&mut engine, &loaded.videos);
             for file in &loaded.sounds {
                 match Sound::decode(&file.extension, &file.bytes) {
                     Ok(sound) => {
@@ -741,6 +871,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App {
         engine,
+        videos,
         actions,
         driver,
         audio,
