@@ -834,12 +834,19 @@ pub enum Property {
     /// Whether the layer (and its subtree) shows and sounds; bindable,
     /// not animatable. Bound, it is on when the binding's number is not 0.
     Visible,
+    /// The color an image layer is multiplied by, as `#RRGGBB` or
+    /// `#RRGGBBAA`; bindable, not animatable. An empty value leaves the
+    /// image alone.
+    Tint,
 }
 
 impl Property {
     /// Whether the property holds a number; only those can be keyframed.
     pub fn is_numeric(self) -> bool {
-        !matches!(self, Property::Text | Property::Font | Property::Visible)
+        !matches!(
+            self,
+            Property::Text | Property::Font | Property::Visible | Property::Tint
+        )
     }
 }
 
@@ -902,10 +909,16 @@ impl Layer {
             }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
+            (Property::Tint, LayerKind::Image { tint, .. }) => {
+                Value::Text(tint.clone().unwrap_or_default())
+            }
             (Property::Gain, LayerKind::Group { gain, .. } | LayerKind::Audio { gain, .. }) => {
                 Value::Number(*gain)
             }
-            (Property::Text | Property::Font | Property::Frame | Property::Gain, _) => return None,
+            (
+                Property::Text | Property::Font | Property::Frame | Property::Gain | Property::Tint,
+                _,
+            ) => return None,
         })
     }
 }

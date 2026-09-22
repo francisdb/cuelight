@@ -493,7 +493,14 @@ comma separators: `1,500`).
 ```
 
 A text layer's `font` property can be bound to a variable naming a font
-style, typically through a map.
+style, typically through a map. An image layer's `tint` works the same
+way, bound to a variable naming a color: one sprite becomes a status
+light, a lamp or a team color without a layer per state.
+
+```json
+{ "property": "tint", "variable": "state",
+  "map": { "ok": "#00FF00", "warn": "#FFAA00", "bad": "#FF0000" } }
+```
 
 `map` looks the variable's value up (as text: `1`, `2.5`, `true`,
 `attract`) and uses the mapped value in its place; `default` covers values
@@ -506,8 +513,10 @@ the active player's score:
 { "property": "font", "variable": "player", "map": { "2": "score_active" }, "default": "score_inactive" }
 ```
 
-Font bindings may only map to declared font styles; `text`, `font` and
-`visible` can be bound but not keyframed. Binding or keyframing a property
+Font bindings may only map to declared font styles and tint bindings only
+to colors (`#RRGGBB`, `#RRGGBBAA`, or empty for no tint); `text`, `font`,
+`visible` and `tint` can be bound but not keyframed, so a tint changes
+over rather than fades. Binding or keyframing a property
 the layer's kind does not have (`font` on a shape) is rejected at load.
 
 Two more knobs sit on a binding, for inputs that are levels or that
