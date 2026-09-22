@@ -12,6 +12,7 @@ use crate::engine::{Engine, ResolvedShape};
 use crate::lru::ByteLru;
 use crate::model::{parse_color, DotShape, OutputMode, Pass, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
+use crate::path::PathElement;
 use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
@@ -213,6 +214,9 @@ pub fn build_vello_scene(
                     let circle = Circle::new((cx, cy), radius);
                     show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &circle);
                 }
+                ResolvedShape::Path { ref elements, .. } => {
+                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &bez_path(elements));
+                }
                 // Always push something so the matching ClipEnd balances;
                 // anything that is not a rect or circle clips nothing.
                 other => {
@@ -258,6 +262,18 @@ pub fn build_vello_scene(
                     .font_size(size as f32)
                     .brush(color)
                     .draw(Fill::NonZero, run());
+            }
+            ResolvedShape::Path { elements, stroke } => {
+                let path = bez_path(&elements);
+                if layer.color[3] > 0 {
+                    show.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
+                }
+                if let Some(([r, g, b, a], width)) = stroke {
+                    let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
+                    let stroke = Stroke::new(width);
+                    let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
+                    show.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+                }
             }
             ResolvedShape::Polygon { points } => {
                 let mut path = BezPath::new();
@@ -314,6 +330,22 @@ pub fn build_vello_scene(
         }
     }
     Ok(show)
+}
+
+/// A resolved path as vello draws it.
+fn bez_path(elements: &[PathElement]) -> BezPath {
+    let mut path = BezPath::new();
+    let pt = |[x, y]: [f64; 2]| vello::kurbo::Point::new(x, y);
+    for element in elements {
+        match *element {
+            PathElement::MoveTo(p) => path.move_to(pt(p)),
+            PathElement::LineTo(p) => path.line_to(pt(p)),
+            PathElement::QuadTo(c, p) => path.quad_to(pt(c), pt(p)),
+            PathElement::CubicTo(c1, c2, p) => path.curve_to(pt(c1), pt(c2), pt(p)),
+            PathElement::Close => path.close_path(),
+        }
+    }
+    path
 }
 
 /// Where a `show` sized canvas lands in a `target` sized surface: uniform

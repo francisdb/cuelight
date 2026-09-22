@@ -1,4 +1,5 @@
 use crate::easing::Easing;
+use crate::path::PathData;
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -401,9 +402,13 @@ pub enum LayerKind {
         #[serde(default = "default_scale")]
         gain: f64,
     },
+    /// A vector shape filled with `fill`, and outlined by `stroke` when
+    /// given.
     Shape {
         shape: Shape,
         fill: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke: Option<Stroke>,
     },
     /// A host-provided raster image, registered under `image` via
     /// [`Engine::set_image`](crate::Engine::set_image). Drawn with its
@@ -435,6 +440,18 @@ pub enum LayerKind {
         size: Option<[f64; 2]>,
         #[serde(default)]
         align: Align,
+    },
+    /// Vector artwork the host registered under `vector`
+    /// ([`Engine::set_vector`](crate::Engine::set_vector), the loader does
+    /// it for `assets/*.svg`), drawn like an image: its top-left corner at
+    /// the layer's x/y (or by `anchor`), at its natural size or scaled
+    /// into `size`. Skipped while not registered.
+    Vector {
+        vector: String,
+        /// Destination size `[width, height]`; the artwork's own size
+        /// when omitted.
+        #[serde(default)]
+        size: Option<[f64; 2]>,
     },
     /// A row of `digits` equal cells across `size` `[width, height]`
     /// (top-left at the layer's x/y) showing `text`, one character per
@@ -567,7 +584,7 @@ pub enum SegmentStyle {
 }
 
 /// Vector shapes, in the layer's local coordinate space.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[non_exhaustive]
@@ -576,6 +593,19 @@ pub enum Shape {
     Rect([f64; 4]),
     /// `[cx, cy, radius]`
     Circle([f64; 3]),
+    /// SVG path data (`"M 0 0 L 10 0 L 5 8 Z"`): lines, curves and arcs.
+    Path(PathData),
+}
+
+/// An outline drawn along a shape's edge, centered on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Stroke {
+    /// `#RRGGBB` or `#RRGGBBAA`
+    pub color: String,
+    /// Line width in the layer's units, above 0; 1 by default.
+    #[serde(default = "default_scale")]
+    pub width: f64,
 }
 
 /// An animatable layer property.

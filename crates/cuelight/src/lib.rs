@@ -32,20 +32,23 @@ mod model;
 #[cfg(feature = "outline-fonts")]
 mod outline;
 mod output;
+mod path;
 mod segments;
 mod value;
 
 pub use easing::Easing;
 pub use engine::{
-    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape, Voice,
+    Engine, Error, Event, FontData, ImageData, PlacedGlyph, ResolvedLayer, ResolvedShape, Vector,
+    VectorPath, Voice,
 };
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Border, DigitDisplay, Direction, DotShape, Dots, FontStyle, Justify, Key,
     Layer, LayerKind, NumberFormat, Output, OutputMode, Pass, Property, Retrigger, Scaling, Scene,
-    SegmentStyle, Shape, Sheet, Show, Timeline, Track, Transition, Triggers, FORMAT,
+    SegmentStyle, Shape, Sheet, Show, Stroke, Timeline, Track, Transition, Triggers, FORMAT,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
+pub use path::{PathData, PathElement};
 pub use value::Value;
 
 #[cfg(feature = "render")]

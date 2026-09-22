@@ -221,3 +221,46 @@ fn memory_without_a_show_document_is_an_error() {
     let err = cuelight_loader::load_from_memory(&mut Engine::new(), &files).unwrap_err();
     assert!(matches!(err, LoadError::NoShowDocument(_)), "{err}");
 }
+
+#[cfg(feature = "svg")]
+#[test]
+fn converts_an_svg_into_vector_artwork() {
+    use cuelight::{PathElement, ResolvedShape};
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10">
+        <g transform="translate(2 0)">
+          <rect x="0" y="0" width="4" height="10" fill="#ff0000"/>
+        </g>
+        <circle cx="15" cy="5" r="3" fill="none" stroke="#0000ff" stroke-width="2"/>
+        <rect x="0" y="0" width="1" height="1" fill="#00ff00" opacity="0.5"/>
+      </svg>"##;
+    let mut engine = Engine::new();
+    cuelight_loader::register_vector(&mut engine, "art", svg).unwrap();
+    let art = engine.vector("art").unwrap();
+    assert_eq!((art.width, art.height), (20.0, 10.0));
+    assert_eq!(art.paths.len(), 3);
+    // The group's transform is applied to the rect.
+    assert_eq!(art.paths[0].fill, Some([255, 0, 0, 255]));
+    assert_eq!(art.paths[0].elements[0], PathElement::MoveTo([2.0, 0.0]));
+    // An outline-only circle keeps its stroke and no fill.
+    assert_eq!(art.paths[1].fill, None);
+    assert_eq!(art.paths[1].stroke, Some(([0, 0, 255, 255], 2.0)));
+    // Opacity lands in the alpha.
+    assert_eq!(art.paths[2].fill, Some([0, 255, 0, 128]));
+
+    let mut files = std::collections::BTreeMap::new();
+    files.insert(
+        "show.json".to_owned(),
+        br#"{ "name": "svg", "size": [40, 20], "layers": [
+            { "name": "art", "type": "vector", "vector": "art", "size": [40, 20] } ] }"#
+            .to_vec(),
+    );
+    files.insert("assets/art.svg".to_owned(), svg.to_vec());
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert_eq!(loaded.vectors, ["art"]);
+    let layers = engine.resolved_layers().unwrap();
+    assert_eq!(layers.len(), 3);
+    let ResolvedShape::Path { elements, .. } = &layers[0].shape else {
+        panic!("{:?}", layers[0].shape);
+    };
+    assert_eq!(elements[0], PathElement::MoveTo([4.0, 0.0]));
+}

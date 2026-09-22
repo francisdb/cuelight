@@ -142,3 +142,32 @@ fn outline_text_fills_its_glyphs_and_borders_them() {
     assert_eq!(row[4], [0, 0, 0, 255]);
     assert_eq!(row[91], [0, 0, 0, 255]);
 }
+
+#[test]
+fn a_path_fills_inside_its_outline() {
+    // A right triangle covering the lower-left half of the canvas.
+    let show = r##"{ "name": "path", "size": [16, 16], "background": "#000000", "layers": [
+        { "name": "tri", "type": "shape", "shape": { "path": "M0 0 L0 16 L16 16 Z" }, "fill": "#FFFFFF" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 3, 12), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 12, 3), [0, 0, 0, 255]);
+}
+
+#[test]
+fn a_stroke_outlines_a_shape() {
+    // A transparent rect with a 2px stroke: the edge paints, the inside
+    // and the outside do not.
+    let show = r##"{ "name": "stroke", "size": [16, 16], "background": "#000000", "layers": [
+        { "name": "box", "type": "shape", "shape": { "rect": [4, 4, 8, 8] }, "fill": "#00000000",
+          "stroke": { "color": "#00FF00", "width": 2 } }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 4, 8), [0, 255, 0, 255]);
+    assert_eq!(pixel(&frame, 8, 8), [0, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 1, 8), [0, 0, 0, 255]);
+}
