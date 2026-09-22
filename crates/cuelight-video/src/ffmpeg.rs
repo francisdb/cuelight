@@ -173,3 +173,68 @@ pub fn decode(source: Source<'_>, how: Decode) -> Result<Video, String> {
     );
     Video::from_frames([width, height], rate, frames)
 }
+
+/// Whether the file has an audio stream at all, so a clip without one
+/// costs a probe rather than a decode that produces nothing.
+pub fn has_sound(path: &Path) -> bool {
+    Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=nw=1:nk=1",
+        ])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).trim() == "audio")
+}
+
+/// Decode the file's audio stream to interleaved stereo f32 at `rate`.
+///
+/// Raw samples rather than a container: there is nothing to parse on this
+/// side, and a pipe cannot carry a WAV header that knows its own length.
+/// `None` when the file has no audio.
+pub fn soundtrack(path: &Path, rate: u32) -> Result<Option<Vec<f32>>, String> {
+    if !has_sound(path) {
+        return Ok(None);
+    }
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args([
+            "-vn",
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "2",
+            "-ar",
+            &rate.to_string(),
+            "pipe:1",
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("running ffmpeg: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "decoding the soundtrack: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let samples = out
+        .stdout
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect::<Vec<f32>>();
+    Ok((!samples.is_empty()).then_some(samples))
+}

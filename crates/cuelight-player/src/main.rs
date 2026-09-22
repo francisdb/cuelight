@@ -792,6 +792,50 @@ fn decode_videos(engine: &mut Engine, paths: &[std::path::PathBuf]) -> Videos {
     videos
 }
 
+/// The rate a clip's soundtrack is decoded at. The mixer resamples, and a
+/// `Sound` carries its own rate, so this need not match the device: it
+/// only has to be decided before one is open, since whether any clip has
+/// sound is what decides whether to open one at all.
+#[cfg(feature = "video")]
+const SOUNDTRACK_RATE: u32 = 48_000;
+
+/// Tell the engine about the soundtrack of every clip that has one, under
+/// the video's name, which is how it is told a clip can be heard. Hands
+/// back the samples for a mixer, which is not open yet: whether any clip
+/// has sound is what decides whether to open one.
+#[cfg(feature = "video")]
+fn decode_video_sound(engine: &mut Engine, videos: &Videos) -> Vec<(String, Arc<Sound>)> {
+    let mut decoded = Vec::new();
+    for (name, clip) in videos {
+        let samples = match clip.soundtrack(SOUNDTRACK_RATE) {
+            Ok(Some(samples)) => samples,
+            Ok(None) => continue,
+            Err(e) => {
+                log::warn!("soundtrack of {name:?}: {e}");
+                continue;
+            }
+        };
+        let sound = Sound {
+            rate: SOUNDTRACK_RATE,
+            channels: 2,
+            samples,
+        };
+        let duration = sound.duration();
+        if let Err(e) = engine.set_sound(name, duration) {
+            log::warn!("soundtrack of {name:?}: {e}");
+            continue;
+        }
+        log::debug!("video {name:?}: {duration:.1}s of sound");
+        decoded.push((name.clone(), Arc::new(sound)));
+    }
+    decoded
+}
+
+#[cfg(not(feature = "video"))]
+fn decode_video_sound(_: &mut Engine, _: &Videos) -> Vec<(String, Arc<Sound>)> {
+    Vec::new()
+}
+
 #[cfg(not(feature = "video"))]
 fn decode_videos(_: &mut Engine, paths: &[std::path::PathBuf]) -> Videos {
     if !paths.is_empty() {
@@ -811,11 +855,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // device is looked for once the show is loaded, since a show with no
     // audio layer has no use for one.
     let mut audio = None;
-    let want_audio = |engine: &Engine, audio: &mut Option<Output>| {
+    // `anyway` is for a clip that turned out to carry a soundtrack: whether
+    // a video is heard is not something the show's document can say, so
+    // `has_sound` does not count video layers and the host says so itself.
+    let want_audio = |engine: &Engine, audio: &mut Option<Output>, anyway: bool| {
         if cli.no_audio || audio.is_some() {
             return;
         }
-        if !engine.show().is_some_and(cuelight::Show::has_sound) {
+        if !anyway && !engine.show().is_some_and(cuelight::Show::has_sound) {
             log::debug!("no audio layers in this show; not looking for a sound device");
             return;
         }
@@ -835,7 +882,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }
             videos = decode_videos(&mut engine, &loaded.videos);
-            want_audio(&engine, &mut audio);
+            let clip_sound = decode_video_sound(&mut engine, &videos);
+            want_audio(&engine, &mut audio, !clip_sound.is_empty());
+            if let Some(audio) = &audio {
+                for (name, sound) in clip_sound {
+                    audio.set_sound(&name, sound);
+                }
+            }
             for file in &loaded.sounds {
                 match Sound::decode(&file.extension, &file.bytes) {
                     Ok(sound) => {
@@ -855,7 +908,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             log::info!("no show given, playing the built-in demo");
             engine.load_show(DEMO_SHOW)?;
-            want_audio(&engine, &mut audio);
+            want_audio(&engine, &mut audio, false);
             Some(Driver::from_json(DEMO_DRIVER)?)
         }
     };
