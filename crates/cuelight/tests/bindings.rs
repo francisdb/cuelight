@@ -246,3 +246,79 @@ fn a_tint_cannot_be_eased() {
         .unwrap_err();
     assert!(format!("{e}").contains("cannot be eased"), "{e}");
 }
+
+#[test]
+fn a_binding_on_a_variable_the_show_does_not_declare_is_reported() {
+    let mut engine = Engine::new();
+    engine
+        .load_show(&show(&format!(
+            r#"{{ "name": "box", {BOX}, "bindings": [
+                 {{ "property": "opacity", "variable": "lmap" }} ] }}"#
+        )))
+        .unwrap();
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("lmap"), "{warnings:?}");
+    assert!(warnings[0].contains("does not declare"), "{warnings:?}");
+
+    // The binding is not broken, only quiet: a host may set it later.
+    engine.set_variable("lmap", 0.5);
+    engine.advance_frame(0.0);
+    let drawn = &engine.resolved_layers().unwrap()[0];
+    assert!((drawn.opacity - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn a_tint_variable_that_does_not_start_as_a_color_is_reported() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "s", "size": [64, 32], "variables": { "c": "green" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "c" } ] } ] }"##,
+        )
+        .unwrap();
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("\"green\""), "{warnings:?}");
+    assert!(warnings[0].contains("#RRGGBB"), "{warnings:?}");
+}
+
+#[test]
+fn a_font_variable_that_does_not_start_as_a_style_is_reported() {
+    let mut engine = Engine::new();
+    let warnings: Vec<String> = {
+        engine
+            .load_show(
+                r##"{ "name": "s", "size": [64, 32], "variables": { "f": "heavy" },
+                      "fonts": { "plain": { "file": "blocks" } },
+                      "layers": [ { "name": "score", "type": "text", "text": "0",
+                                    "font": "plain",
+                                    "bindings": [ { "property": "font", "variable": "f" } ] } ] }"##,
+            )
+            .unwrap();
+        engine.load_warnings().to_vec()
+    };
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("font styles"), "{warnings:?}");
+}
+
+#[test]
+fn a_mapped_binding_is_not_reported_for_its_variables_value() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "s", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "ok": "#00FF00" } } ] } ] }"##,
+        )
+        .unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "a map's values are checked at load, not its variable: {:?}",
+        engine.load_warnings()
+    );
+}
