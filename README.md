@@ -42,8 +42,9 @@ to demo, to test and to render.
 ## What a show is made of
 
 - **Layers**: groups (optionally clipped), shapes, images and sprite
-  sheets, text in bitmap or outline fonts, and digit rows drawn as segment
-  displays. All share position, opacity, scale, anchor and visibility.
+  sheets, text in bitmap or outline fonts, digit rows drawn as segment
+  displays, and sounds. All share position, opacity, scale, anchor and
+  visibility.
 - **Scenes**: named sets of layers within a show, entered by a trigger.
 - **Timelines**: keyframes with easing on layer properties, started on load
   or by triggers, with delay, repeat and loop; a timeline can fire a
@@ -162,8 +163,12 @@ required.
   their own. Hosts without a filesystem load the same folders from
   memory; the `cuelight-manifest` tool writes the `manifest.json` that
   tells a browser which files a show folder has.
+- [`cuelight-audio`](crates/cuelight-audio): sound for hosts: decodes
+  sound files (WAV, FLAC, Ogg Vorbis, MP3) and mixes what the engine says
+  should be heard, to a sound device or, offline, to a WAV file.
 - [`cuelight-player`](crates/cuelight-player): a windowed player for show
-  folders, driven from the console, the keyboard or a driver script.
+  folders, with sound, driven from the console, the keyboard or a driver
+  script.
 - [`cuelight-web`](crates/cuelight-web): the player for browsers: a show
   folder fetched over HTTP, rendered into a canvas with WebGPU, driven
   through a small JavaScript API. `crates/cuelight-web/demo/build.sh`

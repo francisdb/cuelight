@@ -51,13 +51,16 @@ A show exists in two forms:
     assets/             images, registered by filename stem (PNG)
       fonts/            fonts, registered by filename stem: bitmap (.fnt
                         plus its page PNGs) or outline (.ttf, .otf)
+      sounds/           sounds, registered by filename stem (.wav, .flac,
+                        .ogg, .mp3)
   ```
 
 Either way the engine only ever receives the single JSON document through
-`load_show` plus `set_image` calls; it does no file I/O itself. Resolving
-a folder (reading the manifest, decoding and registering `assets/`,
-picking up the driver) is host-side convention, implemented by the
-`cuelight-loader` crate. A zipped folder is the natural future single-file
+`load_show` plus `set_image`, `set_font` and `set_sound` calls; it does no
+file I/O itself. Resolving a folder (reading the manifest, decoding and
+registering `assets/`, picking up the driver) is host-side convention,
+implemented by the `cuelight-loader` crate (sounds are decoded by
+`cuelight-audio`). A zipped folder is the natural future single-file
 distribution form.
 
 ## Top level
@@ -185,7 +188,8 @@ the conversion alone, for hosts that want to do the rest themselves).
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `image`, `text` or `digits` (see below).
+- `type`: `group`, `shape`, `image`, `text`, `digits` or `audio` (see
+  below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of this layer's own geometry around
@@ -208,7 +212,9 @@ Layer kinds:
 - `group`: `children` is a nested layer list. Optional `clip` is a shape
   (`{ "rect": [x, y, width, height] }` or `{ "circle": [cx, cy, radius] }`,
   in the group's local space like a shape layer's) outside which the
-  children do not show: a window onto its content.
+  children do not show: a window onto its content. `gain` (default 1)
+  scales the loudness of the audio layers in the subtree, see
+  [Sound](#sound).
 - `shape`: `shape` is `{ "rect": [x, y, width, height] }` or
   `{ "circle": [cx, cy, radius] }` in the layer's local space, plus a
   `fill` color.
@@ -247,6 +253,60 @@ Layer kinds:
   that are rendered on their own pixel grid (a gray `output.mode`, or
   `pixel_perfect` scaling) the straight bars are a whole number of pixels
   thick, lie on pixel boundaries and end flat, so small displays stay crisp.
+- `audio`: a sound, played like a timeline is; draws nothing. See
+  [Sound](#sound).
+
+## Sound
+
+```json
+{ "name": "thunder", "type": "audio", "sound": "thunder",
+  "trigger": "strike", "stop": "hush", "gain": 0.8, "bus": "sfx",
+  "on_end": "thunder_done" }
+```
+
+An audio layer plays `sound`, a sound the host registered by name (by
+convention the file's stem, from `assets/sounds/`). It sits in the layer
+tree like anything else: a scene's music starts with the scene and stops
+when the scene is left, a group's `gain` scales every sound below it, and
+`gain` is a normal numeric property, so bindings, transitions and
+timelines give volume control, fades and warm-ups for free. It is
+controlled the way a timeline is, with the same names and meanings:
+
+- `trigger` (a name or a list) plays it; `autoplay` plays it when the show
+  loads or its scene is entered.
+- `delay`, `loop`, `repeat`, `on_end`: as on timelines. `on_end` fires when
+  a play finishes (after its repeats, never for loops) and is reported to
+  the host like a timeline's.
+- `stop` (a name or a list): a trigger that ends the play at once, without
+  `on_end`.
+- `retrigger` says what the trigger does while the sound already plays:
+  `restart` (default: the play so far stops and a new one begins),
+  `overlap` (another play sounds on top, up to `voices` at once, default
+  4; the oldest stops beyond that: footsteps, flaps, coins) or `ignore`
+  (the play finishes undisturbed).
+- `gain` (default 1): loudness, 0 to 1 and above, multiplied by the gains
+  of the groups above it. Only groups and audio layers have it.
+- `bus` (optional): a name the host may route to an output; nothing in
+  the engine depends on it yet.
+
+An invisible audio layer, or one in an invisible subtree, is not heard,
+like everything else in that subtree resolves to nothing.
+
+The engine never opens an audio device or touches a sample. A host
+registers each sound with only its duration (`Engine::set_sound`), which
+is all the engine needs to loop, repeat and end plays, and reads back what
+should be heard each frame with `Engine::voices()`: one voice per play,
+with a stable id, the sound's name, the position in seconds, the effective
+gain, whether it loops, and the bus. An audio backend diffs that list
+frame by frame (a new id starts at its position, a vanished id stops, a
+changed gain ramps, a position that jumped is resynced); a host with a
+mixer of its own consumes the same list. Positions are a function of
+engine time, so an offline render mixes sound sample-exact against the
+frames, and a seek only needs the backend to resync. A sound registered
+after its layer started playing is heard from where it would be by then;
+until then the play is silent and does not end. The `cuelight-audio` crate
+is that backend: decoding, a mixer, a sound device for the player and a
+WAV file for offline rendering.
 
 ## Fonts
 
@@ -302,7 +362,8 @@ A binding wires a layer property to a variable, evaluated every frame:
 ```
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
-`x`, `y`, `opacity`, `scale`, and `frame` for sprite sheet images.
+`x`, `y`, `opacity`, `scale`, `frame` for sprite sheet images, and `gain`
+for groups and audio layers.
 
 A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
@@ -458,7 +519,8 @@ The engine is driven exclusively through four calls: `load_show` (JSON in),
 fires (`on_end` triggers) comes back through `drain_events()`, so content
 can tell the host that something finished. Output is either
 `resolved_layers()` (a flat, GPU-free draw list) or the `render` feature's
-vello rasterizer. Everything else, including where variable values and
+vello rasterizer, plus `voices()` for what should be heard (see
+[Sound](#sound)). Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 

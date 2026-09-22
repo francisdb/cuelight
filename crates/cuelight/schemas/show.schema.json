@@ -478,6 +478,12 @@
               ],
               "default": null
             },
+            "gain": {
+              "description": "Loudness of the sounds in the subtree, multiplied down the tree\nlike opacity.",
+              "type": "number",
+              "format": "double",
+              "default": 1.0
+            },
             "type": {
               "type": "string",
               "const": "group"
@@ -635,6 +641,91 @@
             "size",
             "display"
           ]
+        },
+        {
+          "description": "A sound the host registered under `sound` with its duration\n([`Engine::set_sound`](crate::Engine::set_sound)), played the way a\ntimeline is: on `trigger` or at load with `autoplay`, after `delay`,\nlooping or repeating, firing `on_end`. Draws nothing. What plays is\nreported by [`Engine::voices`](crate::Engine::voices); the engine\nnever touches samples.",
+          "type": "object",
+          "properties": {
+            "autoplay": {
+              "description": "Play when the show loads or the scene is entered.",
+              "type": "boolean",
+              "default": false
+            },
+            "bus": {
+              "description": "Name of the bus the sound plays through; hosts route buses to\noutputs. Their default when omitted.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "delay": {
+              "description": "Seconds between the trigger and the first sample.",
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "gain": {
+              "description": "Loudness, 0 to 1 and above, times the gains of the groups above\nit. A normal numeric property: bindable and animatable.",
+              "type": "number",
+              "format": "double",
+              "default": 1.0
+            },
+            "loop": {
+              "description": "Repeat forever. Cannot be combined with `repeat`.",
+              "type": "boolean",
+              "default": false
+            },
+            "on_end": {
+              "description": "Trigger fired when a play finishes (never for loops).",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "repeat": {
+              "description": "Number of plays (fractions allowed); once when omitted.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double",
+              "default": null
+            },
+            "retrigger": {
+              "description": "What the trigger does while the sound is already playing.",
+              "$ref": "#/$defs/Retrigger",
+              "default": "restart"
+            },
+            "sound": {
+              "type": "string"
+            },
+            "stop": {
+              "description": "Trigger name, or list of names, that stops it.",
+              "$ref": "#/$defs/Triggers",
+              "default": null
+            },
+            "trigger": {
+              "description": "Trigger name, or list of names, that plays it.",
+              "$ref": "#/$defs/Triggers",
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "audio"
+            },
+            "voices": {
+              "description": "With `overlap`, how many plays may sound at once; the oldest\nstops beyond it. Default 4.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 4,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "sound"
+          ]
         }
       ],
       "required": [
@@ -768,6 +859,31 @@
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"
+        },
+        {
+          "description": "Loudness of an audio layer or a group's subtree.",
+          "type": "string",
+          "const": "gain"
+        }
+      ]
+    },
+    "Retrigger": {
+      "description": "What an audio layer's trigger does while the layer is already playing.",
+      "oneOf": [
+        {
+          "description": "Start over: the play so far stops.",
+          "type": "string",
+          "const": "restart"
+        },
+        {
+          "description": "Start another play on top, up to the layer's `voices`.",
+          "type": "string",
+          "const": "overlap"
+        },
+        {
+          "description": "Let the play finish; the trigger does nothing.",
+          "type": "string",
+          "const": "ignore"
         }
       ]
     },

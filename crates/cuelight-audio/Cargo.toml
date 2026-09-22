@@ -1,0 +1,25 @@
+[package]
+name = "cuelight-audio"
+description = "Sound for cuelight hosts: decode sound files, mix what the engine says should be heard, to a device or to a file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["multimedia", "audio", "mixer", "player"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+cuelight = { path = "../cuelight", version = "0.0.1", default-features = false }
+symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "ogg", "vorbis", "flac", "mp3"] }
+hound = "3.5"
+cpal = { version = "0.18", optional = true }
+log = "0.4"
+
+[features]
+default = ["live"]
+# Play through a sound device (cpal). Off for hosts that only render to a
+# file or mix themselves.
+live = ["dep:cpal"]
+
+[dev-dependencies]
+hound = "3.5"
