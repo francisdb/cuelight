@@ -25,10 +25,18 @@
 //! `wasm-bindgen --target web`. It is a plain build; for production see the
 //! note in that script on shrinking the download.
 //!
+//! Sound goes through WebAudio: the folder's `assets/sounds/` are decoded
+//! by the browser and the engine's voice list drives buffer sources and
+//! gain nodes (the `audio` module). Browsers keep audio silent until the page has
+//! been clicked or typed into; the player resumes its context on the first
+//! such gesture, and `player.audioRunning` says whether it has.
+//!
 //! WebGPU only: without it `CuelightPlayer.create` rejects with a message
 //! saying so. The crate is empty on targets other than `wasm32`.
 
 #![cfg(target_arch = "wasm32")]
+
+mod audio;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -49,6 +57,8 @@ use web_sys::HtmlCanvasElement;
 const MAX_FRAME_SECONDS: f64 = 0.1;
 
 type FrameCallback = Closure<dyn FnMut(f64)>;
+/// An event name and the handler listening for it on the document.
+type GestureListener = (String, Closure<dyn FnMut()>);
 
 fn error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
@@ -137,6 +147,8 @@ struct Inner {
     last_ms: Option<f64>,
     on_event: Option<js_sys::Function>,
     pending_frame: Option<i32>,
+    /// The page's sound, when the browser gave us an audio context.
+    audio: Option<audio::WebAudio>,
 }
 
 impl Inner {
@@ -192,6 +204,11 @@ impl Inner {
         }
         self.engine.advance_frame(dt);
         let events = self.engine.drain_events();
+        if let Some(audio) = &mut self.audio {
+            if let Ok(voices) = self.engine.voices() {
+                audio.apply(&voices);
+            }
+        }
 
         self.sync_size();
         let surface = &self.surface;
@@ -257,6 +274,8 @@ pub struct CuelightPlayer {
     // Owns the frame callback; the callback itself only holds weak
     // references, so dropping the player ends the loop.
     _frame: Rc<RefCell<Option<FrameCallback>>>,
+    // The gesture listeners that wake the audio context, removed on drop.
+    _gestures: Vec<GestureListener>,
 }
 
 #[wasm_bindgen]
@@ -291,6 +310,37 @@ impl CuelightPlayer {
                 .iter()
                 .map(|file| format!("asset {file:?} was skipped: no decoder for this format")),
         );
+        // Sounds: decoded by the browser, registered by duration.
+        let mut audio = match audio::WebAudio::new() {
+            Ok(audio) => Some(audio),
+            Err(e) => {
+                warnings.push(format!("no sound: {}", js_error_text(&e)));
+                None
+            }
+        };
+        if let Some(audio) = &mut audio {
+            for path in &loaded.sounds {
+                let Some(bytes) = files.get(path) else {
+                    continue;
+                };
+                let name = path
+                    .rsplit('/')
+                    .next()
+                    .and_then(|file| file.rsplit_once('.'))
+                    .map_or(path.as_str(), |(stem, _)| stem);
+                match audio.decode(name, bytes).await {
+                    Ok(duration) => {
+                        if let Err(e) = engine.set_sound(name, duration) {
+                            warnings.push(format!("sound {path:?}: {e}"));
+                        }
+                    }
+                    Err(e) => warnings.push(format!(
+                        "sound {path:?} could not be decoded: {}",
+                        js_error_text(&e)
+                    )),
+                }
+            }
+        }
         for warning in &warnings {
             web_sys::console::warn_1(&format!("cuelight: {warning}").into());
         }
@@ -325,12 +375,36 @@ impl CuelightPlayer {
             last_ms: None,
             on_event: None,
             pending_frame: None,
+            audio,
         }));
         let frame = start_frames(&inner)?;
+        let gestures = listen_for_gestures(&inner)?;
         Ok(CuelightPlayer {
             inner,
             _frame: frame,
+            _gestures: gestures,
         })
+    }
+
+    /// Whether sound is playing, or the browser still waits for a click or
+    /// a key press on the page before it lets audio through.
+    #[wasm_bindgen(getter, js_name = audioRunning)]
+    pub fn audio_running(&self) -> bool {
+        self.inner
+            .borrow()
+            .audio
+            .as_ref()
+            .is_some_and(audio::WebAudio::running)
+    }
+
+    /// Ask the browser to let sound through; only works from within a
+    /// click or key handler, which the player already installs on the
+    /// page, so pages rarely need this.
+    #[wasm_bindgen(js_name = resumeAudio)]
+    pub fn resume_audio(&self) {
+        if let Some(audio) = &self.inner.borrow().audio {
+            audio.resume();
+        }
     }
 
     /// Fire a trigger.
@@ -446,7 +520,43 @@ impl Drop for CuelightPlayer {
         if let (Some(id), Some(window)) = (pending, web_sys::window()) {
             let _ = window.cancel_animation_frame(id);
         }
+        if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+            for (event, closure) in &self._gestures {
+                let _ = document
+                    .remove_event_listener_with_callback(event, closure.as_ref().unchecked_ref());
+            }
+        }
     }
+}
+
+fn js_error_text(e: &JsValue) -> String {
+    e.as_string()
+        .or_else(|| {
+            e.dyn_ref::<js_sys::Error>()
+                .map(|e| String::from(e.message()))
+        })
+        .unwrap_or_else(|| format!("{e:?}"))
+}
+
+/// Resume the audio context on the first click or key press anywhere on
+/// the page: browsers only let sound through after a gesture, and only
+/// when asked from within its handler.
+fn listen_for_gestures(inner: &Rc<RefCell<Inner>>) -> Result<Vec<GestureListener>, JsValue> {
+    let document = window()?.document().ok_or_else(|| error("no document"))?;
+    let mut listeners = Vec::new();
+    for event in ["pointerdown", "keydown"] {
+        let weak = Rc::downgrade(inner);
+        let closure = Closure::new(move || {
+            if let Some(inner) = weak.upgrade() {
+                if let Some(audio) = &inner.borrow().audio {
+                    audio.resume();
+                }
+            }
+        });
+        document.add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())?;
+        listeners.push((event.to_owned(), closure));
+    }
+    Ok(listeners)
 }
 
 /// Start the `requestAnimationFrame` loop. The returned cell owns the

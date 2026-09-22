@@ -70,7 +70,8 @@ async function play(name) {
 // The driver changes variables too: show what the show currently holds.
 setInterval(() => {
   if (!player) return;
-  $("scene").textContent = player.activeScene ? `scene: ${player.activeScene}` : "";
+  $("scene").textContent = (player.activeScene ? `scene: ${player.activeScene}` : "") +
+    (player.audioRunning ? "" : " (click or press a key for sound)");
   $("driver").textContent = player.driverPlaying ? "pause driver" : "play driver";
   for (const input of $("variables").querySelectorAll("input")) {
     if (input === document.activeElement) continue;
