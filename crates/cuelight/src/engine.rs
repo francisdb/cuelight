@@ -1306,7 +1306,7 @@ impl Engine {
     fn binding_number(&self, site: &TransitionSite, b: &Binding) -> Option<f64> {
         let value = self.binding_value(site, b)?;
         let n = match (b.property, &value) {
-            (Property::Font, _) => return None,
+            (Property::Font | Property::Tint, _) => return None,
             (Property::Text, Value::Number(n)) => *n,
             (Property::Text, _) => return None,
             _ => value.as_number(),
@@ -1323,6 +1323,13 @@ impl Engine {
                 other => other.to_text(),
             })),
             Property::Visible => Some(Value::Bool(scaled(b, value.as_number()) != 0.0)),
+            // Only real colors apply, as only declared styles do.
+            Property::Tint => match value {
+                Value::Text(color) if color.is_empty() || parse_color(&color).is_some() => {
+                    Some(Value::Text(color))
+                }
+                _ => None,
+            },
             // Only declared font styles apply.
             Property::Font => match value {
                 Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {
@@ -1898,11 +1905,7 @@ impl Engine {
                         }
                     }
                     LayerKind::Image {
-                        image,
-                        size,
-                        sheet,
-                        tint,
-                        ..
+                        image, size, sheet, ..
                     } => {
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
@@ -1926,8 +1929,12 @@ impl Engine {
                                     width: width * scale,
                                     height: height * scale,
                                 },
-                                // Validated at load.
-                                color: tint.as_deref().and_then(parse_color).unwrap_or([255; 4]),
+                                // Validated at load, and a binding only
+                                // ever feeds it a color it could parse.
+                                color: {
+                                    let tint = self.text(root, layer, path, Property::Tint);
+                                    parse_color(&tint).unwrap_or([255; 4])
+                                },
                                 opacity,
                                 blend: layer.blend,
                                 transform,
@@ -2266,8 +2273,10 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
-                    let problem = if matches!(binding.property, Property::Font | Property::Visible)
-                    {
+                    let problem = if matches!(
+                        binding.property,
+                        Property::Font | Property::Visible | Property::Tint
+                    ) {
                         Some("is on a binding that cannot be eased")
                     } else if !positive(transition.duration) {
                         Some("needs a duration above 0")
@@ -2285,6 +2294,19 @@ fn validate(show: &Show) -> Result<(), Error> {
                             "transition of the {:?} binding of layer {:?} {problem}",
                             binding.property, layer.name
                         )));
+                    }
+                }
+                if binding.property == Property::Tint {
+                    let mapped = binding.map.iter().flat_map(|m| m.values());
+                    for value in mapped.chain(&binding.default) {
+                        let color = matches!(value, Value::Text(c) if c.is_empty()
+                            || parse_color(c).is_some());
+                        if !color {
+                            return Err(Error::InvalidShow(format!(
+                                "tint binding of layer {:?} maps to {value:?}, not a color",
+                                layer.name
+                            )));
+                        }
                     }
                 }
                 if binding.property != Property::Font {

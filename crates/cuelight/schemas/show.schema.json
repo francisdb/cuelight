@@ -1001,6 +1001,11 @@
           "description": "Whether the layer (and its subtree) shows and sounds; bindable,\nnot animatable. Bound, it is on when the binding's number is not 0.",
           "type": "string",
           "const": "visible"
+        },
+        {
+          "description": "The color an image layer is multiplied by, as `#RRGGBB` or\n`#RRGGBBAA`; bindable, not animatable. An empty value leaves the\nimage alone.",
+          "type": "string",
+          "const": "tint"
         }
       ]
     },

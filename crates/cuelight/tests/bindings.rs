@@ -168,3 +168,81 @@ fn rejects_bad_binding_extras() {
         .to_string();
     assert!(err.contains("can only be bound"), "{err}");
 }
+
+/// The color an image layer is drawn with.
+fn tint_of(engine: &Engine) -> [u8; 4] {
+    engine.resolved_layers().unwrap()[0].color
+}
+
+#[test]
+fn tint_follows_a_variable() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "status", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "tint": "#808080",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "ok": "#00FF00", "warn": "#FFAA00",
+                                                         "bad": "#FF0000" } } ] } ] }"##,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+    assert_eq!(tint_of(&engine), [0, 255, 0, 255]);
+    engine.set_variable("state", "bad");
+    engine.advance_frame(0.0);
+    assert_eq!(
+        tint_of(&engine),
+        [255, 0, 0, 255],
+        "one layer, three states"
+    );
+
+    // A value the map does not cover leaves the layer's own tint.
+    engine.set_variable("state", "unknown");
+    engine.advance_frame(0.0);
+    assert_eq!(tint_of(&engine), [128, 128, 128, 255]);
+}
+
+#[test]
+fn an_empty_tint_leaves_the_image_alone() {
+    let mut engine = Engine::new();
+    engine.set_image("lamp", 1, 1, vec![255; 4]).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "status", "size": [64, 32], "variables": { "state": "off" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "tint": "#FF0000",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "off": "", "on": "#FF0000" } } ] } ] }"##,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+    assert_eq!(tint_of(&engine), [255; 4], "an empty tint is no tint");
+}
+
+#[test]
+fn a_tint_binding_must_map_to_colors() {
+    let e = Engine::new()
+        .load_show(
+            r##"{ "name": "status", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "map": { "ok": "green" } } ] } ] }"##,
+        )
+        .unwrap_err();
+    assert!(format!("{e}").contains("not a color"), "{e}");
+}
+
+#[test]
+fn a_tint_cannot_be_eased() {
+    let e = Engine::new()
+        .load_show(
+            r##"{ "name": "status", "size": [64, 32], "variables": { "state": "ok" },
+                  "layers": [ { "name": "light", "type": "image", "image": "lamp",
+                                "bindings": [ { "property": "tint", "variable": "state",
+                                                "transition": { "duration": 1 } } ] } ] }"##,
+        )
+        .unwrap_err();
+    assert!(format!("{e}").contains("cannot be eased"), "{e}");
+}
