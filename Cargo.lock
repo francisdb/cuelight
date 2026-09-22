@@ -590,10 +590,18 @@ dependencies = [
  "cuelight",
  "cuelight-audio",
  "cuelight-loader",
+ "cuelight-video",
  "env_logger",
  "log",
  "pollster",
  "winit",
+]
+
+[[package]]
+name = "cuelight-video"
+version = "0.0.1"
+dependencies = [
+ "log",
 ]
 
 [[package]]

@@ -24,7 +24,8 @@ pub struct Manifest {
     /// Version of this manifest layout.
     pub format: u32,
     /// `show.json`, `test-driver.json` when present, then everything
-    /// directly in `assets/`, `assets/fonts/` and `assets/sounds/`, sorted.
+    /// directly in `assets/`, `assets/fonts/`, `assets/sounds/` and
+    /// `assets/videos/`, sorted.
     pub files: Vec<String>,
 }
 
@@ -39,7 +40,7 @@ impl Manifest {
         if dir.join("test-driver.json").is_file() {
             files.push("test-driver.json".to_owned());
         }
-        for sub in ["assets", "assets/fonts", "assets/sounds"] {
+        for sub in ["assets", "assets/fonts", "assets/sounds", "assets/videos"] {
             let path = dir.join(sub);
             if !path.is_dir() {
                 continue;
