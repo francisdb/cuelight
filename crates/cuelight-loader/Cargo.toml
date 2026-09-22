@@ -15,15 +15,25 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 usvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"], optional = true }
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+
+[dev-dependencies]
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [features]
-default = ["png", "outline-fonts", "svg"]
+default = ["png", "outline-fonts", "svg", "pack"]
 # Convert .svg files under assets/ into vector artwork (paths with fills
 # and strokes; text becomes paths through the system's fonts).
 svg = ["dep:usvg"]
+# Read and write packed shows (.cuelight, a zip of a show folder).
+pack = ["dep:zip"]
 # Image decoders. Hosts that decode images themselves (a browser, a game
 # engine) can turn them off and register pixels with Engine::set_image.
 png = ["dep:png"]
 # Register .ttf / .otf files as outline fonts (pulls the font metrics code
 # into the engine). Without it such files are reported as skipped.
 outline-fonts = ["cuelight/outline-fonts"]
+
+[[bin]]
+name = "cuelight-pack"
+required-features = ["pack"]

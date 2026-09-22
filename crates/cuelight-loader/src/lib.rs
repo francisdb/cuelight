@@ -4,10 +4,12 @@
 //! host registers. This crate is that host work, shared so every host does
 //! not write it again:
 //!
-//! - [`load`]: a show folder (or a loose show file) from disk into an engine.
+//! - [`load`]: a show from disk into an engine: a show folder, a loose show
+//!   file, or a packed show (`.cuelight`, see [`pack`]).
 //! - [`load_from_memory`]: the same folder conventions over files held in
 //!   memory, for hosts without a filesystem (web, embedded assets), with
-//!   [`Manifest`] telling them which files a show folder has.
+//!   [`Manifest`] telling them which files a show folder has. [`load`]
+//!   goes through it too, so every form loads the same way.
 //! - [`register_image`] / [`register_font`] / [`register_vector`]: single
 //!   assets from bytes.
 //! - [`Driver`]: scripted triggers and variable changes with delays, the
@@ -23,8 +25,11 @@
 //!                       filename stem
 //!     fonts/            fonts, registered by filename stem: bitmap (.fnt
 //!                       plus its page images) or outline (.ttf, .otf)
-//!     sounds/           sound files, listed for the host's audio backend
+//!     sounds/           sound files, handed to the host's audio backend
 //! ```
+//!
+//! The same folder travels as one file: `myshow.cuelight`, a zip of its
+//! contents (the `cuelight-pack` tool writes it, [`pack`] is the call).
 //!
 //! Where bytes come from and how they become pixels are separate concerns.
 //! Image formats are decoded by extension in [`decode_image`], each behind
@@ -35,15 +40,20 @@
 
 mod driver;
 mod manifest;
+#[cfg(feature = "pack")]
+mod pack;
 #[cfg(feature = "svg")]
 mod svg;
 
 pub use driver::{Driver, DriverPlayer, Step};
-pub use manifest::{load_from_memory, LoadedFiles, Manifest, MANIFEST_FILE};
+pub use manifest::{load_from_memory, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE};
+#[cfg(feature = "pack")]
+pub use pack::{pack, read_pack, unpack, PACK_EXTENSION};
 #[cfg(feature = "svg")]
 pub use svg::convert_svg;
 
 use cuelight::{BitmapFont, Engine};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
@@ -68,88 +78,91 @@ pub enum LoadError {
 }
 
 /// What [`load`] found besides the show it loaded into the engine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Loaded {
-    /// The show document that was loaded.
+    /// What was loaded: the folder's `show.json`, the loose show file, or
+    /// the packed show.
     pub show: PathBuf,
-    /// The driver script to play with it, when there is one: a folder's
-    /// `test-driver.json`, or `<show>.test-driver.json` next to a loose
-    /// show file.
-    pub driver: Option<PathBuf>,
+    /// The driver script that came with it, when there is one: a folder's
+    /// or pack's `test-driver.json`, or `<show>.test-driver.json` next to a
+    /// loose show file.
+    pub driver: Option<Driver>,
     /// Names of the images, fonts and vector artwork that were registered.
     pub images: Vec<String>,
     pub fonts: Vec<String>,
     pub vectors: Vec<String>,
-    /// Sound files found in `assets/sounds/` (see [`SOUND_EXTENSIONS`]),
-    /// for the host to decode and register by their stem with
-    /// `Engine::set_sound` and its audio backend (the `cuelight-audio`
-    /// crate does both). The engine only needs their durations, so nothing
-    /// here decodes them; an audio layer whose sound arrives later plays
-    /// silently until then.
-    pub sounds: Vec<PathBuf>,
-    /// Image and font files under `assets/` that were left alone because
+    /// Sound files from `assets/sounds/` (see [`SOUND_EXTENSIONS`]), for
+    /// the host to decode and register by name with `Engine::set_sound`
+    /// and its audio backend (the `cuelight-audio` crate does both). The
+    /// engine only needs their durations, so nothing here decodes them; an
+    /// audio layer whose sound arrives later plays silently until then.
+    pub sounds: Vec<SoundFile>,
+    /// Asset files (paths within the show) that were left alone because
     /// support for their format is not compiled in; hosts may want to log
     /// them.
-    pub skipped: Vec<PathBuf>,
+    pub skipped: Vec<String>,
 }
 
 /// File extensions (lowercase) of the sound files a show folder may hold
 /// in `assets/sounds/`: what the `cuelight-audio` crate decodes.
 pub const SOUND_EXTENSIONS: &[&str] = &["wav", "flac", "ogg", "mp3"];
 
-/// Load a show into `engine` from `path`: a show folder, or a loose show
-/// file. Assets are registered before the show loads. Fields the engine
-/// ignored are available from `engine.load_warnings()` afterwards.
+/// Load a show into `engine` from `path`: a show folder, a loose show
+/// file, or a packed show (`.cuelight`). Assets are registered before the
+/// show loads. Fields the engine ignored are available from
+/// `engine.load_warnings()` afterwards.
 pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadError> {
     let path = path.as_ref();
-    let mut loaded = Loaded {
-        show: PathBuf::new(),
-        driver: None,
-        images: Vec::new(),
-        fonts: Vec::new(),
-        vectors: Vec::new(),
-        sounds: Vec::new(),
-        skipped: Vec::new(),
-    };
-    if path.is_dir() {
-        loaded.show = path.join("show.json");
-        if !loaded.show.is_file() {
-            return Err(LoadError::NoShowDocument(path.to_owned()));
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let show = if path.is_dir() {
+        for name in Manifest::for_dir(path)?.files {
+            files.insert(name.clone(), read(&path.join(&name))?);
         }
-        let assets = path.join("assets");
-        if assets.is_dir() {
-            (loaded.images, loaded.skipped) = register_image_dir(engine, &assets)?;
-            let (vectors, skipped) = register_vector_dir(engine, &assets)?;
-            loaded.vectors = vectors;
-            loaded.skipped.extend(skipped);
-            let font_dir = assets.join("fonts");
-            if font_dir.is_dir() {
-                let (fonts, skipped) = register_font_dir(engine, &font_dir)?;
-                loaded.fonts = fonts;
-                loaded.skipped.extend(skipped);
-            }
-            let sound_dir = assets.join("sounds");
-            if sound_dir.is_dir() {
-                loaded.sounds = files_in(&sound_dir)?
-                    .into_iter()
-                    .filter(|p| SOUND_EXTENSIONS.contains(&extension(p).as_str()))
-                    .collect();
-            }
-        }
-        loaded.driver = Some(path.join("test-driver.json")).filter(|p| p.is_file());
+        path.join("show.json")
+    } else if extension(path) == "cuelight" {
+        files = packed_files(path)?;
+        path.to_owned()
     } else {
-        loaded.show = path.to_owned();
-        loaded.driver = Some(path.with_extension("test-driver.json")).filter(|p| p.is_file());
-    }
-    let json = read_to_string(&loaded.show)?;
-    engine
-        .load_show(&json)
-        .map_err(|source| LoadError::Engine {
-            path: loaded.show.clone(),
+        files.insert("show.json".into(), read(path)?);
+        let driver = path.with_extension("test-driver.json");
+        if driver.is_file() {
+            files.insert("test-driver.json".into(), read(&driver)?);
+        }
+        path.to_owned()
+    };
+    let loaded = load_from_memory(engine, &files).map_err(|e| match e {
+        // Paths inside the show are relative; say which show.
+        LoadError::NoShowDocument(_) => LoadError::NoShowDocument(path.to_owned()),
+        LoadError::Engine { source, .. } => LoadError::Engine {
+            path: show.clone(),
             source,
-        })?;
-    Ok(loaded)
+        },
+        other => other,
+    })?;
+    Ok(Loaded {
+        show,
+        driver: loaded.driver,
+        images: loaded.images,
+        fonts: loaded.fonts,
+        vectors: loaded.vectors,
+        sounds: loaded.sounds,
+        skipped: loaded.skipped,
+    })
+}
+
+/// The files of the packed show at `path`.
+#[cfg(feature = "pack")]
+fn packed_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>>, LoadError> {
+    read_pack(path)
+}
+
+#[cfg(not(feature = "pack"))]
+fn packed_files(path: &Path) -> Result<BTreeMap<String, Vec<u8>>, LoadError> {
+    Err(LoadError::Asset {
+        path: path.to_owned(),
+        message: "packed shows need the loader's pack feature".into(),
+    })
 }
 
 /// Register every image file directly in `dir` under its filename stem,

@@ -124,8 +124,9 @@ switches fullscreen (`--fullscreen` starts that way) and escape leaves it,
 or quits. See `--help` for the options.
 
 A show folder holds `show.json` plus an optional `test-driver.json` and
-`assets/` with images and bitmap fonts; the bundled beacon show
-demonstrates it:
+`assets/` with images, fonts and sounds; `cuelight-pack` turns it into one
+`.cuelight` file (a zip) the player opens the same way. The bundled beacon
+show demonstrates the folder:
 
 ```sh
 cargo run -p cuelight-player -- crates/cuelight/examples/shows/beacon
@@ -163,7 +164,8 @@ required.
   Image decoders, SVG conversion and outline fonts are cargo features,
   for hosts that bring their own. Hosts without a filesystem load the same folders from
   memory; the `cuelight-manifest` tool writes the `manifest.json` that
-  tells a browser which files a show folder has.
+  tells a browser which files a show folder has, and `cuelight-pack`
+  packs a folder into one `.cuelight` file.
 - [`cuelight-audio`](crates/cuelight-audio): sound for hosts: decodes
   sound files (WAV, FLAC, Ogg Vorbis, MP3) and mixes what the engine says
   should be heard, to a sound device or, offline, to a WAV file.
