@@ -378,6 +378,10 @@ pub struct Layer {
     pub anchor: Option<Align>,
     #[serde(default = "default_visible")]
     pub visible: bool,
+    /// How the layer combines with what is painted beneath it; a group
+    /// blends its children as one picture.
+    #[serde(default)]
+    pub blend: Blend,
     /// Live property bindings: `property = variable * scale + offset`.
     #[serde(default)]
     pub bindings: Vec<Binding>,
@@ -388,6 +392,27 @@ pub struct Layer {
 
 fn default_opacity() -> f64 {
     1.0
+}
+
+/// How a layer's colors combine with the colors already beneath it.
+/// Opacity applies on top of the blend, as usual.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[non_exhaustive]
+pub enum Blend {
+    /// Paint over: the layer covers what is beneath.
+    #[default]
+    Normal,
+    /// Sum the colors: light that adds to the picture, as a lamp behind
+    /// art does. Overlapping glows brighten each other; white saturates.
+    Add,
+    /// `1 - (1 - a)(1 - b)`: light that adds but never saturates, softer
+    /// than `add`.
+    Screen,
+    /// Product of the colors: a coloured shape darkens and tints what is
+    /// beneath, as a gel over a lamp does; white leaves it alone.
+    Multiply,
 }
 
 fn default_visible() -> bool {

@@ -219,6 +219,13 @@ group children behind whatever follows the group. Every layer has:
 - `visible` (default true): invisible layers (and their subtrees) resolve
   to nothing and are not heard. Bindable (on when the binding's number is
   not 0), not keyframed.
+- `blend` (default `normal`): how the layer combines with what is painted
+  beneath it. `add` sums the colors (light that adds to the art: a lamp
+  behind a backglass, overlapping glows; white saturates), `screen` adds
+  softly and never saturates, `multiply` darkens and tints (a coloured
+  gel over white art). A group blends its children as one picture, so two
+  overlapping glows inside an `add` group add once, not twice. Opacity
+  applies on top.
 - `bindings`, `timelines`: see below.
 
 Layer kinds:

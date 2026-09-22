@@ -173,6 +173,31 @@
         "variable"
       ]
     },
+    "Blend": {
+      "description": "How a layer's colors combine with the colors already beneath it.\nOpacity applies on top of the blend, as usual.",
+      "oneOf": [
+        {
+          "description": "Paint over: the layer covers what is beneath.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "Sum the colors: light that adds to the picture, as a lamp behind\nart does. Overlapping glows brighten each other; white saturates.",
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "description": "`1 - (1 - a)(1 - b)`: light that adds but never saturates, softer\nthan `add`.",
+          "type": "string",
+          "const": "screen"
+        },
+        {
+          "description": "Product of the colors: a coloured shape darkens and tints what is\nbeneath, as a gel over a lamp does; white leaves it alone.",
+          "type": "string",
+          "const": "multiply"
+        }
+      ]
+    },
     "Border": {
       "description": "A border of `width` pixels drawn outside every glyph.",
       "type": "object",
@@ -432,6 +457,11 @@
           "items": {
             "$ref": "#/$defs/Binding"
           }
+        },
+        "blend": {
+          "description": "How the layer combines with what is painted beneath it; a group\nblends its children as one picture.",
+          "$ref": "#/$defs/Blend",
+          "default": "normal"
         },
         "name": {
           "type": "string"

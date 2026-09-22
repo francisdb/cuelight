@@ -762,3 +762,40 @@ fn a_show_lists_its_triggers() {
     let triggers: Vec<String> = engine.show().unwrap().triggers().into_iter().collect();
     assert_eq!(triggers, ["flash", "hazard", "start"]);
 }
+
+#[test]
+fn blend_is_carried_by_the_draw_list() {
+    use cuelight::Blend;
+    let show = r##"{ "name": "blend", "size": [8, 8], "layers": [
+        { "name": "lamp", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF", "blend": "add" },
+        { "name": "glow", "type": "group", "blend": "screen", "clip": { "rect": [0, 0, 4, 4] }, "children": [
+            { "name": "in", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF" }
+        ] }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    assert_eq!(layers[0].blend, Blend::Add);
+    // The blend opens before the clip and closes after it.
+    let shapes: Vec<String> = layers[1..]
+        .iter()
+        .map(|l| {
+            format!("{:?}", l.shape)
+                .split([' ', '{'])
+                .next()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        shapes,
+        ["BlendBegin", "ClipBegin", "Rect", "ClipEnd", "BlendEnd"]
+    );
+    assert_eq!(
+        layers[1].shape,
+        ResolvedShape::BlendBegin {
+            blend: Blend::Screen
+        }
+    );
+    assert_eq!(layers[3].blend, Blend::Normal);
+}
