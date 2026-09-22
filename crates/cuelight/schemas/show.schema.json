@@ -1066,7 +1066,7 @@
           "default": 0.0
         },
         "step": {
-          "description": "How far a cell travels in one move, in symbols: one by default, so\nit lands on every symbol on the way, as a counter does. `null`\nmakes the whole journey one move instead, which is how a wheel\nspins: `duration` then covers all of it and `ease` shapes the spin\nrather than each symbol.",
+          "description": "How far a cell travels in one move, in symbols: one by default, so\nit lands on every symbol on the way, as a counter does. `null`\nmakes the whole journey one move instead, which is how a wheel\nspins: `duration` then covers all of it and `ease` shapes the spin\nrather than each symbol.\nAlways written back, `null` included: absent means one symbol at a\ntime, which is not what `null` means, so dropping it would change\na spinning wheel into a stepping one.",
           "type": [
             "number",
             "null"

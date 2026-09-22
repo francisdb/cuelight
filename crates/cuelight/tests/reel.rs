@@ -32,6 +32,16 @@ fn show(reel: &str) -> String {
     )
 }
 
+/// A show whose digit row carries `fields` verbatim.
+fn show_with(fields: &str) -> String {
+    format!(
+        r##"{{ "name": "reel", "size": [64, 16],
+              "fonts": {{ "cell": {{ "file": "blocks" }} }},
+              "layers": [ {{ "name": "odometer", "type": "digits", "digits": 3,
+                             "size": [30, 10], {fields} }} ] }}"##
+    )
+}
+
 fn engine(reel: &str) -> Engine {
     let mut engine = Engine::new();
     let font = BitmapFont::parse(FNT).unwrap();
@@ -363,4 +373,45 @@ fn rejects_cells_that_do_not_cover_the_ring() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("needs a font"), "{err}");
+}
+
+#[test]
+fn a_spinning_reel_survives_being_written_back_out() {
+    let spinning = r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 2 }"#;
+    let reel: cuelight::Reel = serde_json::from_str(spinning).unwrap();
+    assert_eq!(reel.step, None, "null is one move, not one symbol");
+    // A show that is loaded, written back and loaded again still spins:
+    // dropping the null would turn it into a stepping wheel.
+    let round_trip = serde_json::to_string(&reel).unwrap();
+    let again: cuelight::Reel = serde_json::from_str(&round_trip).unwrap();
+    assert_eq!(again.step, None, "{round_trip}");
+    // And an absent step is still one symbol at a time.
+    let stepping: cuelight::Reel =
+        serde_json::from_str(r#"{ "font": "cell", "duration": 0.5 }"#).unwrap();
+    assert_eq!(stepping.step, Some(1.0));
+}
+
+#[test]
+fn a_documented_null_is_not_reported_as_not_understood() {
+    let mut engine = engine(r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 2 }"#);
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    // A typo is still reported, and a typo with no value is not worth a
+    // word: there is nothing to lose.
+    engine
+        .load_show(&show_with(
+            r##""display": { "reel": { "font": "cell", "duration": 0.5 } }, "colour": "#FF0000""##,
+        ))
+        .unwrap();
+    assert_eq!(engine.load_warnings().len(), 1);
+    assert!(engine.load_warnings()[0].contains("colour"));
+    engine
+        .load_show(&show_with(
+            r#""display": { "reel": { "font": "cell", "duration": 0.5 } }, "colour": null"#,
+        ))
+        .unwrap();
+    assert!(engine.load_warnings().is_empty());
 }

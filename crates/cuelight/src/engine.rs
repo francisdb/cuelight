@@ -2335,6 +2335,10 @@ fn ignored_fields(
                 match understood.get(key) {
                     Some(kept) => ignored_fields(value, kept, &here, out),
                     None if key.starts_with('$') => {}
+                    // An explicit null carries no value to lose, and a
+                    // field whose value is nothing is written back as
+                    // nothing.
+                    None if value.is_null() => {}
                     None => out.push(here),
                 }
             }

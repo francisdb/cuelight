@@ -647,7 +647,10 @@ pub struct Reel {
     /// makes the whole journey one move instead, which is how a wheel
     /// spins: `duration` then covers all of it and `ease` shapes the spin
     /// rather than each symbol.
-    #[serde(default = "default_reel_step", skip_serializing_if = "Option::is_none")]
+    /// Always written back, `null` included: absent means one symbol at a
+    /// time, which is not what `null` means, so dropping it would change
+    /// a spinning wheel into a stepping one.
+    #[serde(default = "default_reel_step")]
     pub step: Option<f64>,
     /// Extra whole turns of the ring a cell makes before it lands, on top
     /// of the distance to its symbol. 0 by default; a spinning wheel takes
