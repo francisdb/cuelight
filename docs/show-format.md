@@ -520,9 +520,28 @@ the active player's score:
 ```
 
 Font bindings may only map to declared font styles and tint bindings only
-to colors (`#RRGGBB`, `#RRGGBBAA`, or empty for no tint); `text`, `font`,
-`visible` and `tint` can be bound but not keyframed, so a tint changes
-over rather than fades.
+to colors (`#RRGGBB`, `#RRGGBBAA`, or empty for no tint); `text`, `font`
+and `visible` can be bound but not keyframed.
+
+A `tint` cannot be keyframed either, but it can take a `transition`, so a
+status light fades from green to red rather than snapping:
+
+```json
+{ "property": "tint", "variable": "state",
+  "map": { "ok": "#00FF00", "bad": "#FF0000" },
+  "transition": { "duration": 0.25 } }
+```
+
+One eased progress from 0 to 1 carries all four channels, so `duration`
+and `ease` mean what they mean everywhere else and the channels arrive
+together; alpha travels with them. Turned round halfway, it eases from
+the color it had reached. `step` bands the fade into that many moves,
+which is a way to get a DMD-like ramp. `wrap` and `direction` are
+rejected: they describe a value on a ring, which a color is not.
+
+Channels are mixed as the show writes them, the same 8-bit values the
+`gray4` luma weights are applied to, so a fade is a straight line between
+two colors rather than a walk through a perceptual space.
 
 A value the property cannot use, a font style the show does not declare
 or a tint that is not a color, leaves the property as it was. That is the
