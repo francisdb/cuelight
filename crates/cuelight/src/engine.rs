@@ -2865,6 +2865,7 @@ impl Engine {
                     name: placed.name.to_owned(),
                     shape: ResolvedShape::Image {
                         image: name.to_owned(),
+                        tile: None,
                         source: None,
                         x: x + left * placed.scale,
                         y: y + top * placed.scale,
@@ -3213,6 +3214,7 @@ impl Engine {
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: video.to_owned(),
+                                    tile: None,
                                     source: None,
                                     x,
                                     y,
@@ -3227,7 +3229,11 @@ impl Engine {
                         }
                     }
                     LayerKind::Image {
-                        image, size, sheet, ..
+                        image,
+                        size,
+                        sheet,
+                        repeat,
+                        ..
                     } => {
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
@@ -3241,6 +3247,20 @@ impl Engine {
                                 None => [f64::from(data.width), f64::from(data.height)],
                             };
                             let [width, height] = size.unwrap_or(natural);
+                            // Tiling covers the layer's size with copies
+                            // of one tile; without it the image is
+                            // stretched to that size, as it always was.
+                            let tile = repeat.map(|tile| {
+                                let [tw, th] = tile.size.unwrap_or(natural);
+                                Tiled {
+                                    width: tw * scale,
+                                    height: th * scale,
+                                    offset: [
+                                        self.number(root, layer, path, Property::TileX) * scale,
+                                        self.number(root, layer, path, Property::TileY) * scale,
+                                    ],
+                                }
+                            });
                             out.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
@@ -3252,6 +3272,7 @@ impl Engine {
                                     y,
                                     width: width * scale,
                                     height: height * scale,
+                                    tile,
                                 },
                                 // Validated at load, and a binding only
                                 // ever feeds it a color it could parse.
@@ -4135,6 +4156,9 @@ pub enum ResolvedShape {
         y: f64,
         width: f64,
         height: f64,
+        /// Repeat one tile across the box instead of stretching the image
+        /// to fill it.
+        tile: Option<Tiled>,
     },
     /// Text in an outline font: fill the outlines of `glyphs` from `font`
     /// at `size` pixels per em with the layer's color, after drawing
@@ -4208,4 +4232,13 @@ fn resolve_gradient(
 /// The bus a layer's sound is on: the one it names, or [`MAIN_BUS`].
 fn effective_bus(bus: &Option<String>) -> &str {
     bus.as_deref().unwrap_or(crate::model::MAIN_BUS)
+}
+
+/// How a tiled image covers its box: one tile's size and where the
+/// pattern starts, both in the same units as the box.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tiled {
+    pub width: f64,
+    pub height: f64,
+    pub offset: [f64; 2],
 }
