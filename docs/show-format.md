@@ -1066,6 +1066,25 @@ A timeline is a keyframed animation owned by its layer:
   `autoplay` is true. Re-firing the trigger restarts it from 0. `trigger`
   is one name or a list (`["turn_left", "hazard"]`); firing any of them
   has the same effect. A scene's `trigger` takes the same two forms.
+- `when` starts it from a variable instead, for hosts that send states
+  rather than events: a lamp going on, a score crossing a mark, a mode
+  taking a value. Without it such a host has to watch its own variables
+  and invent trigger names for them, which is show logic living outside
+  the show.
+
+  ```json
+  { "name": "flash", "when": { "variable": "lamp_12", "threshold": 0.5 }, "tracks": [] }
+  ```
+
+  The value is read the way a binding reads one: `map` (with `default`)
+  replaces it when it lists it, then `threshold` turns a number into 0 or
+  1. True is anything that is not 0, so `{ "variable": "mode", "map": {
+  "multiball": 1 } }` is true exactly in that mode. What starts the
+  timeline is *becoming* true, not being true, so a lamp that stays on
+  plays its animation once; going false and true again starts it again.
+  A condition already true when the show loads, or when its scene is
+  entered, counts as becoming true. `trigger` and `when` can both be set:
+  either starts it.
 - Keys are `(t seconds, value)`; between two keys the value interpolates
   using the **later** key's `ease` (before the first key it holds the
   first value, after the last it holds the last). Easings: `linear`

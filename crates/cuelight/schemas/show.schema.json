@@ -1868,6 +1868,17 @@
           "description": "Trigger name, or list of names, that (re)starts this timeline.",
           "$ref": "#/$defs/Triggers",
           "default": null
+        },
+        "when": {
+          "description": "A variable condition that (re)starts it, for hosts that send\nstates rather than events.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/When"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2068,6 +2079,47 @@
       "required": [
         "name",
         "keys"
+      ]
+    },
+    "When": {
+      "description": "A condition on a variable that starts something when it becomes true.\n\nA host that only sends states - lamps going on and off, a score\ncrossing a mark, a mode taking a value - has no trigger to fire, and\nwithout this every such host has to watch its own variables and invent\ntrigger names for them, which is show logic living outside the show.\n\nThe value is read the way a binding reads one: `map` replaces it when\nit lists it, then `threshold` turns a number into 0 or 1. True is any\nvalue that is not 0, and what starts the timeline is *becoming* true,\nso a lamp that stays on plays it once rather than every frame.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "description": "Value for variable values `map` does not list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Value"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "map": {
+          "description": "Replace the variable's value by looking it up here, as on a\nbinding: `{ \"multiball\": 1 }` is true exactly in that mode.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "threshold": {
+          "description": "A level: the value counts as true at or above it. Without one, any\nvalue that is not 0 is true.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
       ]
     }
   }

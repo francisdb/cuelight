@@ -1595,6 +1595,34 @@ impl Layer {
     }
 }
 
+/// A condition on a variable that starts something when it becomes true.
+///
+/// A host that only sends states - lamps going on and off, a score
+/// crossing a mark, a mode taking a value - has no trigger to fire, and
+/// without this every such host has to watch its own variables and invent
+/// trigger names for them, which is show logic living outside the show.
+///
+/// The value is read the way a binding reads one: `map` replaces it when
+/// it lists it, then `threshold` turns a number into 0 or 1. True is any
+/// value that is not 0, and what starts the timeline is *becoming* true,
+/// so a lamp that stays on plays it once rather than every frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct When {
+    pub variable: String,
+    /// Replace the variable's value by looking it up here, as on a
+    /// binding: `{ "multiball": 1 }` is true exactly in that mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map: Option<BTreeMap<String, Value>>,
+    /// Value for variable values `map` does not list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
+    /// A level: the value counts as true at or above it. Without one, any
+    /// value that is not 0 is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+}
+
 /// A permanent wiring of a property to a variable, evaluated every frame.
 ///
 /// Numeric properties take `variable * scale + offset`. The `text`
@@ -1899,6 +1927,10 @@ pub struct Timeline {
     /// Trigger name, or list of names, that (re)starts this timeline.
     #[serde(default)]
     pub trigger: Triggers,
+    /// A variable condition that (re)starts it, for hosts that send
+    /// states rather than events.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
     #[serde(default)]
     pub autoplay: bool,
     /// Repeat forever. Cannot be combined with `repeat`.
