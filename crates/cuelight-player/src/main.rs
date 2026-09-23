@@ -803,36 +803,70 @@ const SOUNDTRACK_RATE: u32 = 48_000;
 /// the video's name, which is how it is told a clip can be heard. Hands
 /// back the samples for a mixer, which is not open yet: whether any clip
 /// has sound is what decides whether to open one.
+///
+/// Decoded together, like the clips are measured together: a folder of a
+/// couple of hundred clips is a couple of hundred runs of ffmpeg, and
+/// they do not depend on each other.
 #[cfg(feature = "video")]
-fn decode_video_sound(engine: &mut Engine, videos: &Videos) -> Vec<(String, Arc<Sound>)> {
+fn decode_video_sound(
+    engine: &mut Engine,
+    paths: &[std::path::PathBuf],
+) -> Vec<(String, Arc<Sound>)> {
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(4);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut found: Vec<(usize, String, Vec<f32>)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(path) = paths.get(i) else {
+                            return mine;
+                        };
+                        let name = path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        match cuelight_video::soundtrack(path, SOUNDTRACK_RATE) {
+                            Ok(Some(samples)) => mine.push((i, name, samples)),
+                            Ok(None) => {}
+                            Err(e) => log::warn!("soundtrack of {name:?}: {e}"),
+                        }
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .filter_map(|worker| worker.join().ok())
+            .flatten()
+            .collect()
+    });
+    // Back into the show's own order, so the log reads like the folder.
+    found.sort_by_key(|(i, ..)| *i);
     let mut decoded = Vec::new();
-    for (name, clip) in videos {
-        let samples = match clip.soundtrack(SOUNDTRACK_RATE) {
-            Ok(Some(samples)) => samples,
-            Ok(None) => continue,
-            Err(e) => {
-                log::warn!("soundtrack of {name:?}: {e}");
-                continue;
-            }
-        };
+    for (_, name, samples) in found {
         let sound = Sound {
             rate: SOUNDTRACK_RATE,
             channels: 2,
             samples,
         };
         let duration = sound.duration();
-        if let Err(e) = engine.set_sound(name, duration) {
+        if let Err(e) = engine.set_sound(&name, duration) {
             log::warn!("soundtrack of {name:?}: {e}");
             continue;
         }
         log::debug!("video {name:?}: {duration:.1}s of sound");
-        decoded.push((name.clone(), Arc::new(sound)));
+        decoded.push((name, Arc::new(sound)));
     }
     decoded
 }
 
 #[cfg(not(feature = "video"))]
-fn decode_video_sound(_: &mut Engine, _: &Videos) -> Vec<(String, Arc<Sound>)> {
+fn decode_video_sound(_: &mut Engine, _: &[std::path::PathBuf]) -> Vec<(String, Arc<Sound>)> {
     Vec::new()
 }
 
@@ -887,7 +921,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let clip_sound = if cli.no_audio {
                 Vec::new()
             } else {
-                decode_video_sound(&mut engine, &videos)
+                decode_video_sound(&mut engine, &loaded.videos)
             };
             want_audio(&engine, &mut audio, !clip_sound.is_empty());
             if let Some(audio) = &audio {
