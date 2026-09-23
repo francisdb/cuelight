@@ -455,25 +455,37 @@ fn bounds(shape: &ResolvedShape) -> Option<Rect> {
     })
 }
 
-/// Where a `show` sized canvas lands in a `target` sized surface: uniform
-/// scale, centered, as `(scale, x, y)`. With [`Scaling::PixelPerfect`] the
-/// scale is a whole number whenever the target is at least the show's
-/// size, and the offsets are whole pixels, so nearest-neighbor sampling
+/// Where a `show` sized canvas lands in a `target` sized surface,
+/// centered and keeping its shape, as `(x, y, width, height)` in surface
+/// pixels.
+///
+/// Every edge lands on a whole pixel. A fitted rectangle with fractional
+/// edges costs an outer row that is a blend of the show and whatever is
+/// behind it: against a letterbox that reads as a seam along the
+/// boundary, always there at a fractional scale. Rounding the rectangle
+/// bends the shape by at most half a pixel over the whole frame, which
+/// nobody can see, and makes the frame sharper besides.
+///
+/// With [`Scaling::PixelPerfect`] the scale is a whole number whenever
+/// the target is at least the show's size, so nearest-neighbor sampling
 /// maps every canvas pixel to an equal block.
-pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> (f64, f64, f64) {
+pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> (f64, f64, f64, f64) {
     let [show_w, show_h] = show.map(f64::from);
     let [tw, th] = target.map(f64::from);
     let mut scale = (tw / show_w).min(th / show_h);
-    let offsets = |scale: f64| ((tw - show_w * scale) / 2.0, (th - show_h * scale) / 2.0);
-    if scaling == Scaling::PixelPerfect {
-        if scale >= 1.0 {
-            scale = scale.floor();
-        }
-        let (x, y) = offsets(scale);
-        return (scale, x.floor(), y.floor());
+    if scaling == Scaling::PixelPerfect && scale >= 1.0 {
+        scale = scale.floor();
     }
-    let (x, y) = offsets(scale);
-    (scale, x, y)
+    // Never rounded up past the surface: a canvas that overhangs would be
+    // cropped rather than letterboxed.
+    let width = (show_w * scale).round().min(tw).max(1.0);
+    let height = (show_h * scale).round().min(th).max(1.0);
+    (
+        ((tw - width) / 2.0).floor(),
+        ((th - height) / 2.0).floor(),
+        width,
+        height,
+    )
 }
 
 /// The loaded show's declared background as a vello color; opaque black
@@ -920,8 +932,12 @@ impl Presenter {
         let show = engine.show().ok_or(crate::engine::Error::NoShow)?;
         let size = show.size;
         let (output, scaling) = (engine.output(), engine.scaling());
-        let (scale, x, y) = fit(size, target, scaling);
-        let placement = Affine::translate((x, y)) * Affine::scale(scale);
+        let (x, y, width, height) = fit(size, target, scaling);
+        // Per axis, so the rounded rectangle is filled exactly; the two
+        // differ by less than a pixel over the frame.
+        let placement = Affine::translate((x, y))
+            * Affine::scale_non_uniform(width / f64::from(size[0]), height / f64::from(size[1]));
+        let scale = width / f64::from(size[0]);
         let content = build_vello_scene(engine, &mut self.images)?;
         let background = background_color(engine);
 
@@ -1069,12 +1085,32 @@ impl RgbaFrame {
 mod tests {
     use super::{fit, Scaling};
 
+    /// Every edge of the fitted rectangle, so a fractional one shows up.
+    fn edges(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> [f64; 4] {
+        let (x, y, w, h) = fit(show, target, scaling);
+        [x, y, x + w, y + h]
+    }
+
     #[test]
     fn fit_letterboxes_smoothly_by_default() {
+        // 300 / 128 = 2.34: the width fills, the height is letterboxed.
         assert_eq!(
             fit([128, 32], [300, 100], Scaling::Smooth),
-            (300.0 / 128.0, 0.0, 12.5)
+            (0.0, 12.0, 300.0, 75.0)
         );
+    }
+
+    #[test]
+    fn a_fitted_show_lands_on_whole_pixels() {
+        // The scale that caused a seam: 960x540 in a window taller than
+        // 16:9, fitting at 1.7796.
+        for target in [[1708, 1346], [1707, 1345], [801, 600], [1920, 1081]] {
+            let edges = edges([960, 540], target, Scaling::Smooth);
+            assert!(
+                edges.iter().all(|e| e.fract() == 0.0),
+                "{target:?} -> {edges:?}"
+            );
+        }
     }
 
     #[test]
@@ -1082,12 +1118,12 @@ mod tests {
         // 300 / 128 = 2.34 -> 2x, centered on whole pixels.
         assert_eq!(
             fit([128, 32], [300, 100], Scaling::PixelPerfect),
-            (2.0, 22.0, 18.0)
+            (22.0, 18.0, 256.0, 64.0)
         );
         // Smaller than the show: shrink (fractionally), never zero.
         assert_eq!(
             fit([128, 32], [64, 64], Scaling::PixelPerfect),
-            (0.5, 0.0, 24.0)
+            (0.0, 24.0, 64.0, 16.0)
         );
     }
 }
