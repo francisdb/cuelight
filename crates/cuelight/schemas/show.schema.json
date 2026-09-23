@@ -611,6 +611,11 @@
           "format": "double",
           "default": 1.0
         },
+        "overflow": {
+          "description": "Let this layer (and a group's subtree) draw past the canvas.\n\nA show is authored against a fixed canvas and a host fits that\ncanvas into whatever surface it has, painting the area around it\nwith the show's `background`. That is the right default: it keeps\nthe canvas meaning exactly what it means for layout. It is the\nwrong answer for a backdrop whose job is to reach the edges, which\non a wider display sits in two bars of flat colour with nothing\nthe show can say about them.\n\nMarked here, only the clip changes: coordinates are still authored\nagainst the canvas, which stays a safe area for everything placed\nexactly. A show cannot know how far it will be asked to stretch,\nso anything that bleeds has to be drawn generously.\n\nIt does nothing where the frame *is* the canvas: an offscreen\nrender, `pixel_perfect` scaling, a `dots` pass, or an output mode\nother than `rgb`, all of which draw the canvas at its own size\nfirst. There is no area outside a dot matrix to reach into.",
+          "type": "boolean",
+          "default": false
+        },
         "rotation": {
           "description": "Rotation in degrees, clockwise on the canvas, around the layer's\nx/y origin or its anchor point. A group turns its whole subtree.",
           "type": "number",
