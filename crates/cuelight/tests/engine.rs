@@ -799,3 +799,69 @@ fn blend_is_carried_by_the_draw_list() {
     );
     assert_eq!(layers[3].blend, Blend::Normal);
 }
+
+#[test]
+fn a_shape_can_be_filled_with_a_gradient() {
+    let show = r##"{
+      "name": "glow", "size": [64, 64],
+      "layers": [
+        { "name": "solid", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+          "fill": "#FF0000" },
+        { "name": "glow", "type": "shape", "x": 10, "y": 20, "scale": 2,
+          "shape": { "circle": [0, 0, 30] },
+          "fill": { "radial": { "center": [0, 0], "radius": 30,
+                                "stops": [{ "at": 0, "color": "#FFFFFFFF" },
+                                          { "at": 1, "color": "#FFFFFF00" }] } } }
+      ]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+
+    let solid = layers.iter().find(|l| l.name == "solid").unwrap();
+    assert_eq!(solid.color, [255, 0, 0, 255]);
+    assert!(solid.gradient.is_none(), "a color is still a color");
+
+    let glow = layers.iter().find(|l| l.name == "glow").unwrap();
+    let gradient = glow.gradient.as_ref().unwrap();
+    // Placed and scaled with the shape, so it travels with it.
+    assert_eq!(
+        gradient.kind,
+        cuelight::ResolvedGradientKind::Radial {
+            center: [10.0, 20.0],
+            radius: 60.0
+        }
+    );
+    assert_eq!(
+        gradient.stops,
+        [(0.0, [255, 255, 255, 255]), (1.0, [255, 255, 255, 0])]
+    );
+    // A host that draws no gradients still has something to draw.
+    assert_eq!(glow.color, [255, 255, 255, 255]);
+}
+
+#[test]
+fn a_gradient_needs_stops_in_order_and_a_radius() {
+    let bad = |fill: &str| {
+        format!(
+            r##"{{ "name": "g", "size": [8, 8], "layers": [
+                 {{ "name": "s", "type": "shape", "shape": {{ "rect": [0, 0, 8, 8] }},
+                    "fill": {fill} }}] }}"##
+        )
+    };
+    let stops = r##""stops": [{ "at": 0, "color": "#FFFFFF" }]"##;
+    assert!(Engine::new()
+        .load_show(&bad(&format!(
+            r#"{{ "radial": {{ "center": [0, 0], "radius": 0, {stops} }} }}"#
+        )))
+        .is_err());
+    assert!(Engine::new()
+        .load_show(&bad(r##"{ "linear": { "from": [0, 0], "to": [0, 8],
+                   "stops": [{ "at": 1, "color": "#FFFFFF" },
+                             { "at": 0, "color": "#000000" }] } }"##))
+        .is_err());
+    assert!(Engine::new()
+        .load_show(&bad(r##"{ "linear": { "from": [0, 0], "to": [0, 8],
+                   "stops": [{ "at": 0, "color": "purple" }] } }"##))
+        .is_err());
+}

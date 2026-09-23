@@ -38,15 +38,16 @@ mod value;
 
 pub use easing::Easing;
 pub use engine::{
-    Engine, Error, Event, FontData, ImageData, PlacedGlyph, Playing, ResolvedLayer, ResolvedShape,
-    Transform, Vector, VectorPath, VideoInfo, Voice,
+    Engine, Error, Event, FontData, ImageData, PlacedGlyph, Playing, ResolvedGradient,
+    ResolvedGradientKind, ResolvedLayer, ResolvedShape, Transform, Vector, VectorPath, VideoInfo,
+    Voice,
 };
 pub use font::BitmapFont;
 pub use model::{
-    Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, FontStyle, Justify,
-    Key, Layer, LayerKind, Media, MediaKind, NumberFormat, Output, OutputMode, Pass, Property,
-    Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stroke,
-    Timeline, Track, Transition, Triggers, FORMAT,
+    Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, Fill, FontStyle,
+    Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind, NumberFormat, Output, OutputMode,
+    Pass, Property, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet,
+    Show, Stroke, Timeline, Track, Transition, Triggers, FORMAT,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use path::{PathData, PathElement};

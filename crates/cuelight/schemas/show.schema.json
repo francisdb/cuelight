@@ -385,6 +385,18 @@
         }
       ]
     },
+    "Fill": {
+      "description": "What a shape is filled with: one color, or a gradient.\n\nUntagged, so `\"fill\": \"#FF0000\"` keeps working and\n`\"fill\": { \"radial\": { ... } }` is the other one.",
+      "anyOf": [
+        {
+          "description": "`#RRGGBB` or `#RRGGBBAA`.",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/Gradient"
+        }
+      ]
+    },
     "FontStyle": {
       "description": "A text style: a bitmap font the host registered, tinted and optionally\noutlined.",
       "type": "object",
@@ -433,6 +445,94 @@
       },
       "required": [
         "file"
+      ]
+    },
+    "Gradient": {
+      "description": "A smooth run of colors across a shape, in the shape's own space, so it\ntravels with whatever moves the shape.\n\nGlows, vignettes, the shading that makes a drum look round and the\nsheen on glass are all gradients, and carrying them as small raster\nimages means the same workaround in every show and blurring whenever\none is scaled up.",
+      "oneOf": [
+        {
+          "description": "Runs along the line from `from` to `to`, and holds its end colors\nbeyond either end.",
+          "type": "object",
+          "properties": {
+            "linear": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2
+                },
+                "stops": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Stop"
+                  }
+                },
+                "to": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              },
+              "required": [
+                "from",
+                "to",
+                "stops"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "linear"
+          ]
+        },
+        {
+          "description": "Runs out from `center` to `radius`, and holds its last color\nbeyond it.",
+          "type": "object",
+          "properties": {
+            "radial": {
+              "type": "object",
+              "properties": {
+                "center": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "double"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2
+                },
+                "radius": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "stops": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Stop"
+                  }
+                }
+              },
+              "required": [
+                "center",
+                "radius",
+                "stops"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "radial"
+          ]
+        }
       ]
     },
     "Justify": {
@@ -597,11 +697,11 @@
           ]
         },
         {
-          "description": "A vector shape filled with `fill`, and outlined by `stroke` when\ngiven.",
+          "description": "A vector shape filled with `fill`, and outlined by `stroke` when\ngiven. The fill is a color, or a gradient that stays smooth at any\nsize where a show would otherwise carry a small image of one.",
           "type": "object",
           "properties": {
             "fill": {
-              "type": "string"
+              "$ref": "#/$defs/Fill"
             },
             "shape": {
               "$ref": "#/$defs/Shape"
@@ -1511,6 +1611,25 @@
       "required": [
         "cell",
         "columns"
+      ]
+    },
+    "Stop": {
+      "description": "One color of a gradient, `at` a fraction of the way along it.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "0 at the start of the gradient, 1 at its end.",
+          "type": "number",
+          "format": "double"
+        },
+        "color": {
+          "description": "`#RRGGBB` or `#RRGGBBAA`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "color"
       ]
     },
     "Stroke": {

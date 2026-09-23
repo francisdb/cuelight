@@ -17,7 +17,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
 use vello::peniko::{
-    BlendMode, Blob, Color, Compose, Extend, Fill, ImageAlphaType, ImageBrush, ImageFormat, Mix,
+    BlendMode, Blob, Brush, BrushRef, Color, Compose, Extend, Fill, ImageAlphaType, ImageBrush,
+    ImageFormat, Mix,
 };
 use vello::wgpu;
 
@@ -200,6 +201,16 @@ pub fn build_vello_scene(
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
         let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
+        // A gradient fills in place of the color; the layer's opacity
+        // rides on every stop, as it does on a solid fill.
+        let gradient = layer
+            .gradient
+            .as_ref()
+            .map(|g| gradient_brush(g, layer.opacity));
+        let paint: BrushRef = match &gradient {
+            Some(gradient) => gradient.into(),
+            None => (&color).into(),
+        };
         let placement = Affine::new(layer.transform.0);
         // A blended item is drawn into a layer of its own, as big as the
         // item, that is composited with the blend on the way out.
@@ -220,11 +231,11 @@ pub fn build_vello_scene(
                 height,
             } => {
                 let rect = Rect::new(x, y, x + width, y + height);
-                show.fill(Fill::NonZero, placement, color, None, &rect);
+                show.fill(Fill::NonZero, placement, paint, None, &rect);
             }
             ResolvedShape::Circle { cx, cy, radius } => {
                 let circle = Circle::new((cx, cy), radius);
-                show.fill(Fill::NonZero, placement, color, None, &circle);
+                show.fill(Fill::NonZero, placement, paint, None, &circle);
             }
             ResolvedShape::ClipBegin { shape } => match *shape {
                 ResolvedShape::Circle { cx, cy, radius } => {
@@ -284,8 +295,8 @@ pub fn build_vello_scene(
             }
             ResolvedShape::Path { elements, stroke } => {
                 let path = bez_path(&elements);
-                if layer.color[3] > 0 {
-                    show.fill(Fill::NonZero, placement, color, None, &path);
+                if layer.color[3] > 0 || layer.gradient.is_some() {
+                    show.fill(Fill::NonZero, placement, paint, None, &path);
                 }
                 if let Some(([r, g, b, a], width)) = stroke {
                     let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
@@ -304,7 +315,7 @@ pub fn build_vello_scene(
                     }
                 }
                 path.close_path();
-                show.fill(Fill::NonZero, placement, color, None, &path);
+                show.fill(Fill::NonZero, placement, paint, None, &path);
             }
             ResolvedShape::Image {
                 image,
@@ -1079,6 +1090,33 @@ impl RgbaFrame {
             .map_err(|e| RenderError::Png(e.to_string()))?;
         Ok(())
     }
+}
+/// A resolved gradient as a brush, with `opacity` folded into every stop.
+fn gradient_brush(gradient: &crate::ResolvedGradient, opacity: f64) -> Brush {
+    use crate::ResolvedGradientKind as Kind;
+    let mut built = match gradient.kind {
+        Kind::Linear { from, to } => {
+            vello::peniko::Gradient::new_linear((from[0], from[1]), (to[0], to[1]))
+        }
+        Kind::Radial { center, radius } => {
+            vello::peniko::Gradient::new_radial((center[0], center[1]), radius as f32)
+        }
+    };
+    built = built.with_stops(
+        gradient
+            .stops
+            .iter()
+            .map(|(at, [r, g, b, a])| {
+                let alpha = (f64::from(*a) / 255.0 * opacity).clamp(0.0, 1.0);
+                vello::peniko::ColorStop {
+                    offset: *at,
+                    color: Color::from_rgba8(*r, *g, *b, (alpha * 255.0).round() as u8).into(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+    Brush::Gradient(built)
 }
 
 #[cfg(test)]

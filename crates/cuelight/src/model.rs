@@ -562,10 +562,11 @@ pub enum LayerKind {
         gain: f64,
     },
     /// A vector shape filled with `fill`, and outlined by `stroke` when
-    /// given.
+    /// given. The fill is a color, or a gradient that stays smooth at any
+    /// size where a show would otherwise carry a small image of one.
     Shape {
         shape: Shape,
-        fill: String,
+        fill: Fill,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stroke: Option<Stroke>,
     },
@@ -1030,6 +1031,70 @@ pub enum Shape {
     Circle([f64; 3]),
     /// SVG path data (`"M 0 0 L 10 0 L 5 8 Z"`): lines, curves and arcs.
     Path(PathData),
+}
+
+/// What a shape is filled with: one color, or a gradient.
+///
+/// Untagged, so `"fill": "#FF0000"` keeps working and
+/// `"fill": { "radial": { ... } }` is the other one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum Fill {
+    /// `#RRGGBB` or `#RRGGBBAA`.
+    Color(String),
+    Gradient(Gradient),
+}
+
+impl Default for Fill {
+    fn default() -> Self {
+        Fill::Color("#FFFFFF".to_owned())
+    }
+}
+
+/// A smooth run of colors across a shape, in the shape's own space, so it
+/// travels with whatever moves the shape.
+///
+/// Glows, vignettes, the shading that makes a drum look round and the
+/// sheen on glass are all gradients, and carrying them as small raster
+/// images means the same workaround in every show and blurring whenever
+/// one is scaled up.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Gradient {
+    /// Runs along the line from `from` to `to`, and holds its end colors
+    /// beyond either end.
+    Linear {
+        from: [f64; 2],
+        to: [f64; 2],
+        stops: Vec<Stop>,
+    },
+    /// Runs out from `center` to `radius`, and holds its last color
+    /// beyond it.
+    Radial {
+        center: [f64; 2],
+        radius: f64,
+        stops: Vec<Stop>,
+    },
+}
+
+impl Gradient {
+    pub fn stops(&self) -> &[Stop] {
+        match self {
+            Gradient::Linear { stops, .. } | Gradient::Radial { stops, .. } => stops,
+        }
+    }
+}
+
+/// One color of a gradient, `at` a fraction of the way along it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Stop {
+    /// 0 at the start of the gradient, 1 at its end.
+    pub at: f64,
+    /// `#RRGGBB` or `#RRGGBBAA`.
+    pub color: String,
 }
 
 /// An outline drawn along a shape's edge, centered on it.
