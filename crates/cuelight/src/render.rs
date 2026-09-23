@@ -192,12 +192,41 @@ pub fn build_vello_scene(
     engine: &Engine,
     images: &mut ImageCache,
 ) -> Result<vello::Scene, RenderError> {
+    build_scene(engine, images, false)
+}
+
+/// The show's draw list as a vello scene.
+///
+/// With `clip_to_canvas`, everything is held inside the canvas except the
+/// layers marked `overflow`, which is what a host fitting the canvas into
+/// a larger surface wants: the canvas stays a safe area for what is placed
+/// exactly, and a backdrop can still reach the edges. The clip is opened
+/// and closed around runs of layers rather than wrapped around the whole
+/// scene, so a bleeding layer keeps its place in the order.
+fn build_scene(
+    engine: &Engine,
+    images: &mut ImageCache,
+    clip_to_canvas: bool,
+) -> Result<vello::Scene, RenderError> {
     let mut show = vello::Scene::new();
     show.draw_image(&ImageBrush::new(images.keepalive()), Affine::IDENTITY);
     let canvas = engine.show().map_or(Rect::ZERO, |s| {
         Rect::new(0.0, 0.0, f64::from(s.size[0]), f64::from(s.size[1]))
     });
+    // Opened lazily, so a scene with nothing to clip pushes no layer.
+    let mut clipped = false;
     for layer in engine.resolved_layers()? {
+        if clip_to_canvas {
+            let want = !layer.overflow;
+            if want != clipped {
+                if want {
+                    show.push_clip_layer(Fill::NonZero, Affine::IDENTITY, &canvas);
+                } else {
+                    show.pop_layer();
+                }
+                clipped = want;
+            }
+        }
         let [r, g, b, a] = layer.color;
         let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
         let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
@@ -390,6 +419,9 @@ pub fn build_vello_scene(
         if blended.is_some() {
             show.pop_layer();
         }
+    }
+    if clipped {
+        show.pop_layer();
     }
     Ok(show)
 }
@@ -949,24 +981,26 @@ impl Presenter {
         let placement = Affine::translate((x, y))
             * Affine::scale_non_uniform(width / f64::from(size[0]), height / f64::from(size[1]));
         let scale = width / f64::from(size[0]);
-        let content = build_vello_scene(engine, &mut self.images)?;
-        let background = background_color(engine);
-
         let dots = engine
             .passes()
             .into_iter()
             .map(|Pass::Dots(dots)| dots)
             .next();
+        // Every other path draws the canvas at its own size first, so
+        // there is nothing outside it to reach into: no clip is needed and
+        // `overflow` does nothing.
+        let clip_to_canvas =
+            output.mode == OutputMode::Rgb && scaling == Scaling::Smooth && dots.is_none();
+        let content = build_scene(engine, &mut self.images, clip_to_canvas)?;
+        let background = background_color(engine);
         let mut scene = vello::Scene::new();
         // Dots are made of canvas pixels, so they need the frame at its own
         // size as well.
         if output.mode == OutputMode::Rgb && scaling == Scaling::Smooth && dots.is_none() {
-            // Only the canvas shows: what a show parks outside it must not
-            // leak into the letterbox, as it cannot on the native texture.
-            let [w, h] = size.map(f64::from);
-            scene.push_clip_layer(Fill::NonZero, placement, &Rect::new(0.0, 0.0, w, h));
+            // The canvas holds everything except the layers that asked to
+            // reach past it; the clip is inside `content`, around runs of
+            // layers, so a bleeding one keeps its place in the order.
             scene.append(&content, Some(placement));
-            scene.pop_layer();
         } else {
             if self.native.as_ref().is_some_and(|n| n.size != size) {
                 if let Some(old) = self.native.take() {

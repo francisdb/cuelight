@@ -503,6 +503,27 @@ pub struct Layer {
     pub anchor: Option<Align>,
     #[serde(default = "default_visible")]
     pub visible: bool,
+    /// Let this layer (and a group's subtree) draw past the canvas.
+    ///
+    /// A show is authored against a fixed canvas and a host fits that
+    /// canvas into whatever surface it has, painting the area around it
+    /// with the show's `background`. That is the right default: it keeps
+    /// the canvas meaning exactly what it means for layout. It is the
+    /// wrong answer for a backdrop whose job is to reach the edges, which
+    /// on a wider display sits in two bars of flat colour with nothing
+    /// the show can say about them.
+    ///
+    /// Marked here, only the clip changes: coordinates are still authored
+    /// against the canvas, which stays a safe area for everything placed
+    /// exactly. A show cannot know how far it will be asked to stretch,
+    /// so anything that bleeds has to be drawn generously.
+    ///
+    /// It does nothing where the frame *is* the canvas: an offscreen
+    /// render, `pixel_perfect` scaling, a `dots` pass, or an output mode
+    /// other than `rgb`, all of which draw the canvas at its own size
+    /// first. There is no area outside a dot matrix to reach into.
+    #[serde(default)]
+    pub overflow: bool,
     /// How the layer combines with what is painted beneath it; a group
     /// blends its children as one picture.
     #[serde(default)]

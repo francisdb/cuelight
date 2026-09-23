@@ -1554,8 +1554,7 @@ impl Engine {
             Root::Show,
             &show.layers,
             &mut Vec::new(),
-            Transform::IDENTITY,
-            1.0,
+            Inherited::TOP,
             &mut out,
         )?;
         if let Some(scene) = self.active_scene {
@@ -1564,8 +1563,7 @@ impl Engine {
                     Root::Scene(scene),
                     layers,
                     &mut Vec::new(),
-                    Transform::IDENTITY,
-                    1.0,
+                    Inherited::TOP,
                     &mut out,
                 )?;
             }
@@ -2299,6 +2297,7 @@ impl Engine {
             scale,
             opacity,
             blend,
+            overflow,
             transform,
         } = *placed;
         // Colors were validated at load.
@@ -2316,6 +2315,7 @@ impl Engine {
                     let [ox, oy] = raster.offset;
                     out.push(ResolvedLayer {
                         gradient: None,
+                        overflow,
                         name: name.to_owned(),
                         shape: ResolvedShape::Bitmap {
                             x: x + f64::from(ox) * scale + dx,
@@ -2355,6 +2355,7 @@ impl Engine {
                 let mut run = |ink: [u8; 4], edge: Option<([u8; 4], f64)>, dx: f64, dy: f64| {
                     out.push(ResolvedLayer {
                         gradient: None,
+                        overflow,
                         name: name.to_owned(),
                         shape: ResolvedShape::GlyphRun {
                             font: data.clone(),
@@ -2422,6 +2423,7 @@ impl Engine {
                 for item in &data.paths {
                     out.push(ResolvedLayer {
                         gradient: None,
+                        overflow: placed.overflow,
                         name: placed.name.to_owned(),
                         shape: ResolvedShape::Path {
                             elements: item
@@ -2452,6 +2454,7 @@ impl Engine {
                 let (fit, left, top) = fitted(natural_width, natural_height);
                 out.push(ResolvedLayer {
                     gradient: None,
+                    overflow: placed.overflow,
                     name: placed.name.to_owned(),
                     shape: ResolvedShape::Image {
                         image: name.to_owned(),
@@ -2563,6 +2566,7 @@ impl Engine {
             let cell_x = x + i as f64 * cell_w;
             let marker = |shape| ResolvedLayer {
                 gradient: None,
+                overflow: placed.overflow,
                 name: placed.name.to_owned(),
                 shape,
                 color: [0; 4],
@@ -2604,20 +2608,26 @@ impl Engine {
         }
     }
 
-    /// Resolve `layers` under `parent`, the placement of the tree above
-    /// them, at `oa` opacity.
+    /// Resolve `layers` under `from`, what the tree above them passes
+    /// down.
     fn walk(
         &self,
         root: Root,
         layers: &[Layer],
         path: &mut Vec<usize>,
-        parent: Transform,
-        oa: f64,
+        from: Inherited,
         out: &mut Vec<ResolvedLayer>,
     ) -> Result<(), Error> {
+        let Inherited {
+            transform: parent,
+            opacity: oa,
+            overflow: bleeding,
+        } = from;
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if self.is_visible(root, layer, path) {
+                // A group that may bleed lets its whole subtree bleed.
+                let overflow = bleeding || layer.overflow;
                 let number = |prop| self.number(root, layer, path, prop);
                 let opacity = (oa * number(Property::Opacity)).clamp(0.0, 1.0);
                 let scale = number(Property::Scale);
@@ -2654,6 +2664,7 @@ impl Engine {
                         let mut marker = |shape: ResolvedShape| {
                             out.push(ResolvedLayer {
                                 gradient: None,
+                                overflow,
                                 name: layer.name.clone(),
                                 shape,
                                 color: [0; 4],
@@ -2670,10 +2681,21 @@ impl Engine {
                                 shape: Box::new(resolve_shape(clip, x, y, scale, None)),
                             });
                         }
-                        self.walk(root, children, path, m, opacity, out)?;
+                        self.walk(
+                            root,
+                            children,
+                            path,
+                            Inherited {
+                                transform: m,
+                                opacity,
+                                overflow,
+                            },
+                            out,
+                        )?;
                         if clip.is_some() {
                             out.push(ResolvedLayer {
                                 gradient: None,
+                                overflow,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::ClipEnd,
                                 color: [0; 4],
@@ -2685,6 +2707,7 @@ impl Engine {
                         if layer.blend != Blend::Normal {
                             out.push(ResolvedLayer {
                                 gradient: None,
+                                overflow,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::BlendEnd,
                                 color: [0; 4],
@@ -2726,6 +2749,7 @@ impl Engine {
                             .transpose()?;
                         out.push(ResolvedLayer {
                             gradient,
+                            overflow,
                             name: layer.name.clone(),
                             shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
@@ -2742,6 +2766,7 @@ impl Engine {
                             for item in &data.paths {
                                 out.push(ResolvedLayer {
                                     gradient: None,
+                                    overflow,
                                     name: layer.name.clone(),
                                     shape: ResolvedShape::Path {
                                         elements: item
@@ -2777,6 +2802,7 @@ impl Engine {
                             let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
                                 gradient: None,
+                                overflow,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: video.to_owned(),
@@ -2810,6 +2836,7 @@ impl Engine {
                             let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
                                 gradient: None,
+                                overflow,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
@@ -2840,6 +2867,7 @@ impl Engine {
                     } => {
                         let text = self.text(root, layer, path, Property::Text);
                         let placed = Placed {
+                            overflow,
                             name: &layer.name,
                             origin: [x, y],
                             scale,
@@ -2874,6 +2902,7 @@ impl Engine {
                                         for points in segments::polygons(*style, mask, cell, snap) {
                                             out.push(ResolvedLayer {
                                                 gradient: None,
+                                                overflow,
                                                 name: layer.name.clone(),
                                                 shape: ResolvedShape::Polygon { points },
                                                 color,
@@ -2904,6 +2933,7 @@ impl Engine {
                         let text = self.text(root, layer, path, Property::Text);
                         let font = self.text(root, layer, path, Property::Font);
                         let placed = Placed {
+                            overflow,
                             name: &layer.name,
                             origin: [x, y],
                             scale,
@@ -2921,6 +2951,25 @@ impl Engine {
     }
 }
 
+/// What a layer takes from the tree above it.
+#[derive(Debug, Clone, Copy)]
+struct Inherited {
+    transform: Transform,
+    opacity: f64,
+    /// Whether the tree above may draw past the canvas.
+    overflow: bool,
+}
+
+impl Inherited {
+    /// At the top of a tree: nothing placed, nothing faded, nothing
+    /// allowed past the canvas yet.
+    const TOP: Inherited = Inherited {
+        transform: Transform::IDENTITY,
+        opacity: 1.0,
+        overflow: false,
+    };
+}
+
 /// Where a piece of a layer lands, shared by everything the walk adds.
 #[derive(Debug, Clone, Copy)]
 struct Placed<'a> {
@@ -2930,6 +2979,8 @@ struct Placed<'a> {
     scale: f64,
     opacity: f64,
     blend: Blend,
+    /// Whether the tree this sits in may draw past the canvas.
+    overflow: bool,
     transform: Transform,
 }
 
@@ -3612,6 +3663,10 @@ pub struct ResolvedLayer {
     /// How the item combines with what was painted before it. Markers
     /// (clips, blend groups) carry `Normal`.
     pub blend: Blend,
+    /// Whether this item may draw past the canvas into the letterbox; see
+    /// [`Layer::overflow`](crate::Layer::overflow). A host that fits the
+    /// canvas into a larger surface leaves these unclipped.
+    pub overflow: bool,
     /// Applied to the shape's coordinates to place it on the canvas. The
     /// identity for anything only translated and uniformly scaled, which is
     /// then already in canvas coordinates; a rotation or an uneven scale

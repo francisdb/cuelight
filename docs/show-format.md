@@ -268,6 +268,19 @@ group children behind whatever follows the group. Every layer has:
 - `visible` (default true): invisible layers (and their subtrees) resolve
   to nothing and are not heard. Bindable (on when the binding's number is
   not 0), not keyframed.
+- `overflow` (default false): let the layer, and a group's whole subtree,
+  draw past the canvas into the letterbox. A host fits the canvas into
+  whatever surface it has and paints the area around it with the show's
+  `background`, which is right for everything placed exactly and wrong for
+  a backdrop whose job is to reach the edges: on a wider display it sits in
+  two bars of flat colour with nothing the show can say about them. Only
+  the clip changes; coordinates are still authored against the canvas,
+  which stays a safe area. A show cannot know how far it will be asked to
+  stretch, so anything that bleeds has to be drawn generously. It does
+  nothing where the frame *is* the canvas: an offscreen render,
+  `pixel_perfect` scaling, a `dots` pass, or an output mode other than
+  `rgb` all draw the canvas at its own size first, and there is no area
+  outside a dot matrix to reach into.
 - `blend` (default `normal`): how the layer combines with what is painted
   beneath it. `add` sums the colors (light that adds to the art: a lamp
   behind a backglass, overlapping glows; white saturates), `screen` adds

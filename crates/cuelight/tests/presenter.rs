@@ -276,3 +276,68 @@ fn nothing_outside_the_canvas_reaches_the_letterbox() {
     assert_eq!(at(4, 6), [0, 0, 0, 255]);
     assert_eq!(at(4, 7), [0, 0, 0, 255]);
 }
+
+/// A backdrop that reaches past the canvas, over one that does not.
+const BLEEDING: &str = r##"{
+  "name": "bleed", "size": [64, 32], "background": "#000000",
+  "layers": [
+    { "name": "sky", "type": "shape", "overflow": true,
+      "shape": { "rect": [-200, -200, 500, 500] }, "fill": "#FF0000" },
+    { "name": "held", "type": "shape",
+      "shape": { "rect": [-200, -200, 500, 500] }, "fill": "#00FF00" }
+  ]
+}"##;
+
+#[test]
+fn overflow_is_carried_on_the_draw_list_and_inherited() {
+    let mut engine = Engine::new();
+    engine.load_show(BLEEDING).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let of = |name: &str| {
+        layers
+            .iter()
+            .find(|l| l.name == name)
+            .unwrap_or_else(|| panic!("{name}"))
+            .overflow
+    };
+    assert!(of("sky"));
+    assert!(!of("held"));
+
+    // A group that bleeds lets its whole subtree bleed.
+    let nested = r##"{
+      "name": "bleed", "size": [64, 32],
+      "layers": [{ "name": "g", "type": "group", "overflow": true, "children": [
+        { "name": "inner", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+          "fill": "#FFFFFF" }]}]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(nested).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    assert!(layers.iter().find(|l| l.name == "inner").unwrap().overflow);
+}
+
+#[test]
+fn a_bleeding_layer_reaches_into_the_letterbox() {
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(BLEEDING).unwrap();
+    let mut presenter = Presenter::default();
+    // 64x32 is 2:1; a 64x64 target letterboxes top and bottom.
+    let pixels = present(&mut gpu, &mut presenter, &engine, [64, 64]);
+    let at = |x: usize, y: usize| pixels[y * 64 + x];
+
+    // The middle is the canvas, where the green one is on top.
+    let [r, g, ..] = at(32, 32);
+    assert!(g > 200 && r < 60, "inside the canvas: {:?}", at(32, 32));
+
+    // The bands above and below are outside it. The green one is held to
+    // the canvas; the red one asked to reach past it, and does.
+    for y in [4, 60] {
+        let [r, g, ..] = at(32, y);
+        assert!(
+            r > 200 && g < 60,
+            "row {y} should be the bleeding layer, not the background or the held one: {:?}",
+            at(32, y)
+        );
+    }
+}
