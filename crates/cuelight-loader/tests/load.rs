@@ -308,3 +308,212 @@ fn a_zip_wrapping_the_folder_unpacks_too() {
     assert_eq!(files.keys().collect::<Vec<_>>(), ["show.json"]);
     assert!(cuelight_loader::unpack(b"not a zip").is_err());
 }
+
+/// A show dropped into a folder of media that was already arranged the
+/// way its author wanted: no assets/ folder, nothing copied or linked.
+#[cfg(all(feature = "png", any(feature = "outline-fonts", feature = "pack")))]
+fn beside_media(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("Intro")).unwrap();
+    std::fs::create_dir_all(dir.join("Amazonia")).unwrap();
+    std::fs::create_dir_all(dir.join("Fonts")).unwrap();
+    // Two folders reusing one filename, which flattening could not keep
+    // apart without renaming.
+    for folder in ["Intro", "Amazonia"] {
+        std::fs::write(
+            dir.join(folder).join("01.png"),
+            one_pixel(folder == "Intro"),
+        )
+        .unwrap();
+    }
+    let font = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cuelight/tests/fonts/cuelight_test_sans.ttf"
+    );
+    std::fs::copy(font, dir.join("Fonts/Title.ttf")).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{
+          "name": "in place", "size": [32, 32],
+          "fonts": { "title": { "file": "Fonts/Title.ttf", "size": 8 } },
+          "layers": [
+            { "name": "a", "type": "image", "image": "Intro/01.png" },
+            { "name": "b", "type": "image", "image": "Amazonia/01.png" },
+            { "name": "c", "type": "text", "font": "title", "text": "hi" }
+          ]
+        }"##,
+    )
+    .unwrap();
+    dir
+}
+
+/// A 1x1 PNG, red or blue, so the two folders' files differ.
+#[cfg(all(feature = "png", any(feature = "outline-fonts", feature = "pack")))]
+fn one_pixel(red: bool) -> Vec<u8> {
+    let rgba = if red {
+        [255, 0, 0, 255]
+    } else {
+        [0, 0, 255, 255]
+    };
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&rgba).unwrap();
+    }
+    out
+}
+
+#[cfg(all(feature = "png", feature = "outline-fonts"))]
+#[test]
+fn a_show_can_name_media_where_it_already_lies() {
+    let dir = beside_media("beside");
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+
+    // Registered under the names the document used, so two folders
+    // reusing a filename stay apart without anything being renamed.
+    let mut images = loaded.images.clone();
+    images.sort();
+    assert_eq!(images, ["Amazonia/01.png", "Intro/01.png"]);
+    assert!(engine.image("Intro/01.png").is_some());
+    assert!(engine.image("Amazonia/01.png").is_some());
+    assert_ne!(
+        engine.image("Intro/01.png").unwrap().pixels,
+        engine.image("Amazonia/01.png").unwrap().pixels,
+        "the same filename in two folders is two different files"
+    );
+    assert_eq!(loaded.fonts, ["Fonts/Title.ttf"]);
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_path_that_climbs_out_of_the_show_is_refused() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-escape-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "escape", "size": [8, 8], "layers": [
+              { "name": "a", "type": "image", "image": "../secrets/key.png" }] }"##,
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let err = load(&mut engine, &dir).unwrap_err().to_string();
+    assert!(err.contains("climbs out"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_named_file_that_is_not_there_fails_the_load() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-absent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "absent", "size": [8, 8], "layers": [
+              { "name": "a", "type": "image", "image": "art/missing.png" }] }"##,
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    // A path is a claim about the filesystem; a false one is a broken
+    // show, and better found now than when the layer should have drawn.
+    let err = load(&mut engine, &dir).unwrap_err().to_string();
+    assert!(err.contains("art/missing.png"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_stem_nobody_registered_is_still_no_error() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-stem-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "later", "size": [8, 8], "layers": [
+              { "name": "a", "type": "image", "image": "streamed" }] }"##,
+    )
+    .unwrap();
+    // A stem is only a name, which a host may satisfy whenever it likes:
+    // a streamed or generated asset must keep working.
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+    assert!(engine.image("streamed").is_none());
+    engine.set_image("streamed", 1, 1, vec![255; 4]).unwrap();
+    assert!(engine.image("streamed").is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(feature = "pack")]
+#[test]
+fn packing_refuses_a_show_that_names_a_file_that_is_not_there() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-packbad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "absent", "size": [8, 8], "layers": [
+              { "name": "a", "type": "image", "image": "art/missing.png" },
+              { "name": "b", "type": "image", "image": "art/gone.png" }] }"##,
+    )
+    .unwrap();
+    let out = dir.join("absent.cuelight");
+    let err = cuelight_loader::pack(&dir, &out).unwrap_err().to_string();
+    // Both at once: hunting them one attempt at a time is no way to find out.
+    assert!(err.contains("art/missing.png"), "{err}");
+    assert!(err.contains("art/gone.png"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn clips_named_by_path_reach_the_host_as_paths() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-clips-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("Intro")).unwrap();
+    // Never opened here: a clip is the host's to decode, so the loader
+    // only has to say where it is.
+    std::fs::write(dir.join("Intro/opening.mp4"), b"not really a clip").unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "clips", "size": [8, 8], "layers": [
+              { "name": "a", "type": "video", "video": "Intro/opening.mp4" }] }"##,
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+    assert_eq!(loaded.videos, [dir.join("Intro/opening.mp4")]);
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(all(feature = "png", feature = "pack"))]
+#[test]
+fn a_packed_show_carries_the_media_it_names_by_path() {
+    let dir = beside_media("packed");
+    let out = std::env::temp_dir().join(format!("cuelight-beside-{}.cuelight", std::process::id()));
+    let _ = std::fs::remove_file(&out);
+    cuelight_loader::pack(&dir, &out).unwrap();
+
+    // Packing a show written against media beside it has to take that
+    // media with it, or the pack cannot load.
+    let packed = cuelight_loader::read_pack(&out).unwrap();
+    for name in ["Intro/01.png", "Amazonia/01.png", "Fonts/Title.ttf"] {
+        assert!(
+            packed.contains_key(name),
+            "{name} missing from {:?}",
+            packed.keys()
+        );
+    }
+
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load(&mut engine, &out).unwrap();
+    let mut images = loaded.images.clone();
+    images.sort();
+    assert_eq!(images, ["Amazonia/01.png", "Intro/01.png"]);
+    assert!(engine.image("Intro/01.png").is_some());
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+
+    std::fs::remove_file(&out).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -104,9 +104,9 @@ pub struct Loaded {
     /// can seek in, and some containers cannot be read as a stream at
     /// all.
     pub videos: Vec<PathBuf>,
-    /// Asset files (paths within the show) that were left alone because
-    /// support for their format is not compiled in; hosts may want to log
-    /// them.
+    /// Asset files (paths within the show) left alone because support for
+    /// their format is not compiled in; hosts may want to log them. A
+    /// build problem, not a show problem.
     pub skipped: Vec<String>,
 }
 
@@ -135,6 +135,32 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
                 continue;
             }
             files.insert(name.clone(), read(&path.join(&name))?);
+        }
+        // Then whatever the document names by path, which may be anywhere
+        // beside it: a show dropped into a folder of media uses it where
+        // it lies, without a copy or a link.
+        if let Some(text) = files
+            .get("show.json")
+            .and_then(|b| std::str::from_utf8(b).ok())
+        {
+            for (kind, name, extra) in manifest::named_files(text) {
+                let file = path.join(&name);
+                if !file.is_file() {
+                    continue;
+                }
+                if kind == manifest::Asset::Video {
+                    videos.push(file);
+                    continue;
+                }
+                files.insert(name, read(&file)?);
+                // A bitmap font's pages sit beside its description.
+                for page in extra {
+                    let beside = path.join(&page);
+                    if beside.is_file() {
+                        files.insert(page, read(&beside)?);
+                    }
+                }
+            }
         }
         path.join("show.json")
     } else if extension(path) == "cuelight" {

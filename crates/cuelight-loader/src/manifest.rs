@@ -9,7 +9,7 @@
 
 use crate::{
     register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS, SOUND_EXTENSIONS,
-    VECTOR_EXTENSION,
+    VECTOR_EXTENSION, VIDEO_EXTENSIONS,
 };
 use cuelight::Engine;
 use std::collections::BTreeMap;
@@ -23,9 +23,11 @@ pub const MANIFEST_FILE: &str = "manifest.json";
 pub struct Manifest {
     /// Version of this manifest layout.
     pub format: u32,
-    /// `show.json`, `test-driver.json` when present, then everything
-    /// directly in `assets/`, `assets/fonts/`, `assets/sounds/` and
-    /// `assets/videos/`, sorted.
+    /// `show.json`, `test-driver.json` when present, everything directly
+    /// in `assets/`, `assets/fonts/`, `assets/sounds/` and
+    /// `assets/videos/`, and then every file the document names by a path
+    /// of its own, wherever beside the document that is. The last group is
+    /// what makes a packed show carry the media it was written against.
     pub files: Vec<String>,
 }
 
@@ -49,6 +51,15 @@ impl Manifest {
                 if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
                     files.push(format!("{sub}/{name}"));
                 }
+            }
+        }
+        // Then whatever the document names by path, which may be anywhere
+        // beside it. Without these a packed show would be missing exactly
+        // the media it was written against.
+        let show = std::fs::read_to_string(dir.join("show.json")).unwrap_or_default();
+        for (_, name, _) in named_files(&show) {
+            if dir.join(&name).is_file() && !files.contains(&name) {
+                files.push(name);
             }
         }
         Ok(Self { format: 1, files })
@@ -77,7 +88,7 @@ pub struct LoadedFiles {
     /// register; see [`Loaded::sounds`](crate::Loaded::sounds).
     pub sounds: Vec<SoundFile>,
     /// Asset files left alone because support for their format is not
-    /// compiled in.
+    /// compiled in. A build problem, not a show problem.
     pub skipped: Vec<String>,
 }
 
@@ -184,6 +195,8 @@ pub fn load_from_memory(
         }
     }
 
+    register_named(engine, show, files, &mut loaded)?;
+
     engine.load_show(show).map_err(|source| LoadError::Engine {
         path: PathBuf::from("show.json"),
         source,
@@ -197,4 +210,227 @@ pub fn load_from_memory(
         );
     }
     Ok(loaded)
+}
+
+/// Register the assets the document names by path rather than by stem.
+///
+/// The conventional folders are scanned whether anything uses them or
+/// not; a path is the other way round, and the document decides.
+///
+/// A path that points at nothing fails the load. A path is a claim about
+/// the filesystem, and a false one is a broken show; a stem is only a
+/// name, which a host may satisfy whenever it likes through `set_image`
+/// and its siblings, so an unregistered stem stays no error at all. That
+/// is what keeps a streamed or generated asset working while a mistyped
+/// path does not ship.
+fn register_named(
+    engine: &mut Engine,
+    show: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+    loaded: &mut LoadedFiles,
+) -> Result<(), LoadError> {
+    let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
+        // Not a show at all; loading it will say so properly in a moment.
+        return Ok(());
+    };
+    let asset_error = |path: &str, message: String| LoadError::Asset {
+        path: PathBuf::from(path),
+        message,
+    };
+    let (mut done, mut missing): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for (kind, name) in references(&parsed) {
+        // Clips are handed to the host as paths, never read here.
+        if kind == Asset::Video || !is_path(&name) || done.contains(&name) {
+            continue;
+        }
+        safe_path(&name).map_err(|message| asset_error(&name, message))?;
+        done.push(name.clone());
+        let Some(bytes) = files.get(&name) else {
+            // Collected rather than raised here: all of them at once beats
+            // one per attempt.
+            missing.push(name);
+            continue;
+        };
+        let extension = name
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        match kind {
+            Asset::Image => {
+                register_image(engine, &name, &extension, bytes)
+                    .map_err(|e| asset_error(&name, e))?;
+                loaded.images.push(name);
+            }
+            Asset::Vector => {
+                #[cfg(feature = "svg")]
+                {
+                    crate::register_vector(engine, &name, bytes)
+                        .map_err(|e| asset_error(&name, e))?;
+                    loaded.vectors.push(name);
+                }
+                #[cfg(not(feature = "svg"))]
+                loaded.skipped.push(name);
+            }
+            Asset::Sound => loaded.sounds.push(SoundFile {
+                name,
+                extension,
+                bytes: bytes.clone(),
+            }),
+            Asset::Font => {
+                if extension == "fnt" {
+                    let fnt = std::str::from_utf8(bytes)
+                        .map_err(|e| asset_error(&name, e.to_string()))?;
+                    let folder = name.rsplit_once('/').map_or("", |(dir, _)| dir);
+                    register_font(engine, &name, fnt, |page| {
+                        let beside = if folder.is_empty() {
+                            page.to_owned()
+                        } else {
+                            format!("{folder}/{page}")
+                        };
+                        files.get(&beside).cloned()
+                    })
+                    .map_err(|e| asset_error(&name, e))?;
+                } else {
+                    #[cfg(feature = "outline-fonts")]
+                    engine
+                        .set_outline_font(&name, bytes.clone())
+                        .map_err(|e| asset_error(&name, e.to_string()))?;
+                    #[cfg(not(feature = "outline-fonts"))]
+                    {
+                        loaded.skipped.push(name);
+                        continue;
+                    }
+                }
+                loaded.fonts.push(name);
+            }
+            Asset::Video => unreachable!("clips are the host's to open"),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(LoadError::Asset {
+            path: PathBuf::from(missing.join(", ")),
+            message: format!("{} file(s) the show names are not there", missing.len()),
+        });
+    }
+    Ok(())
+}
+
+/// What kind of asset a name in a show document refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Asset {
+    Image,
+    Vector,
+    Sound,
+    Video,
+    Font,
+}
+
+/// Whether a name in a show document is a path to a file rather than the
+/// stem of something registered under one of the conventional folders.
+///
+/// A stem never carries an extension and never has a separator in it, so
+/// either mark says the document means a file where it lies.
+pub(crate) fn is_path(name: &str) -> bool {
+    if name.contains('/') {
+        return true;
+    }
+    name.rsplit_once('.').is_some_and(|(stem, extension)| {
+        let extension = extension.to_ascii_lowercase();
+        !stem.is_empty()
+            && (IMAGE_EXTENSIONS.contains(&extension.as_str())
+                || SOUND_EXTENSIONS.contains(&extension.as_str())
+                || VIDEO_EXTENSIONS.contains(&extension.as_str())
+                || extension == VECTOR_EXTENSION
+                || matches!(extension.as_str(), "fnt" | "ttf" | "otf"))
+    })
+}
+
+/// A path a show may name: relative, inside the show's own folder, and
+/// with nothing that could climb out of it.
+///
+/// Refused rather than sanitized. A document that asks for something
+/// outside its folder is wrong about where it is, and quietly reading a
+/// different file than it named would be worse than saying no.
+pub(crate) fn safe_path(name: &str) -> Result<&str, String> {
+    if name.starts_with('/') || name.starts_with('\\') {
+        return Err(format!("{name:?} is absolute"));
+    }
+    if name.contains('\\') {
+        return Err(format!(
+            "{name:?} uses backslashes; paths are '/' separated"
+        ));
+    }
+    if name.len() >= 2 && name.as_bytes()[1] == b':' {
+        return Err(format!("{name:?} names a drive"));
+    }
+    if name.split('/').any(|part| part == ".." || part == ".") {
+        return Err(format!("{name:?} climbs out of the show's folder"));
+    }
+    Ok(name)
+}
+
+/// Every asset a show document names, with the kind it is used as.
+///
+/// The document decides what a show needs, which is what lets one sit
+/// beside a folder of a few hundred clips and load the handful it uses.
+pub(crate) fn references(show: &cuelight::Show) -> Vec<(Asset, String)> {
+    use cuelight::{LayerKind, ReelCells};
+    let mut out: Vec<(Asset, String)> = show
+        .fonts
+        .values()
+        .map(|style| (Asset::Font, style.file.clone()))
+        .collect();
+    fn walk(layers: &[cuelight::Layer], out: &mut Vec<(Asset, String)>) {
+        for layer in layers {
+            match &layer.kind {
+                LayerKind::Image { image, .. } => out.push((Asset::Image, image.clone())),
+                LayerKind::Vector { vector, .. } => out.push((Asset::Vector, vector.clone())),
+                LayerKind::Video { video, .. } => {
+                    out.extend(video.iter().map(|n| (Asset::Video, n.to_owned())));
+                }
+                LayerKind::Audio { sound, .. } => {
+                    out.extend(sound.iter().map(|n| (Asset::Sound, n.to_owned())));
+                }
+                LayerKind::Digits {
+                    display: cuelight::DigitDisplay::Reel(reel),
+                    ..
+                } => match &reel.cells {
+                    Some(ReelCells::Vectors(names)) => {
+                        out.extend(names.iter().map(|n| (Asset::Vector, n.clone())));
+                    }
+                    Some(ReelCells::Images(names)) => {
+                        out.extend(names.iter().map(|n| (Asset::Image, n.clone())));
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            walk(layer.children(), out);
+        }
+    }
+    for layers in show.layer_trees() {
+        walk(layers, &mut out);
+    }
+    out
+}
+
+/// The files a show document names by path, with the kind each is used
+/// as and, for a bitmap font, the pages named beside it.
+///
+/// Used before anything is read, to decide what to read at all.
+pub(crate) fn named_files(show: &str) -> Vec<(Asset, String, Vec<String>)> {
+    let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(Asset, String, Vec<String>)> = Vec::new();
+    for (kind, name) in references(&parsed) {
+        if !is_path(&name) || safe_path(&name).is_err() {
+            continue;
+        }
+        if out.iter().any(|(_, seen, _)| *seen == name) {
+            continue;
+        }
+        out.push((kind, name, Vec::new()));
+    }
+    out
 }
