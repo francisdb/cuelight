@@ -2021,40 +2021,54 @@ impl Engine {
                 container: layout.container,
             });
         }
-        self.text_raster(style_name, text, size, align)
+        self.text_raster(style_name, text, size, align, false)
             .map(TextDraw::Bitmap)
     }
 
     /// Rasterize (or fetch from cache) `text` in font style `style`.
     /// `None` when the style's font is not registered or nothing draws.
+    ///
+    /// `as_shadow` draws the same text in the style's shadow color, border
+    /// included, which is the silhouette that sits behind it.
     fn text_raster(
         &self,
         style_name: &str,
         text: &str,
         size: Option<[f64; 2]>,
         align: Align,
+        as_shadow: bool,
     ) -> Option<Arc<TextRaster>> {
         let style = self.show.as_ref()?.fonts.get(style_name)?;
         let registered = self.fonts.get(&style.file)?;
         let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
-        let key = format!("{style_name}\u{1}{text}\u{1}{size:?}\u{1}{align:?}");
+        let ink = if as_shadow { "\u{1}shadow" } else { "" };
+        let key = format!("{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}");
         if let Some(raster) = cache.rasters.get(&key) {
             return raster.clone();
         }
         let styled = cache
             .styled
-            .entry(style_name.to_owned())
+            .entry(format!("{style_name}{ink}"))
             .or_insert_with(|| {
                 // Colors were validated at load.
                 let rgb = |c: &str| {
                     let [r, g, b, _] = parse_color(c).unwrap_or([255; 4]);
                     [r, g, b]
                 };
-                let border = style.border.as_ref().map(|b| (rgb(&b.color), b.width));
+                // A shadow is one color throughout, so its border is the
+                // shadow color too.
+                let color = match (as_shadow, &style.shadow) {
+                    (true, Some(shadow)) => rgb(&shadow.color),
+                    _ => rgb(&style.color),
+                };
+                let border = style
+                    .border
+                    .as_ref()
+                    .map(|b| (if as_shadow { color } else { rgb(&b.color) }, b.width));
                 Arc::new(StyledFont::new(
                     &registered.font,
                     &registered.pages,
-                    rgb(&style.color),
+                    color,
                     border,
                 ))
             })
@@ -2094,23 +2108,43 @@ impl Engine {
             blend,
             transform,
         } = *placed;
+        // Colors were validated at load.
+        let style = self.show.as_ref().and_then(|s| s.fonts.get(style_name));
+        let rgba = |c: &str| parse_color(c).unwrap_or([255; 4]);
+        // The shadow goes in first, so the text lands on top of it. It is
+        // the same text moved over, in one color, border included.
+        let shadow = style.and_then(|s| s.shadow.as_ref()).map(|s| {
+            let [sx, sy] = s.offset;
+            (rgba(&s.color), sx * scale, sy * scale)
+        });
         match self.text_draw(style_name, text, size, align) {
             Some(TextDraw::Bitmap(raster)) => {
-                let [ox, oy] = raster.offset;
-                out.push(ResolvedLayer {
-                    name: name.to_owned(),
-                    shape: ResolvedShape::Bitmap {
-                        x: x + f64::from(ox) * scale,
-                        y: y + f64::from(oy) * scale,
-                        width: f64::from(raster.image.width) * scale,
-                        height: f64::from(raster.image.height) * scale,
-                        image: raster.image.clone(),
-                    },
-                    color: [255, 255, 255, 255],
-                    opacity,
-                    blend,
-                    transform,
-                });
+                let mut bitmap = |raster: &Arc<TextRaster>, dx: f64, dy: f64, alpha: f64| {
+                    let [ox, oy] = raster.offset;
+                    out.push(ResolvedLayer {
+                        name: name.to_owned(),
+                        shape: ResolvedShape::Bitmap {
+                            x: x + f64::from(ox) * scale + dx,
+                            y: y + f64::from(oy) * scale + dy,
+                            width: f64::from(raster.image.width) * scale,
+                            height: f64::from(raster.image.height) * scale,
+                            image: raster.image.clone(),
+                        },
+                        color: [255, 255, 255, 255],
+                        opacity: opacity * alpha,
+                        blend,
+                        transform,
+                    });
+                };
+                // A raster carries no color of its own to tint, so the
+                // shadow is a second rasterization; its alpha rides on the
+                // layer's opacity.
+                if let Some(([.., a], dx, dy)) = shadow {
+                    if let Some(behind) = self.text_raster(style_name, text, size, align, true) {
+                        bitmap(&behind, dx, dy, f64::from(a) / 255.0);
+                    }
+                }
+                bitmap(&raster, 0.0, 0.0, 1.0);
             }
             Some(TextDraw::Glyphs {
                 font: data,
@@ -2118,32 +2152,38 @@ impl Engine {
                 glyphs,
                 ..
             }) if !glyphs.is_empty() => {
-                // Colors were validated at load.
-                let style = self.show.as_ref().and_then(|s| s.fonts.get(style_name));
-                let rgba = |c: &str| parse_color(c).unwrap_or([255; 4]);
+                let width = style
+                    .and_then(|s| s.border.as_ref())
+                    .map(|b| f64::from(b.width) * scale);
                 let border = style
                     .and_then(|s| s.border.as_ref())
                     .map(|b| (rgba(&b.color), f64::from(b.width) * scale));
-                out.push(ResolvedLayer {
-                    name: name.to_owned(),
-                    shape: ResolvedShape::GlyphRun {
-                        font: data,
-                        size: em * scale,
-                        glyphs: glyphs
-                            .into_iter()
-                            .map(|g| PlacedGlyph {
-                                id: g.id,
-                                x: x + g.x * scale,
-                                y: y + g.y * scale,
-                            })
-                            .collect(),
-                        border,
-                    },
-                    color: style.map_or([255; 4], |s| rgba(&s.color)),
-                    opacity,
-                    blend,
-                    transform,
-                });
+                let mut run = |ink: [u8; 4], edge: Option<([u8; 4], f64)>, dx: f64, dy: f64| {
+                    out.push(ResolvedLayer {
+                        name: name.to_owned(),
+                        shape: ResolvedShape::GlyphRun {
+                            font: data.clone(),
+                            size: em * scale,
+                            glyphs: glyphs
+                                .iter()
+                                .map(|g| PlacedGlyph {
+                                    id: g.id,
+                                    x: x + g.x * scale + dx,
+                                    y: y + g.y * scale + dy,
+                                })
+                                .collect(),
+                            border: edge,
+                        },
+                        color: ink,
+                        opacity,
+                        blend,
+                        transform,
+                    });
+                };
+                if let Some((ink, dx, dy)) = shadow {
+                    run(ink, width.map(|w| (ink, w)), dx, dy);
+                }
+                run(style.map_or([255; 4], |s| rgba(&s.color)), border, 0.0, 0.0);
             }
             _ => {}
         }
@@ -2850,8 +2890,19 @@ fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<TransitionSite>) {
 /// declared font styles, only numeric properties are keyframed.
 fn validate(show: &Show) -> Result<(), Error> {
     for style in show.fonts.values() {
-        for color in std::iter::once(&style.color).chain(style.border.as_ref().map(|b| &b.color)) {
+        for color in std::iter::once(&style.color)
+            .chain(style.border.as_ref().map(|b| &b.color))
+            .chain(style.shadow.as_ref().map(|s| &s.color))
+        {
             parse_color(color).ok_or_else(|| Error::InvalidColor(color.clone()))?;
+        }
+        if let Some(shadow) = &style.shadow {
+            if !shadow.offset.iter().all(|n| n.is_finite()) {
+                return Err(Error::InvalidShow(format!(
+                    "font style {:?} needs a finite shadow offset",
+                    style.file
+                )));
+            }
         }
     }
     fn layers(show: &Show, list: &[Layer]) -> Result<(), Error> {

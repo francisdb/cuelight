@@ -581,14 +581,28 @@ is the host's to know, not the document's.
 {
   "fonts": {
     "score": { "file": "teeny_tiny_pixls-5", "color": "#808080" },
-    "title": { "file": "bm_army-12", "border": { "color": "#102C80", "width": 1 } }
+    "title": { "file": "bm_army-12", "border": { "color": "#102C80", "width": 1 } },
+    "over_video": {
+      "file": "futura", "size": 24, "color": "#FFFFFF",
+      "border": { "color": "#000000", "width": 1 },
+      "shadow": { "color": "#000000A0", "offset": [3, 2] }
+    }
   }
 }
 ```
 
 A style names a font the host registered (`file`, by convention the font
 file's stem), a `color`, and an optional `border` of `width` pixels in
-`color` outside every glyph. Fonts are host assets like images: a text
+`color` outside every glyph.
+
+A style may also carry a `shadow`: the same text drawn behind itself,
+moved by `offset` pixels and painted in one `color`. It is drawn first, so
+the text lands on top of it, and it is the text's whole silhouette with
+the border included rather than the fill alone, which is what makes it
+read as a shadow instead of a second outline. The offset is in canvas
+pixels and scales with the layer; either number may be negative. Both
+kinds of font take one, and so does any text drawn from a style: a text
+layer, a reel's characters, a digit row. Fonts are host assets like images: a text
 layer whose font is not registered is skipped. There are two kinds, and
 which one a style uses is decided by what was registered under that name,
 so the layers using it do not change.

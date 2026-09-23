@@ -381,6 +381,26 @@ pub struct FontStyle {
     pub color: String,
     #[serde(default)]
     pub border: Option<Border>,
+    /// A copy of the text drawn behind it, offset.
+    #[serde(default)]
+    pub shadow: Option<Shadow>,
+}
+
+/// A copy of the text drawn behind it, offset by a few pixels: the
+/// ordinary way to keep text legible over a moving picture.
+///
+/// What is drawn is the text's whole silhouette, `border` included, in one
+/// color. A shadow of a bordered glyph is therefore the same shape as the
+/// glyph, which is what makes it read as a shadow rather than a second
+/// outline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Shadow {
+    /// `#RRGGBB` or `#RRGGBBAA`
+    pub color: String,
+    /// How far behind the text it sits, `[x, y]` in canvas pixels. Down
+    /// and to the right is positive; both may be negative.
+    pub offset: [f64; 2],
 }
 
 /// A border of `width` pixels drawn outside every glyph.

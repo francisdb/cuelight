@@ -18,12 +18,15 @@ const SHOW: &str = r##"{
   "size": [32, 8],
   "fonts": {
     "white": { "file": "blocks" },
-    "red": { "file": "blocks", "color": "#FF0000" }
+    "red": { "file": "blocks", "color": "#FF0000" },
+    "cast": { "file": "blocks", "color": "#FFFFFF",
+              "shadow": { "color": "#000000", "offset": [1, 1] } }
   },
   "variables": { "score": 1500 },
   "layers": [
     { "name": "label", "type": "text", "font": "red", "text": "10", "x": 2, "y": 1, "align": "top_left" },
     { "name": "boxed", "type": "text", "font": "white", "text": "1", "size": [9, 8], "x": 20 },
+    { "name": "cast", "type": "text", "font": "cast", "text": "1", "x": 4, "y": 2, "align": "top_left" },
     {
       "name": "score",
       "type": "text",
@@ -240,4 +243,23 @@ fn a_changing_number_does_not_re_rasterize_static_text() {
         revision(&engine, "label");
     }
     assert_eq!(revision(&engine, "label"), label);
+}
+
+#[test]
+fn a_bitmap_shadow_is_a_second_drawing_behind_the_text() {
+    let layers = engine().resolved_layers().unwrap();
+    let cast: Vec<_> = layers.iter().filter(|l| l.name == "cast").collect();
+    assert_eq!(cast.len(), 2, "a shadow is a draw of its own");
+    let at = |layer: &cuelight::ResolvedLayer| match &layer.shape {
+        ResolvedShape::Bitmap { x, y, image, .. } => (*x, *y, image.pixels.clone()),
+        other => panic!("{other:?}"),
+    };
+    let (sx, sy, dark) = at(cast[0]);
+    let (tx, ty, light) = at(cast[1]);
+    assert_eq!((sx - tx, sy - ty), (1.0, 1.0), "moved by the offset");
+    // A raster has no color to tint at draw time, so the shadow is its own
+    // rasterization: the same glyphs in the shadow color.
+    assert_eq!(&light[..4], [255, 255, 255, 255], "the text");
+    assert_eq!(&dark[..4], [0, 0, 0, 255], "its shadow");
+    assert_eq!(dark.len(), light.len());
 }

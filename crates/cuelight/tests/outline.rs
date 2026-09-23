@@ -12,7 +12,10 @@ const SHOW: &str = r##"{
   "name": "outline", "size": [800, 400],
   "fonts": {
     "big": { "file": "sans", "size": 100, "color": "#FF8000" },
-    "edged": { "file": "sans", "size": 50, "border": { "color": "#000000", "width": 2 } }
+    "edged": { "file": "sans", "size": 50, "border": { "color": "#000000", "width": 2 } },
+    "cast": { "file": "sans", "size": 100, "color": "#FFFFFF",
+              "border": { "color": "#FF0000", "width": 2 },
+              "shadow": { "color": "#00000080", "offset": [3, 2] } }
   },
   "variables": { "speed": 11 },
   "layers": [
@@ -20,7 +23,8 @@ const SHOW: &str = r##"{
     { "name": "boxed", "type": "text", "font": "big", "text": "1", "size": [200, 300], "x": 400 },
     { "name": "speed", "type": "text", "font": "edged", "text": "0", "x": 780, "y": 380,
       "anchor": "bottom_right", "bindings": [{ "property": "text", "variable": "speed" }] },
-    { "name": "lines", "type": "text", "font": "big", "text": "A\n1", "align": "right", "size": [700, 300] }
+    { "name": "lines", "type": "text", "font": "big", "text": "A\n1", "align": "right", "size": [700, 300] },
+    { "name": "cast", "type": "text", "font": "cast", "text": "A", "x": 10, "y": 20, "align": "top_left" }
   ]
 }"##;
 
@@ -129,4 +133,49 @@ fn garbage_is_not_a_font() {
     let mut engine = Engine::new();
     assert!(engine.set_outline_font("sans", vec![1u8, 2, 3]).is_err());
     assert!(!engine.has_font("sans"));
+}
+
+#[test]
+fn a_shadow_is_the_same_text_behind_it() {
+    let layers = engine().resolved_layers().unwrap();
+    let cast: Vec<_> = layers.iter().filter(|l| l.name == "cast").collect();
+    assert_eq!(cast.len(), 2, "a shadow is a draw of its own");
+
+    let glyphs = |layer: &cuelight::ResolvedLayer| match &layer.shape {
+        ResolvedShape::GlyphRun { glyphs, border, .. } => (glyphs[0].x, glyphs[0].y, *border),
+        other => panic!("{other:?}"),
+    };
+    let (sx, sy, edge) = glyphs(cast[0]);
+    let (tx, ty, _) = glyphs(cast[1]);
+    // Behind, moved by the offset, and one color throughout.
+    assert!(close(sx - tx, 3.0) && close(sy - ty, 2.0), "{sx} {sy}");
+    assert_eq!(cast[0].color, [0, 0, 0, 128]);
+    assert_eq!(edge, Some(([0, 0, 0, 128], 2.0)), "the border casts too");
+    // The text itself keeps its own colors.
+    assert_eq!(cast[1].color, [255, 255, 255, 255]);
+    assert_eq!(glyphs(cast[1]).2, Some(([255, 0, 0, 255], 2.0)));
+}
+
+#[test]
+fn a_shadow_scales_with_the_layer() {
+    let mut engine = engine();
+    let show = SHOW.replace(
+        r#""name": "cast", "type": "text""#,
+        r#""name": "cast", "type": "text", "scale": 2"#,
+    );
+    engine.load_show(&show).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let cast: Vec<_> = layers.iter().filter(|l| l.name == "cast").collect();
+    let at = |layer: &cuelight::ResolvedLayer| match &layer.shape {
+        ResolvedShape::GlyphRun { glyphs, .. } => (glyphs[0].x, glyphs[0].y),
+        other => panic!("{other:?}"),
+    };
+    let ((sx, sy), (tx, ty)) = (at(cast[0]), at(cast[1]));
+    assert!(close(sx - tx, 6.0) && close(sy - ty, 4.0), "{sx} {sy}");
+}
+
+#[test]
+fn a_shadow_needs_a_color_and_a_finite_offset() {
+    let bad = SHOW.replace(r##""color": "#00000080""##, r#""color": "not a color""#);
+    assert!(Engine::new().load_show(&bad).is_err());
 }
