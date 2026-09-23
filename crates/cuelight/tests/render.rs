@@ -1,5 +1,5 @@
-//! Rendering through vello: needs a GPU adapter, tests skip (pass) when
-//! none is available.
+//! Rendering through vello. These need a GPU adapter and fail without
+//! one; `CUELIGHT_SKIP_GPU_TESTS=1` skips them on purpose.
 
 #![cfg(feature = "render")]
 
@@ -7,26 +7,33 @@ use cuelight::render::{RenderError, Renderer, RgbaFrame};
 use cuelight::Engine;
 use std::sync::{Mutex, OnceLock};
 
+mod gpu;
+
 /// One renderer shared by every test, used under a lock: the harness runs
 /// tests on parallel threads, and creating GPU devices concurrently (or
 /// tearing them down at thread exit) crashes some software adapters.
 fn render(engine: &Engine) -> Option<RgbaFrame> {
-    // On GitHub's Windows runners these renders die with an access
-    // violation (cause unknown; a Windows 10 VM with the same DX12 software
-    // adapter runs them fine). Linux and macOS CI, and any other Windows
-    // machine, still run them.
-    if cfg!(windows) && std::env::var_os("CI").is_some() {
-        eprintln!("software adapter on Windows CI, skipping");
-        return None;
-    }
     static RENDERER: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
-    let renderer = RENDERER.get_or_init(|| match Renderer::new() {
-        Ok(renderer) => Some(Mutex::new(renderer)),
-        Err(RenderError::NoAdapter) => {
-            eprintln!("no GPU adapter, skipping");
-            None
+    let renderer = RENDERER.get_or_init(|| {
+        // Nothing initialises a logger in a test binary, so wgpu's account
+        // of which adapter and backend it picked goes nowhere. Without
+        // RUST_LOG set this prints nothing and costs nothing; with it, a
+        // run that dies says what it was talking to (see issue #23).
+        let _ = env_logger::builder().is_test(false).try_init();
+        match Renderer::new() {
+            Ok(renderer) => {
+                // Named before anything is drawn, so a run that dies
+                // during the first render still says what it was talking
+                // to (see issue #23).
+                eprintln!("render adapter: {:?}", renderer.adapter());
+                Some(Mutex::new(renderer))
+            }
+            Err(RenderError::NoAdapter) => {
+                gpu::no_adapter("the render tests");
+                None
+            }
+            Err(e) => panic!("{e}"),
         }
-        Err(e) => panic!("{e}"),
     });
     let mut renderer = renderer.as_ref()?.lock().unwrap_or_else(|e| e.into_inner());
     Some(renderer.render_to_rgba(engine).unwrap())

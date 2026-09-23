@@ -487,6 +487,10 @@ pub fn background_color(engine: &Engine) -> Color {
 }
 
 pub struct Renderer {
+    /// Which adapter answered and through which backend. A headless
+    /// renderer takes whatever it is given, and when one of them
+    /// misbehaves this is the first thing anybody asks.
+    adapter: wgpu::AdapterInfo,
     device: wgpu::Device,
     queue: wgpu::Queue,
     renderer: vello::Renderer,
@@ -494,6 +498,12 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// What it ended up rendering on: adapter name, kind, backend and
+    /// driver.
+    pub fn adapter(&self) -> &wgpu::AdapterInfo {
+        &self.adapter
+    }
+
     /// Create a headless renderer on the first available GPU adapter.
     pub fn new() -> Result<Self, RenderError> {
         let instance =
@@ -504,12 +514,14 @@ impl Renderer {
             force_fallback_adapter: false,
         }))
         .map_err(|_| RenderError::NoAdapter)?;
+        let adapter_info = adapter.get_info();
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
                 .map_err(|e| RenderError::Device(e.to_string()))?;
         let renderer = vello::Renderer::new(&device, vello::RendererOptions::default())
             .map_err(|e| RenderError::Vello(e.to_string()))?;
         Ok(Self {
+            adapter: adapter_info,
             device,
             queue,
             renderer,

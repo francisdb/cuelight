@@ -9,6 +9,8 @@ use cuelight::vello::{self, wgpu};
 use cuelight::Engine;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+mod gpu;
+
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -21,14 +23,10 @@ struct Gpu {
 fn gpu() -> Option<MutexGuard<'static, Gpu>> {
     static GPU: OnceLock<Option<Mutex<Gpu>>> = OnceLock::new();
     let gpu = GPU.get_or_init(|| {
-        if cfg!(windows) && std::env::var_os("CI").is_some() {
-            eprintln!("vello renders crash on Windows CI, skipping");
-            return None;
-        }
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
-            eprintln!("no GPU adapter, skipping");
+            gpu::no_adapter("the presenter tests");
             return None;
         };
         let (device, queue) =
