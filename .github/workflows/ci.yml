@@ -20,11 +20,52 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install ALSA headers (for cpal, examples only)
+      # ALSA for cpal. Mesa for the GPU tests: this runner has no GPU, and
+      # without a driver wgpu finds no adapter at all, so every test that
+      # renders quietly did nothing here. lavapipe, in mesa-vulkan-drivers,
+      # is a software Vulkan device and makes them real.
+      - name: Install ALSA headers and a software Vulkan driver
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev mesa-vulkan-drivers
       - name: Build (all features)
         run: cargo build --workspace --all-features
+      # The GPU render tests draw through vello, which is compute-shader
+      # heavy, and the runner image has no GPU: no Vulkan driver at all and
+      # an OpenGL 1.1 stack, so wgpu falls back to WARP, Microsoft's
+      # software rasteriser. The copy of WARP shipped in that image
+      # (10.0.26100.33296) faults while *compiling* one of those shaders,
+      # taking the whole test binary with it:
+      #
+      #   d3d10warp!ComputeShaderTransformer::ConstructLoadStoreSets+0x319
+      #   d3d10warp!PixelJitOptimizer::TransformComputeShader+0x16b
+      #   d3d10warp!Task_CompileShader+0x23
+      #     exit code 0xc0000005, STATUS_ACCESS_VIOLATION
+      #
+      # It is not ours: the same tests pass on an older WARP
+      # (10.0.19041.5794), and crash here whether built with MSVC or mingw.
+      # It is fixed in the redistributable, which Microsoft publishes for
+      # exactly this and which passes all of them. So CI fetches that and
+      # puts it beside the test binaries, where Windows looks first.
+      #
+      # Deliberately not pinned. If a later release brings the fault back
+      # we would rather find out here, on a run that names the rasteriser
+      # and dies the same way, than carry a version that quietly stops
+      # matching what anyone else is running. A failure that looks like the
+      # stack above is theirs, not ours; issue #23 has the full account.
+      #
+      # Fetched at build time and never committed or shipped: the package
+      # may not be redistributed.
+      - name: Software rasteriser the render tests can survive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          nuget install Microsoft.Direct3D.WARP -OutputDirectory warp -ExcludeVersion
+          $dll = Get-ChildItem -Recurse -Filter d3d10warp.dll warp |
+                 Where-Object { $_.FullName -match 'win-x64|\\x64\\' } | Select-Object -First 1
+          if (-not $dll) { throw 'no x64 d3d10warp.dll in the package' }
+          New-Item -ItemType Directory -Force -Path target/debug/deps | Out-Null
+          Copy-Item $dll.FullName target/debug/deps -Force
+          Write-Host "WARP $((Get-Item $dll.FullName).VersionInfo.FileVersion) in place"
       - name: Test (all features, includes schema drift check)
         run: cargo test --workspace --all-features
       - name: Test (no default features)

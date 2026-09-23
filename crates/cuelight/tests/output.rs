@@ -3,6 +3,8 @@
 
 use cuelight::{Engine, OutputColor, OutputMode};
 
+mod gpu;
+
 const SHOW: &str = r##"{
   "name": "output",
   "size": [16, 4],
@@ -45,7 +47,7 @@ fn gpu_output_pass_matches_cpu_conversion() {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
-        eprintln!("no GPU adapter, skipping");
+        gpu::no_adapter("the output pass test");
         return;
     };
     let (device, queue) =
