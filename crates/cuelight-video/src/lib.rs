@@ -31,6 +31,20 @@ mod stream;
 #[cfg(feature = "ffmpeg-process")]
 pub use stream::Stream;
 
+/// A clip's own soundtrack, as interleaved stereo samples at `rate`, or
+/// `None` when the file has no audio.
+///
+/// Takes a path rather than a [`Clip`] so a host can decode a folder's
+/// worth at once: a clip holds a decoder and is not shareable between
+/// threads, and this needs nothing but the file.
+#[cfg(feature = "ffmpeg-process")]
+pub fn soundtrack(
+    path: impl AsRef<std::path::Path>,
+    rate: u32,
+) -> Result<Option<Vec<f32>>, String> {
+    ffmpeg::soundtrack(path.as_ref(), rate)
+}
+
 /// What a video is, before any of it is decoded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Details {
@@ -210,7 +224,7 @@ impl Clip {
     /// megabytes, so ask per clip rather than for a whole folder.
     #[cfg(feature = "ffmpeg-process")]
     pub fn soundtrack(&self, rate: u32) -> Result<Option<Vec<f32>>, String> {
-        ffmpeg::soundtrack(&self.path, rate)
+        soundtrack(&self.path, rate)
     }
 
     /// Whether the clip is still being decoded and has nothing to show.
