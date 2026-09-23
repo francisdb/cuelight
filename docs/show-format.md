@@ -511,9 +511,15 @@ pointed at rather than needing a layer per clip: bind it to a
 variable, and setting that variable plays another clip from the top, at
 its own size and for its own length. This holds whether or not the
 layer is playing: naming a clip is the whole of what a host has to say,
-so a layer that has run out starts the next one it is pointed at. A
-name nothing registered simply shows nothing, as an unregistered image
-does.
+so a layer that has run out starts the next one it is pointed at, and so
+does one that has never played, which is what makes a surface with no
+`trigger` and no `autoplay` work at all.
+
+What does not start it is a binding with nothing to say: a variable that
+is unset, or a value its `map` does not list, leaves the layer as it is.
+It does not fall back to the layer's own `video` and treat that as an
+instruction, because then a show could never say "nothing yet". A name
+nothing registered simply shows nothing, as an unregistered image does.
 
 A video layer draws only while a play is running. Once a clip ends it
 shows nothing, rather than holding its last frame, so whatever is behind

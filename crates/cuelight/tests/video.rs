@@ -541,3 +541,37 @@ fn a_group_turns_down_the_clips_below_it() {
     assert!((heard[0].gain - 0.4).abs() < 1e-9, "{heard:?}");
     assert_eq!(heard[0].bus.as_deref(), Some("music"));
 }
+
+#[test]
+fn a_layer_that_has_never_played_starts_when_it_is_pointed_somewhere() {
+    // A surface fed entirely by what a host names: no trigger, no
+    // autoplay, nothing to show until it is told. Naming a clip is the
+    // whole of what a host has to say, so it has to start the first time
+    // as well as every time after.
+    let mut engine = Engine::new();
+    engine.set_video("one", 2.0, [8.0, 8.0]).unwrap();
+    engine.set_video("two", 2.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "surface", "size": [64, 32], "variables": { "event": "" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "bindings": [ { "property": "video", "variable": "event",
+                                               "map": { "a": "one", "b": "two" } } ] } ] }"#,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+    assert!(
+        engine.videos().unwrap().is_empty(),
+        "nothing has been asked for, so nothing plays"
+    );
+
+    engine.set_variable("event", "a");
+    engine.advance_frame(0.1);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing.len(), 1, "the first thing it was ever told to show");
+    assert_eq!(playing[0].video, "one");
+
+    engine.set_variable("event", "b");
+    engine.advance_frame(0.1);
+    assert_eq!(engine.videos().unwrap()[0].video, "two");
+}
