@@ -776,6 +776,17 @@
             "image": {
               "type": "string"
             },
+            "repeat": {
+              "description": "Tile the image across `size` instead of stretching to it.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Tile"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "sheet": {
               "description": "Treat the image as a grid of equally sized cells and draw one:\nthe one the `frame` property selects.",
               "anyOf": [
@@ -1299,7 +1310,8 @@
             "scale",
             "scale_x",
             "scale_y",
-            "rotation"
+            "rotation",
+            "tile_y"
           ]
         },
         {
@@ -1326,6 +1338,11 @@
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"
+        },
+        {
+          "description": "Where a tiled image's pattern starts, along x and y, in the\nlayer's units. Animating one scrolls the texture under the layer.",
+          "type": "string",
+          "const": "tile_x"
         },
         {
           "description": "Loudness of an audio layer or a group's subtree.",
@@ -1708,6 +1725,39 @@
       "required": [
         "color"
       ]
+    },
+    "Tile": {
+      "description": "Repeat a layer's content across its `size` instead of stretching it\nto fit.\n\nA pattern otherwise has to be written out: a checkerboard is a hundred\nand twenty eight rectangles, and a reader cannot tell that from a\nhundred and twenty eight unrelated ones. The same want turns up for a\ngrid, a scanline overlay, a floor, a wall of dots, any texture meant to\ncover whatever it is put behind.\n\nTiling happens in the layer's own space, so a rotating or scaled group\ncarries the pattern with it rather than sliding underneath it.",
+      "type": "object",
+      "properties": {
+        "offset": {
+          "description": "Where the pattern starts, in the layer's units. Animate it and the\ntexture scrolls under a fixed window.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "size": {
+          "description": "Size of one tile in the layer's units. The content's own size when\nomitted, which is what \"repeat this at its natural size\" means.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      }
     },
     "Timeline": {
       "description": "A keyframed animation over one or more properties of its layer.\n\nA timeline runs when it is `autoplay` and the show loads, or when the\nhost fires its `trigger`. While running it owns the properties it\nanimates: timeline values override bindings, which override base values.",

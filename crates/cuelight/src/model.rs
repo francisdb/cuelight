@@ -613,6 +613,9 @@ pub enum LayerKind {
         /// art, a worn look, one sprite in several colors).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tint: Option<String>,
+        /// Tile the image across `size` instead of stretching to it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repeat: Option<Tile>,
     },
     /// Text in a bitmap font style from the show's `fonts`. With `size` the
     /// text is aligned inside that box (its top-left corner at the layer's
@@ -1162,6 +1165,30 @@ pub struct Duck {
     pub release: f64,
 }
 
+/// Repeat a layer's content across its `size` instead of stretching it
+/// to fit.
+///
+/// A pattern otherwise has to be written out: a checkerboard is a hundred
+/// and twenty eight rectangles, and a reader cannot tell that from a
+/// hundred and twenty eight unrelated ones. The same want turns up for a
+/// grid, a scanline overlay, a floor, a wall of dots, any texture meant to
+/// cover whatever it is put behind.
+///
+/// Tiling happens in the layer's own space, so a rotating or scaled group
+/// carries the pattern with it rather than sliding underneath it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Tile {
+    /// Size of one tile in the layer's units. The content's own size when
+    /// omitted, which is what "repeat this at its natural size" means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 2]>,
+    /// Where the pattern starts, in the layer's units. Animate it and the
+    /// texture scrolls under a fixed window.
+    #[serde(default)]
+    pub offset: [f64; 2],
+}
+
 /// An outline drawn along a shape's edge, centered on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1202,6 +1229,10 @@ pub enum Property {
     /// Sprite sheet cell of an image layer: rounded down and clamped to
     /// the sheet, so a linear key from 0 to n steps through n cells.
     Frame,
+    /// Where a tiled image's pattern starts, along x and y, in the
+    /// layer's units. Animating one scrolls the texture under the layer.
+    TileX,
+    TileY,
     /// Loudness of an audio layer or a group's subtree.
     Gain,
     /// Whether the layer (and its subtree) shows and sounds; bindable,
@@ -1393,6 +1424,18 @@ impl Layer {
                 Value::Text(sound.first().to_owned())
             }
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
+            (
+                Property::TileX,
+                LayerKind::Image {
+                    repeat: Some(tile), ..
+                },
+            ) => Value::Number(tile.offset[0]),
+            (
+                Property::TileY,
+                LayerKind::Image {
+                    repeat: Some(tile), ..
+                },
+            ) => Value::Number(tile.offset[1]),
             (Property::Tint, LayerKind::Image { tint, .. }) => {
                 Value::Text(tint.clone().unwrap_or_default())
             }
@@ -1409,7 +1452,9 @@ impl Layer {
                 | Property::Gain
                 | Property::Tint
                 | Property::Video
-                | Property::Sound,
+                | Property::Sound
+                | Property::TileX
+                | Property::TileY,
                 _,
             ) => return None,
         })

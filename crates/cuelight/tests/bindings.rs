@@ -389,3 +389,37 @@ fn a_mapped_binding_is_not_reported_for_its_variables_value() {
         engine.load_warnings()
     );
 }
+
+#[test]
+fn a_tile_offset_is_bindable_so_a_texture_can_scroll() {
+    let show = r##"{
+      "name": "scroll", "size": [64, 64],
+      "variables": { "drift": 0 },
+      "layers": [{ "name": "floor", "type": "image", "image": "checker",
+                   "size": [64, 64], "repeat": { "size": [8, 8] },
+                   "bindings": [{ "property": "tile_x", "variable": "drift" }] }]
+    }"##;
+    let mut engine = Engine::new();
+    engine
+        .set_image("checker", 2, 2, vec![255; 2 * 2 * 4])
+        .unwrap();
+    engine.load_show(show).unwrap();
+    let offset = |e: &Engine| match e.resolved_layers().unwrap()[0].shape {
+        cuelight::ResolvedShape::Image { tile, .. } => tile.unwrap().offset,
+        _ => panic!("an image"),
+    };
+    assert_eq!(offset(&engine), [0.0, 0.0]);
+    engine.set_variable("drift", 3.0);
+    assert_eq!(offset(&engine), [3.0, 0.0]);
+}
+
+#[test]
+fn tiling_is_only_a_property_of_images() {
+    let show = r##"{
+      "name": "no", "size": [8, 8],
+      "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                   "fill": "#FFFFFF",
+                   "bindings": [{ "property": "tile_x", "variable": "x" }] }]
+    }"##;
+    assert!(Engine::new().load_show(show).is_err());
+}

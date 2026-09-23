@@ -290,3 +290,65 @@ fn an_untinted_image_is_unchanged() {
     assert_eq!(pixel(&frame, 0, 0), [255, 128, 0, 255]);
     assert_eq!(pixel(&frame, 3, 1), [255, 128, 0, 255]);
 }
+
+#[test]
+fn a_tiled_image_repeats_and_a_stretched_one_does_not() {
+    // A 2x2 checker: black, white / white, black.
+    let checker: Vec<u8> = [
+        [0u8, 0, 0, 255],
+        [255, 255, 255, 255],
+        [255, 255, 255, 255],
+        [0, 0, 0, 255],
+    ]
+    .concat();
+    let show = |repeat: &str| {
+        format!(
+            r##"{{ "name": "tile", "size": [16, 16], "background": "#FF0000",
+                  "layers": [{{ "name": "floor", "type": "image", "image": "checker",
+                               "size": [16, 16]{repeat} }}] }}"##
+        )
+    };
+
+    // Smooth scaling blurs the boundaries either way, so what is asserted
+    // is the repeat itself: whether the pattern starts again four pixels
+    // along, not the exact shade at one place.
+    let mut engine = Engine::new();
+    engine.set_image("checker", 2, 2, checker.clone()).unwrap();
+    engine.load_show(&show("")).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_ne!(
+        pixel(&frame, 0, 0),
+        pixel(&frame, 4, 0),
+        "stretched: one 2x2 over the whole box, so four pixels along is a \
+         different part of it"
+    );
+    assert_eq!(
+        pixel(&frame, 0, 0)[0],
+        0,
+        "stretched: starts on the dark cell"
+    );
+    assert_eq!(
+        pixel(&frame, 15, 0)[0],
+        255,
+        "stretched: ends on the light one"
+    );
+
+    let mut engine = Engine::new();
+    engine.set_image("checker", 2, 2, checker).unwrap();
+    engine
+        .load_show(&show(r#", "repeat": { "size": [4, 4] }"#))
+        .unwrap();
+    let Some(frame) = render(&engine) else { return };
+    for x in [4, 8, 12] {
+        assert_eq!(
+            pixel(&frame, 0, 0),
+            pixel(&frame, x, 0),
+            "tiled: the pattern starts again every four pixels, at {x}"
+        );
+    }
+    assert_ne!(
+        pixel(&frame, 0, 0),
+        pixel(&frame, 2, 0),
+        "tiled: and it is a pattern, not one flat colour"
+    );
+}

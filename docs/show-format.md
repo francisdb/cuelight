@@ -347,6 +347,24 @@ Layer kinds:
   alone: white changes nothing, a color stains the art (a coloured bulb
   behind white artwork, one sprite reused in several colors, a worn look
   over a clean texture).
+
+  `size` stretches the image to fill the box. `repeat` tiles it across the
+  box instead, which is what a pattern wants: a checkerboard, a grid, a
+  scanline overlay, a floor, any texture meant to cover whatever it is put
+  behind. Written out, those are hundreds of rectangles that a reader
+  cannot tell from hundreds of unrelated ones.
+
+  ```json
+  { "type": "image", "image": "checker", "size": [800, 600],
+    "repeat": { "size": [64, 64], "offset": [0, 0] } }
+  ```
+
+  A tile's `size` defaults to the image's own, which is what "repeat this
+  at its natural size" means. Tiling happens in the layer's own space, so
+  a rotating or scaled group carries the pattern with it rather than
+  sliding underneath it. `offset` says where the pattern starts, and it is
+  bindable and keyframable as `tile_x` and `tile_y`, so a scrolling
+  texture is a tiled image with an animated offset.
 - `text`: `text` (use `\n` for line breaks) drawn in `font`, a style
   declared in the show's `fonts` (see [Fonts](#fonts)). Optional `size`
   `[width, height]` is a box whose top-left corner sits at the layer's

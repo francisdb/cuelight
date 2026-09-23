@@ -353,6 +353,7 @@ fn build_scene(
                 y,
                 width,
                 height,
+                tile,
             } => {
                 // Skipped by resolved_layers when unregistered, so the
                 // lookup only misses if the host raced a removal.
@@ -363,13 +364,22 @@ fn build_scene(
                     None => images.get(&image, data),
                     Some(cell) => images.cell(&image, data, cell),
                 };
+                // Stretched to the box, or one tile's worth repeated
+                // across it from wherever the pattern starts.
+                let (tile_w, tile_h, ox, oy) = match tile {
+                    None => (width, height, 0.0, 0.0),
+                    Some(tile) => (tile.width, tile.height, tile.offset[0], tile.offset[1]),
+                };
                 let transform = placement
-                    * Affine::translate((x, y))
+                    * Affine::translate((x + ox, y + oy))
                     * Affine::scale_non_uniform(
-                        width / f64::from(pixels.width),
-                        height / f64::from(pixels.height),
+                        tile_w / f64::from(pixels.width),
+                        tile_h / f64::from(pixels.height),
                     );
-                let brush = ImageBrush::new(pixels).with_alpha(layer.opacity as f32);
+                let mut brush = ImageBrush::new(pixels).with_alpha(layer.opacity as f32);
+                if tile.is_some() {
+                    brush = brush.with_extend(Extend::Repeat);
+                }
                 // A tint multiplies the image where it is opaque, so the
                 // image goes into a layer of its own and the color is
                 // composited into it.
@@ -378,7 +388,18 @@ fn build_scene(
                     show.push_layer(Fill::NonZero, Mix::Normal, 1.0, placement, &rect);
                     rect
                 });
-                show.draw_image(brush.as_ref(), transform);
+                match tile {
+                    // A repeating brush paints wherever it is asked to, so
+                    // the box is what says where the pattern stops.
+                    Some(_) => show.fill(
+                        Fill::NonZero,
+                        placement,
+                        brush.as_ref(),
+                        Some(transform * placement.inverse()),
+                        &Rect::new(x, y, x + width, y + height),
+                    ),
+                    None => show.draw_image(brush.as_ref(), transform),
+                }
                 if let Some(rect) = tint {
                     show.push_layer(
                         Fill::NonZero,
