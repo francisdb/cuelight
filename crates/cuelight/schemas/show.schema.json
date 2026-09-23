@@ -409,6 +409,18 @@
           "description": "Name of the font as registered by the host, by convention the font\nfile's stem: a bitmap font ([`Engine::set_font`](crate::Engine::set_font))\nor an outline font (`Engine::set_outline_font`). Which kind it is\ndecides how the text is drawn; the layers using the style do not\nchange.",
           "type": "string"
         },
+        "shadow": {
+          "description": "A copy of the text drawn behind it, offset.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Shadow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "size": {
           "description": "Em size in canvas pixels. Required for outline fonts; not allowed\nfor bitmap fonts, which have one fixed size.",
           "type": [
@@ -1389,6 +1401,30 @@
           "type": "string",
           "const": "numeric7"
         }
+      ]
+    },
+    "Shadow": {
+      "description": "A copy of the text drawn behind it, offset by a few pixels: the\nordinary way to keep text legible over a moving picture.\n\nWhat is drawn is the text's whole silhouette, `border` included, in one\ncolor. A shadow of a bordered glyph is therefore the same shape as the\nglyph, which is what makes it read as a shadow rather than a second\noutline.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "`#RRGGBB` or `#RRGGBBAA`",
+          "type": "string"
+        },
+        "offset": {
+          "description": "How far behind the text it sits, `[x, y]` in canvas pixels. Down\nand to the right is positive; both may be negative.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "required": [
+        "color",
+        "offset"
       ]
     },
     "Shape": {
