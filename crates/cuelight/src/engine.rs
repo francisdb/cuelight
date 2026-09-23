@@ -307,6 +307,8 @@ struct Playhead {
     timeline: usize,
     /// Seconds since the delay ended: negative while delayed.
     time: f64,
+    /// Finished, but holding its properties at their last values.
+    held: bool,
 }
 
 /// One play of an audio layer, from its trigger until it ends or is
@@ -1271,12 +1273,16 @@ impl Engine {
         let mut finished: Vec<usize> = Vec::new();
         let mut on_end: Vec<String> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
-            p.time += dt;
             let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
             let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
                 finished.push(i);
                 continue;
             };
+            // A held one is done moving: its time stays where it stopped.
+            if p.held {
+                continue;
+            }
+            p.time += dt;
             if p.time < 0.0 {
                 continue;
             }
@@ -1284,8 +1290,15 @@ impl Engine {
             if tl.looping && duration > 0.0 {
                 p.time %= duration;
             } else if duration <= 0.0 || p.time >= tl.play_time() {
-                finished.push(i);
                 on_end.extend(tl.on_end.clone());
+                // Holding is not playing: it ends, fires its `on_end` once
+                // like any other, and then keeps its last values.
+                if tl.hold && !tl.looping && duration > 0.0 {
+                    p.time = tl.play_time();
+                    p.held = true;
+                } else {
+                    finished.push(i);
+                }
             }
         }
         for i in finished.into_iter().rev() {
@@ -1554,6 +1567,7 @@ impl Engine {
                 layer_path,
                 timeline,
                 time: -delay,
+                held: false,
             });
         }
     }
@@ -1842,21 +1856,24 @@ impl Engine {
         if !prop.is_numeric() {
             return Some(v);
         }
-        // A running timeline owns the property.
-        for p in &self.playing {
-            if p.root != root || p.layer_path != path {
-                continue;
-            }
-            let Some(tl) = layer.timelines.get(p.timeline) else {
-                continue;
-            };
-            // Still waiting out its delay: it does not own anything yet.
-            let Some(time) = tl.local_time(p.time) else {
-                continue;
-            };
-            for track in tl.tracks.iter().filter(|t| t.property == prop) {
-                if let Some(sampled) = track.sample(time) {
-                    v = Value::Number(sampled);
+        // A running timeline owns the property, over one that has
+        // finished and is holding its last value.
+        for running in [false, true] {
+            for p in self.playing.iter().filter(|p| p.held != running) {
+                if p.root != root || p.layer_path != path {
+                    continue;
+                }
+                let Some(tl) = layer.timelines.get(p.timeline) else {
+                    continue;
+                };
+                // Still waiting out its delay: it owns nothing yet.
+                let Some(time) = tl.local_time(p.time) else {
+                    continue;
+                };
+                for track in tl.tracks.iter().filter(|t| t.property == prop) {
+                    if let Some(sampled) = track.sample(time) {
+                        v = Value::Number(sampled);
+                    }
                 }
             }
         }

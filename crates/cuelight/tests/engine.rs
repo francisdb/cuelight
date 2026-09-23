@@ -250,7 +250,7 @@ const SCENES: &str = r##"{
         {
           "name": "score",
           "type": "shape",
-          "shape": { "rect": [0, 0, 8, 8] },
+          "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
           "fill": "#00FF00",
           "timelines": [
             {
@@ -864,4 +864,114 @@ fn a_gradient_needs_stops_in_order_and_a_radius() {
         .load_show(&bad(r##"{ "linear": { "from": [0, 0], "to": [0, 8],
                    "stops": [{ "at": 0, "color": "purple" }] } }"##))
         .is_err());
+}
+
+/// One layer, one fade in, optionally held, plus a flash that can take
+/// the property for a moment.
+fn fading(hold: bool) -> Engine {
+    let show = format!(
+        r##"{{
+      "name": "fade", "size": [8, 8],
+      "layers": [{{
+        "name": "panel", "type": "shape", "opacity": 0,
+        "shape": {{ "rect": [0, 0, 8, 8] }}, "fill": "#FFFFFF",
+        "timelines": [
+          {{ "name": "in", "trigger": "enter", "hold": {hold},
+             "tracks": [{{ "property": "opacity",
+                          "keys": [{{ "t": 0, "v": 0 }}, {{ "t": 1, "v": 0.75 }}] }}] }},
+          {{ "name": "flash", "trigger": "flash",
+             "tracks": [{{ "property": "opacity",
+                          "keys": [{{ "t": 0, "v": 1 }}, {{ "t": 0.5, "v": 1 }}] }}] }}
+        ]
+      }}]
+    }}"##
+    );
+    let mut engine = Engine::new();
+    engine.load_show(&show).unwrap();
+    engine
+}
+
+fn opacity(engine: &Engine) -> f64 {
+    engine.resolved_layers().unwrap()[0].opacity
+}
+
+#[test]
+fn a_timeline_gives_its_property_back_when_it_ends() {
+    let mut engine = fading(false);
+    engine.trigger("enter");
+    engine.advance_frame(0.5);
+    assert!(
+        (opacity(&engine) - 0.375).abs() < 0.01,
+        "{}",
+        opacity(&engine)
+    );
+    engine.advance_frame(1.0);
+    assert_eq!(opacity(&engine), 0.0, "back to the layer's own value");
+}
+
+#[test]
+fn a_held_timeline_keeps_its_last_value() {
+    let mut engine = fading(true);
+    engine.trigger("enter");
+    engine.advance_frame(1.5);
+    assert!(
+        (opacity(&engine) - 0.75).abs() < 0.001,
+        "{}",
+        opacity(&engine)
+    );
+    // And keeps it, rather than being a value that decays.
+    engine.advance_frame(10.0);
+    assert!(
+        (opacity(&engine) - 0.75).abs() < 0.001,
+        "{}",
+        opacity(&engine)
+    );
+}
+
+#[test]
+fn a_running_timeline_outranks_a_held_one_and_hands_back() {
+    let mut engine = fading(true);
+    engine.trigger("enter");
+    engine.advance_frame(1.5);
+    engine.trigger("flash");
+    engine.advance_frame(0.1);
+    assert!((opacity(&engine) - 1.0).abs() < 0.001, "the flash wins");
+    engine.advance_frame(1.0);
+    assert!(
+        (opacity(&engine) - 0.75).abs() < 0.001,
+        "and hands back to the held value, not to 0: {}",
+        opacity(&engine)
+    );
+}
+
+#[test]
+fn a_held_timeline_still_fires_its_end_and_can_be_restarted() {
+    let show = r##"{
+      "name": "held", "size": [8, 8],
+      "layers": [{
+        "name": "panel", "type": "shape", "opacity": 0,
+        "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+        "timelines": [{ "name": "in", "trigger": "enter", "hold": true, "on_end": "done",
+                        "tracks": [{ "property": "opacity",
+                                     "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 0.75 }] }] }]
+      }]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("enter");
+    engine.advance_frame(1.5);
+    assert!(engine
+        .drain_events()
+        .iter()
+        .any(|e| matches!(e, Event::Trigger(t) if t == "done")));
+    engine.advance_frame(1.0);
+    assert!(
+        engine.drain_events().is_empty(),
+        "it ends once, not every frame"
+    );
+
+    // Started again, it plays again from the top.
+    engine.trigger("enter");
+    engine.advance_frame(0.0);
+    assert!(opacity(&engine) < 0.01, "{}", opacity(&engine));
 }

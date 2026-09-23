@@ -1665,6 +1665,11 @@
           "format": "double",
           "default": 0.0
         },
+        "hold": {
+          "description": "Keep the last value instead of giving the properties back.\n\nA timeline that ends hands its properties back to their binding or\nbase value, which is what a pulse or a flash wants. A fade *into* a\nstate wants to stay there, and writing the end value into the base\nas well only works while nothing else ever animates that property.\n\nHeld, a finished timeline keeps its properties at their last values\nuntil it is started again or its scene is left, and it ranks below\nany timeline still running, so a later flash on the same property\nwins while it plays and hands back to the held value afterwards. It\nmeans nothing on a loop, which never finishes.",
+          "type": "boolean",
+          "default": false
+        },
         "loop": {
           "description": "Repeat forever. Cannot be combined with `repeat`.",
           "type": "boolean",
