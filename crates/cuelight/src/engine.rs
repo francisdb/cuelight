@@ -602,6 +602,9 @@ pub struct Engine {
     /// at the last step and when that last changed, so a ramp knows where
     /// it started.
     ducking: HashMap<(Root, Vec<usize>), Ducked>,
+    /// Which timeline conditions held last frame, so becoming true can be
+    /// told from staying true.
+    conditions: HashMap<(Root, Vec<usize>, usize), bool>,
     /// What each pointed layer last played, so pointing one somewhere new
     /// can be told from one that simply finished.
     shown: HashMap<(Root, Vec<usize>), String>,
@@ -732,6 +735,7 @@ impl Engine {
         self.spinning.clear();
         self.shown.clear();
         self.ducking.clear();
+        self.conditions.clear();
         self.plays.clear();
         self.waiting.clear();
         self.events.clear();
@@ -1440,6 +1444,9 @@ impl Engine {
 
     fn enter_scene(&mut self, scene: usize) {
         self.playing.retain(|p| p.owner.root() == Root::Show);
+        // The scene's conditions are forgotten with it, so one that is
+        // already true when it is entered starts its timeline again.
+        self.conditions.retain(|(root, ..), _| *root == Root::Show);
         // Leaving a scene stops its sounds.
         self.sounding.retain(|s| s.root == Root::Show);
         self.waiting.retain(|(root, ..)| *root == Root::Show);
@@ -1574,6 +1581,7 @@ impl Engine {
         // without ever noticing it sounded.
         self.follow_ducks();
         self.settle_debounces(to);
+        self.follow_conditions();
         self.follow_transitions();
         self.follow_reels();
         // A layer pointed at another clip shows that one, from the top,
@@ -2099,6 +2107,61 @@ impl Engine {
         }
     }
 
+    /// Start every timeline whose `when` has just become true.
+    ///
+    /// The edge is what starts it, not the condition holding: a lamp that
+    /// stays on plays its animation once. A condition that is already
+    /// true when the show loads or a scene is entered counts as an edge,
+    /// the same way a host firing a trigger at that moment would.
+    fn follow_conditions(&mut self) {
+        let Some(show) = &self.show else { return };
+        let roots: Vec<Root> = std::iter::once(Root::Show)
+            .chain(self.active_scene.map(Root::Scene))
+            .collect();
+        let mut edges: Vec<(Root, Vec<usize>, usize)> = Vec::new();
+        let mut now: HashMap<(Root, Vec<usize>, usize), bool> = HashMap::new();
+        for root in roots {
+            let Some(layers) = root_layers(show, root) else {
+                continue;
+            };
+            let mut found: Vec<(Vec<usize>, usize, bool)> = Vec::new();
+            collect_timelines(layers, &mut Vec::new(), &mut |path, idx, tl| {
+                if let Some(when) = &tl.when {
+                    found.push((path.to_vec(), idx, self.holds(when)));
+                }
+            });
+            for (path, idx, holds) in found {
+                let key = (root, path, idx);
+                if holds && self.conditions.get(&key) != Some(&true) {
+                    edges.push(key.clone());
+                }
+                now.insert(key, holds);
+            }
+        }
+        self.conditions = now;
+        for (root, path, timeline) in edges {
+            self.start_timeline(root, path, timeline, self.time);
+        }
+    }
+
+    /// Whether a condition reads as true right now.
+    fn holds(&self, when: &crate::model::When) -> bool {
+        let Some(value) = self.variables.get(&when.variable) else {
+            return false;
+        };
+        let value = match &when.map {
+            None => value.clone(),
+            Some(map) => match map.get(&value.to_text()).or(when.default.as_ref()) {
+                Some(mapped) => mapped.clone(),
+                None => return false,
+            },
+        };
+        match when.threshold {
+            Some(level) => value.as_number() >= level,
+            None => value.as_number() != 0.0,
+        }
+    }
+
     /// (Re)start the timelines `want` selects, in `root` or, with `None`,
     /// in the show's layers and the active scene.
     ///
@@ -2147,6 +2210,32 @@ impl Engine {
                 held: false,
             });
         }
+    }
+
+    /// (Re)start one timeline from the top, minding its delay.
+    /// Start the timeline at `path`, as if at the instant `at`.
+    ///
+    /// `at` is when it should have started, not when this was noticed, so
+    /// a timeline a condition starts is timed from the condition turning
+    /// true.
+    fn start_timeline(&mut self, root: Root, layer_path: Vec<usize>, timeline: usize, at: f64) {
+        let Some(show) = &self.show else { return };
+        let delay = root_layers(show, root)
+            .and_then(|layers| layer_at(layers, &layer_path))
+            .and_then(|l| l.timelines.get(timeline))
+            .map_or(0.0, |tl| tl.delay.max(0.0));
+        let owner = Owner::Layer {
+            root,
+            path: layer_path,
+        };
+        self.playing
+            .retain(|p| !(p.owner == owner && p.timeline == timeline));
+        self.playing.push(Playhead {
+            owner,
+            timeline,
+            starts: at + delay,
+            held: false,
+        });
     }
 
     /// Let every binding with a debounce take in its variable: a new value
@@ -3777,6 +3866,21 @@ fn validate(show: &Show) -> Result<(), Error> {
                         "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
                         timeline.name, layer.name, track.property
                     )));
+                }
+                if let Some(when) = &timeline.when {
+                    let problem = if when.variable.is_empty() {
+                        Some("needs a variable in its condition")
+                    } else if when.threshold.is_some_and(|t| !t.is_finite()) {
+                        Some("needs a finite threshold in its condition")
+                    } else {
+                        None
+                    };
+                    if let Some(problem) = problem {
+                        return Err(Error::InvalidShow(format!(
+                            "timeline {:?} of layer {:?} {problem}",
+                            timeline.name, layer.name
+                        )));
+                    }
                 }
             }
             if let LayerKind::Audio {

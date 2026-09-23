@@ -1205,3 +1205,92 @@ fn a_chain_hands_the_property_straight_over() {
         );
     }
 }
+
+/// A panel with an animation started by a lamp rather than by name.
+fn lit() -> Engine {
+    let show = r##"{
+      "name": "when", "size": [8, 8],
+      "variables": { "lamp": 0, "mode": "" },
+      "layers": [{
+        "name": "panel", "type": "shape", "opacity": 0,
+        "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+        "timelines": [
+          { "name": "flash", "when": { "variable": "lamp", "threshold": 0.5 },
+            "tracks": [{ "property": "opacity",
+                         "keys": [{ "t": 0, "v": 1 }, { "t": 1, "v": 0 }] }] }
+        ]
+      }, {
+        "name": "ball", "type": "shape", "opacity": 0,
+        "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+        "timelines": [
+          { "name": "multi", "when": { "variable": "mode", "map": { "multiball": 1 } },
+            "tracks": [{ "property": "opacity",
+                         "keys": [{ "t": 0, "v": 1 }, { "t": 1, "v": 1 }] }] }
+        ]
+      }]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine
+}
+
+#[test]
+fn a_timeline_starts_when_its_condition_becomes_true() {
+    let mut engine = lit();
+    engine.advance_frame(0.1);
+    assert_eq!(engine.resolved_layers().unwrap()[0].opacity, 0.0);
+
+    engine.set_variable("lamp", 1.0);
+    engine.advance_frame(0.0);
+    assert!((engine.resolved_layers().unwrap()[0].opacity - 1.0).abs() < 0.01);
+
+    // Holding true does not start it again: it plays out and stays out.
+    engine.advance_frame(0.5);
+    let half = engine.resolved_layers().unwrap()[0].opacity;
+    assert!((half - 0.5).abs() < 0.01, "{half}");
+    engine.advance_frame(0.5);
+    engine.advance_frame(0.5);
+    assert_eq!(engine.resolved_layers().unwrap()[0].opacity, 0.0);
+
+    // Off and on again is a new edge.
+    engine.set_variable("lamp", 0.0);
+    engine.advance_frame(0.016);
+    engine.set_variable("lamp", 1.0);
+    engine.advance_frame(0.0);
+    assert!((engine.resolved_layers().unwrap()[0].opacity - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn a_condition_can_name_a_value_through_a_map() {
+    let mut engine = lit();
+    let ball = |e: &Engine| {
+        e.resolved_layers()
+            .unwrap()
+            .iter()
+            .find(|l| l.name == "ball")
+            .unwrap()
+            .opacity
+    };
+    engine.set_variable("mode", "skillshot");
+    engine.advance_frame(0.016);
+    assert_eq!(
+        ball(&engine),
+        0.0,
+        "a value the map does not list is not true"
+    );
+    engine.set_variable("mode", "multiball");
+    engine.advance_frame(0.016);
+    assert_eq!(ball(&engine), 1.0);
+}
+
+#[test]
+fn a_condition_needs_a_variable_and_a_finite_threshold() {
+    let bad = r##"{
+      "name": "when", "size": [8, 8],
+      "layers": [{ "name": "p", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                   "fill": "#FFFFFF",
+                   "timelines": [{ "name": "t", "when": { "variable": "" },
+                                   "tracks": [] }] }]
+    }"##;
+    assert!(Engine::new().load_show(bad).is_err());
+}
