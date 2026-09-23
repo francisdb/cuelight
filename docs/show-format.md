@@ -521,6 +521,13 @@ It does not fall back to the layer's own `video` and treat that as an
 instruction, because then a show could never say "nothing yet". A name
 nothing registered simply shows nothing, as an unregistered image does.
 
+An audio layer's `sound` is bindable in exactly the same way, and follows
+the same rules: pointing a layer at a track plays it from the top, a
+looping one keeps looping, a binding with nothing to say leaves the layer
+alone, and what happens to a play already running is its `retrigger`. One
+layer can therefore be a bed that follows whatever state a show is in,
+instead of a layer per track each having to stop the others.
+
 A video layer draws only while a play is running. Once a clip ends it
 shows nothing, rather than holding its last frame, so whatever is behind
 it comes through; a layer that should stay visible loops.
@@ -644,7 +651,8 @@ A binding wires a layer property to a variable, evaluated every frame:
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`, `scale_x`, `scale_y`, `rotation`, `frame`
-for sprite sheet images, and `gain` for groups and audio layers. `visible` and a video layer's `video` can be bound but not keyframed.
+for sprite sheet images, and `gain` for groups and audio layers. `visible`, a video layer's `video` and an audio layer's `sound` can be
+bound but not keyframed.
 
 A text or digits layer's `text` property can be bound too: the variable's text as
 is, a boolean as `true`/`false`, a number after `scale`/`offset` formatted
