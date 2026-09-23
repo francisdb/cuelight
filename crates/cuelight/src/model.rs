@@ -1043,9 +1043,51 @@ pub enum DigitDisplay {
         fill: String,
         #[serde(default)]
         unlit: Option<String>,
+        /// Degrees the cells lean, as a shear rather than a rotation, so
+        /// the baseline stays level. Most real displays lean about ten,
+        /// and 45 is as far as it goes. Positive leans the tops to the
+        /// right.
+        #[serde(default)]
+        slant: f64,
+        /// Segment width as a share of the cell's shorter side, 0.1 by
+        /// default and 0.2 at most. The gaps between segments follow it,
+        /// so a fat display stays legible instead of running together,
+        /// and past that cap the bars would meet.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thickness: Option<f64>,
+        /// A halo around lit segments, in their own colour. Unlit ones
+        /// never glow.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        glow: Option<Glow>,
     },
     /// Cells that roll through a ring of characters, drawn in a font.
     Reel(Reel),
+}
+
+/// A halo around the lit segments of a display.
+///
+/// Gas-discharge and fluorescent displays spill light around every lit
+/// segment, and a panel recreated without it looks wrong however right
+/// the digits are.
+///
+/// Drawn as the segment again, a few times, each wider and fainter than
+/// the last: a halo rather than a true blur, which nothing on the GPU can
+/// give us yet (see the note on text shadows). At the sizes a display is
+/// drawn it reads the same.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Glow {
+    /// How far it reaches beyond the segment, as a share of the cell's
+    /// width. About 0.05 is a rim and about 0.25 is as far as it carries,
+    /// where the halos of neighbouring digits join.
+    pub size: f64,
+    /// How strong it is where it leaves the segment, 0 to 1.
+    #[serde(default = "default_glow_strength")]
+    pub strength: f64,
+}
+
+fn default_glow_strength() -> f64 {
+    0.5
 }
 
 /// Segment layout of a segment display.

@@ -394,6 +394,15 @@ fn timing_in<'a>(show: &'a Show, p: &Playhead) -> Option<Timing<'a>> {
     }
 }
 
+/// Passes a segment's halo is drawn in, each wider and fainter than the
+/// last.
+///
+/// Few enough steps and a wide halo reads as stacked outlines rather than
+/// a spill of light; the blotchiness is the steps showing. Eight is where
+/// they stop being visible at the widest halo the format allows, and a
+/// display of six digits still resolves in tens of microseconds.
+const GLOW_STEPS: u32 = 8;
+
 /// A running timeline instance.
 #[derive(Debug, Clone)]
 struct Playhead {
@@ -3467,7 +3476,14 @@ impl Engine {
                         };
                         let cells = (*digits as usize, *justify);
                         match display {
-                            DigitDisplay::Segments { style, fill, unlit } => {
+                            DigitDisplay::Segments {
+                                style,
+                                fill,
+                                unlit,
+                                slant,
+                                thickness,
+                                glow,
+                            } => {
                                 let lit = parse_color(fill)
                                     .ok_or_else(|| Error::InvalidColor(fill.clone()))?;
                                 let unlit = unlit
@@ -3486,26 +3502,60 @@ impl Engine {
                                     || output.scaling.unwrap_or_default() == Scaling::PixelPerfect)
                                     && transform == Transform::IDENTITY;
                                 let cell_w = width * scale / cells.0.max(1) as f64;
+                                let look = segments::Look {
+                                    thickness: thickness.unwrap_or(0.1),
+                                    slant: *slant,
+                                    grow: 0.0,
+                                };
                                 for (i, mask) in masks.into_iter().enumerate() {
                                     let cell = [x + i as f64 * cell_w, y, cell_w, height * scale];
-                                    let mut push = |mask: u16, color: [u8; 4]| {
-                                        for points in segments::polygons(*style, mask, cell, snap) {
-                                            out.push(ResolvedLayer {
-                                                gradient: None,
-                                                overflow,
-                                                name: layer.name.clone(),
-                                                shape: ResolvedShape::Polygon { points },
-                                                color,
-                                                opacity,
-                                                blend: layer.blend,
-                                                transform,
-                                            });
-                                        }
-                                    };
+                                    let mut push =
+                                        |mask: u16, color: [u8; 4], look: segments::Look| {
+                                            for points in
+                                                segments::polygons(*style, mask, cell, snap, look)
+                                            {
+                                                out.push(ResolvedLayer {
+                                                    gradient: None,
+                                                    overflow,
+                                                    name: layer.name.clone(),
+                                                    shape: ResolvedShape::Polygon { points },
+                                                    color,
+                                                    opacity,
+                                                    blend: layer.blend,
+                                                    transform,
+                                                });
+                                            }
+                                        };
                                     if let Some(unlit) = unlit {
-                                        push(!mask, unlit);
+                                        push(!mask, unlit, look);
                                     }
-                                    push(mask, lit);
+                                    // The halo first, widest and faintest
+                                    // outward, so the segment itself lands
+                                    // on top of it.
+                                    if let Some(glow) = glow {
+                                        let reach = (glow.size * cell_w).max(0.0);
+                                        let strength = glow.strength.clamp(0.0, 1.0);
+                                        for step in (1..=GLOW_STEPS).rev() {
+                                            let part = f64::from(step) / f64::from(GLOW_STEPS);
+                                            let [r, g, b, a] = lit;
+                                            // Fainter the further out it
+                                            // reaches, and never brighter
+                                            // than the segment.
+                                            let alpha = f64::from(a)
+                                                * strength
+                                                * (1.0 - part).max(0.0).powi(2)
+                                                / f64::from(GLOW_STEPS);
+                                            push(
+                                                mask,
+                                                [r, g, b, (alpha.clamp(0.0, 255.0)) as u8],
+                                                segments::Look {
+                                                    grow: reach * part * 2.0,
+                                                    ..look
+                                                },
+                                            );
+                                        }
+                                    }
+                                    push(mask, lit, look);
                                 }
                             }
                             DigitDisplay::Reel(reel) => self.push_reel(

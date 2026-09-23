@@ -471,3 +471,40 @@ fn a_presented_frame_is_the_size_asked_for_and_wears_the_shows_passes() {
         lit(&plain)
     );
 }
+
+#[test]
+fn a_leaning_display_on_a_pixel_grid_is_as_crisp_as_an_upright_one() {
+    // 8 by 14 cells, the size a small two-row display gives a character.
+    // A lean of ten over fourteen rows is about a pixel from top to
+    // bottom, so any edge left diagonal is smeared the whole way down.
+    let show = |slant: f64| {
+        format!(
+            r##"{{ "name": "seg", "size": [64, 16], "background": "#000000",
+      "output": {{ "scaling": "pixel_perfect" }},
+      "layers": [
+        {{ "name": "row", "type": "digits", "digits": 8, "size": [64, 14], "y": 1,
+          "text": "12345678",
+          "display": {{ "segments": {{ "style": "numeric7", "fill": "#FF5820",
+            "unlit": "#2A0E05", "slant": {slant} }} }} }}
+      ] }}"##
+        )
+    };
+    let shades = |slant: f64| {
+        let mut engine = Engine::new();
+        engine.load_show(&show(slant)).unwrap();
+        let frame = render(&engine)?;
+        let mut colors: Vec<[u8; 4]> = frame
+            .pixels
+            .chunks(4)
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+        colors.sort_unstable();
+        colors.dedup();
+        Some(colors.len())
+    };
+    let Some(upright) = shades(0.0) else { return };
+    // Background, unlit and lit, and nothing in between.
+    assert_eq!(upright, 3);
+    assert_eq!(shades(10.0), Some(upright), "a lean cost it its edges");
+    assert_eq!(shades(-10.0), Some(upright), "the other way too");
+}

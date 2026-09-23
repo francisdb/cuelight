@@ -405,15 +405,47 @@ Layer kinds:
     "display": { "segments": { "style": "alpha14", "fill": "#FF5820", "unlit": "#2A0E05" } } }
   ```
 
-  `segments` is a segment display, as on pre-DMD pinball machines: lit
-  segments in `fill`, the dark ones in `unlit` when given. `style` is
-  `alpha14` (14 segments plus dot: letters, digits, `- + * / \ = _ '`) or
-  `numeric7` (7 segments plus dot: digits and `-`). A `.` or `,` lights
-  the dot of the cell before it instead of taking a cell, so `1,250`
-  needs four cells. Characters the style cannot show stay dark. In shows
+  `segments` is a segment display, the kind that spells a number out of
+  bars: lit segments in `fill`, the dark ones in `unlit` when given.
+  `style` is `alpha14` (14 segments plus dot: letters, digits,
+  `- + * / \ = _ '`) or `numeric7` (7 segments plus dot: digits and `-`).
+  A `.` or `,` lights the dot of the cell before it instead of taking a
+  cell, so `1,250` needs four cells. Characters the style cannot show stay dark. In shows
   that are rendered on their own pixel grid (a gray `output.mode`, or
   `pixel_perfect` scaling) the straight bars are a whole number of pixels
   thick, lie on pixel boundaries and end flat, so small displays stay crisp.
+
+  Three more say how it looks rather than what it says, all fixed per
+  display and none of them bindable. Real displays differ a lot here, and
+  one recreated without them looks wrong however right the digits are.
+
+  - `slant`: degrees the cells lean, as a shear rather than a rotation, so
+    the baseline stays level and the bars stay square to the row. Most
+    real displays lean about ten, and 45 is as far as it goes; positive
+    leans the tops to the right. On a pixel grid the bar is cut into one
+    strip per pixel row, each shifted by whole pixels, so a leaning
+    display is a staircase of crisp blocks and stays as sharp as an
+    upright one. The diagonal segments of `alpha14` are diagonals
+    whatever the grid, and stay shaded.
+  - `thickness`: bar width as a share of the cell's shorter side, 0.1 by
+    default and 0.2 at most. The gaps follow it, so a fat display stays
+    legible instead of running together, and past that cap the bars would
+    meet.
+  - `glow`: a halo round the lit segments in their own colour, `size` a
+    share of the cell's width and `strength` from 0 to 1. Unlit segments
+    never glow. Useful sizes run from about 0.05, a rim, to about 0.25,
+    where the halos of neighbouring digits join; wider than that washes
+    the display out instead of lighting it. It is drawn as the segment
+    again a few times, each wider and fainter: a halo rather than a true
+    blur, which nothing on the GPU can give us yet, and at the size a
+    display is drawn it reads the same. On a small pixel grid there is no
+    room for it, and it is better left off there.
+
+  ```json
+  { "segments": { "style": "numeric7", "fill": "#FF5820", "unlit": "#2A0E05",
+                  "slant": 10, "thickness": 0.16,
+                  "glow": { "size": 0.12, "strength": 0.8 } } }
+  ```
 
   `reel` is a row of wheels: every cell carries a ring of symbols and
   rolls to the one the text asks of it, as an odometer, a counter or a

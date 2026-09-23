@@ -269,8 +269,33 @@
                 "fill": {
                   "type": "string"
                 },
+                "glow": {
+                  "description": "A halo around lit segments, in their own colour. Unlit ones\nnever glow.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Glow"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "slant": {
+                  "description": "Degrees the cells lean, as a shear rather than a rotation, so\nthe baseline stays level. Most real displays lean about ten,\nand 45 is as far as it goes. Positive leans the tops to the\nright.",
+                  "type": "number",
+                  "format": "double",
+                  "default": 0.0
+                },
                 "style": {
                   "$ref": "#/$defs/SegmentStyle"
+                },
+                "thickness": {
+                  "description": "Segment width as a share of the cell's shorter side, 0.1 by\ndefault and 0.2 at most. The gaps between segments follow it,\nso a fat display stays legible instead of running together,\nand past that cap the bars would meet.",
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
                 },
                 "unlit": {
                   "type": [
@@ -500,6 +525,26 @@
       },
       "required": [
         "file"
+      ]
+    },
+    "Glow": {
+      "description": "A halo around the lit segments of a display.\n\nGas-discharge and fluorescent displays spill light around every lit\nsegment, and a panel recreated without it looks wrong however right\nthe digits are.\n\nDrawn as the segment again, a few times, each wider and fainter than\nthe last: a halo rather than a true blur, which nothing on the GPU can\ngive us yet (see the note on text shadows). At the sizes a display is\ndrawn it reads the same.",
+      "type": "object",
+      "properties": {
+        "size": {
+          "description": "How far it reaches beyond the segment, as a share of the cell's\nwidth. About 0.05 is a rim and about 0.25 is as far as it carries,\nwhere the halos of neighbouring digits join.",
+          "type": "number",
+          "format": "double"
+        },
+        "strength": {
+          "description": "How strong it is where it leaves the segment, 0 to 1.",
+          "type": "number",
+          "format": "double",
+          "default": 0.5
+        }
+      },
+      "required": [
+        "size"
       ]
     },
     "Gradient": {
