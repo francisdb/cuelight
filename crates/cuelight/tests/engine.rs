@@ -705,6 +705,45 @@ fn digit_row_text_is_bindable() {
 }
 
 #[test]
+fn only_lit_segments_glow() {
+    let show = DIGITS.replace(
+        r##""unlit": "#200000""##,
+        r##""unlit": "#200000", "glow": { "size": 0.2, "strength": 1.0 }"##,
+    );
+    let mut engine = Engine::new();
+    engine.load_show(&show).unwrap();
+    // Two cells of seven segments and a dot, lit or unlit.
+    const CELLS: usize = 16;
+    let halo = |e: &Engine, lit: usize| {
+        let layers = e.resolved_layers().unwrap();
+        // The unlit segments are drawn once each and never glow, and
+        // nothing is drawn in a colour that is neither.
+        assert_eq!(
+            layers.iter().filter(|l| l.color == [32, 0, 0, 255]).count(),
+            CELLS - lit
+        );
+        let halo: Vec<_> = layers
+            .iter()
+            .filter(|l| l.color[..3] == [255, 0, 0] && l.color[3] < 255)
+            .collect();
+        assert_eq!(
+            layers.len() - halo.len(),
+            CELLS,
+            "one pass of lit and unlit segments under the halo"
+        );
+        // Every pass covers each lit segment once, so the halo is a whole
+        // number of passes over the lit ones and nothing else.
+        assert_eq!(halo.len() % lit, 0, "{} over {lit} lit", halo.len());
+        halo.len() / lit
+    };
+    // "1": b and c. Then "38": 5 + 7 segments, same number of passes.
+    let passes = halo(&engine, 2);
+    assert!(passes > 1, "a halo of {passes} passes is a single outline");
+    engine.set_variable("score", 38.0);
+    assert_eq!(halo(&engine, 12), passes);
+}
+
+#[test]
 fn timelines_and_scenes_can_listen_to_several_triggers() {
     let show = r##"{ "name": "s", "size": [8, 8], "scenes": [
         { "name": "idle", "trigger": ["idle", "reset"], "layers": [] },
