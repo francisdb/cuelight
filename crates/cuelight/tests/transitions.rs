@@ -397,3 +397,50 @@ fn bad_transitions_are_refused() {
     );
     assert!(order.contains("time order"), "{order}");
 }
+
+/// The font here has glyphs for 0, 1 and 5 only, so a width is really a
+/// count of characters: three digits can be at most 8 wide, while
+/// "141.66666666666666" runs to fifty.
+#[test]
+fn a_counter_interrupted_mid_count_still_counts_in_whole_numbers() {
+    let mut engine = Engine::new();
+    let font = BitmapFont::parse(FNT).unwrap();
+    engine
+        .set_font("blocks", font, vec![(2, 3, vec![255; 2 * 3 * 4])])
+        .unwrap();
+    engine
+        .load_show(
+            r##"{
+              "format": 1, "name": "t", "size": [64, 8],
+              "fonts": { "white": { "file": "blocks" } },
+              "variables": { "score": 160 },
+              "layers": [
+                { "name": "score", "type": "text", "font": "white", "text": "160",
+                  "bindings": [ { "property": "text", "variable": "score",
+                                  "transition": { "duration": 0.35 } } ] }
+              ]
+            }"##,
+        )
+        .unwrap();
+    engine.advance_frame(0.0);
+
+    engine.set_variable("score", 130.0);
+    engine.advance_frame(0.1);
+    assert!(score_width(&engine) <= 8.0, "undisturbed, three digits");
+
+    // Interrupted while it counts. Every value the host gave is whole, so
+    // the count between them is whole too.
+    engine.set_variable("score", 132.0);
+    engine.advance_frame(0.1);
+    let width = score_width(&engine);
+    assert!(
+        width <= 8.0,
+        "an interrupted count printed a fraction: {width} wide"
+    );
+
+    // And a counter that really is heading somewhere fractional still
+    // shows what it was asked for.
+    engine.set_variable("score", 10.5);
+    engine.advance_frame(0.35);
+    assert!(score_width(&engine) > 8.0, "10.5 should show its fraction");
+}
