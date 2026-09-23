@@ -427,7 +427,7 @@ pub struct Engine {
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
     debounced: HashMap<TransitionSite, Settling>,
-    /// What each video layer last played, so pointing one somewhere new
+    /// What each pointed layer last played, so pointing one somewhere new
     /// can be told from one that simply finished.
     shown: HashMap<(Root, Vec<usize>), String>,
     /// What each playhead has played so far: how many times, which is
@@ -874,8 +874,8 @@ impl Engine {
         }
     }
 
-    /// The video layers that are pointed at a clip they are not showing:
-    /// idle layers whose bound name has changed since they last played.
+    /// The layers pointed at media they are not playing: idle ones whose
+    /// bound name has changed since they last played.
     fn repointed(&self) -> Vec<(Root, Vec<usize>)> {
         let Some(show) = &self.show else {
             return Vec::new();
@@ -890,7 +890,10 @@ impl Engine {
             fn walk(layers: &[Layer], path: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
                 for (i, layer) in layers.iter().enumerate() {
                     path.push(i);
-                    if matches!(layer.kind, LayerKind::Video { .. }) {
+                    if matches!(
+                        layer.kind,
+                        LayerKind::Video { .. } | LayerKind::Audio { .. }
+                    ) {
                         out.push(path.clone());
                     }
                     walk(layer.children(), path, out);
@@ -909,8 +912,8 @@ impl Engine {
                 let Some(layer) = layer_at(layers, &path) else {
                     continue;
                 };
-                // Only a layer that is pointed somewhere: one playing through
-                // a list of its own waits to be told to play.
+                // Only a layer that is pointed somewhere: one playing
+                // through a list of its own waits to be told to play.
                 let Some(now) = self.pointed_at(root, layer, &path) else {
                     continue;
                 };
@@ -1000,7 +1003,9 @@ impl Engine {
     fn pointed_at(&self, root: Root, layer: &Layer, path: &[usize]) -> Option<String> {
         let mut pointed = None;
         for (index, b) in layer.bindings.iter().enumerate() {
-            if b.property != Property::Video {
+            // Whichever of the two names a playhead's media; a layer can
+            // only carry the one its kind has.
+            if !matches!(b.property, Property::Video | Property::Sound) {
                 continue;
             }
             let bound = self.in_transition(root, path, index, b).or_else(|| {
@@ -1914,7 +1919,7 @@ impl Engine {
             },
             // Any name will do: a video nobody registered simply has no
             // frames, as an unregistered image has no pixels.
-            Property::Video => Some(Value::Text(value.to_text())),
+            Property::Video | Property::Sound => Some(Value::Text(value.to_text())),
             // Only declared font styles apply.
             Property::Font => match value {
                 Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {

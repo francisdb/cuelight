@@ -1064,6 +1064,11 @@ pub enum Property {
     /// it lets one layer show whatever it is pointed at, rather than
     /// needing a layer per clip.
     Video,
+    /// The sound an audio layer plays; bindable, not animatable, and the
+    /// mirror of `video`. Binding it lets one layer sound whatever it is
+    /// pointed at: a bed that follows the state a show is in, rather than
+    /// a layer per track each having to stop the others.
+    Sound,
     /// Sprite sheet cell of an image layer: rounded down and clamped to
     /// the sheet, so a linear key from 0 to n steps through n cells.
     Frame,
@@ -1083,7 +1088,12 @@ impl Property {
     pub fn is_numeric(self) -> bool {
         !matches!(
             self,
-            Property::Text | Property::Font | Property::Visible | Property::Tint | Property::Video
+            Property::Text
+                | Property::Font
+                | Property::Visible
+                | Property::Tint
+                | Property::Video
+                | Property::Sound
         )
     }
 }
@@ -1249,6 +1259,9 @@ impl Layer {
             (Property::Video, LayerKind::Video { video, .. }) => {
                 Value::Text(video.first().to_owned())
             }
+            (Property::Sound, LayerKind::Audio { sound, .. }) => {
+                Value::Text(sound.first().to_owned())
+            }
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
             (Property::Tint, LayerKind::Image { tint, .. }) => {
                 Value::Text(tint.clone().unwrap_or_default())
@@ -1265,7 +1278,8 @@ impl Layer {
                 | Property::Frame
                 | Property::Gain
                 | Property::Tint
-                | Property::Video,
+                | Property::Video
+                | Property::Sound,
                 _,
             ) => return None,
         })

@@ -452,3 +452,60 @@ fn a_video_is_a_sound_only_once_a_host_hands_one_over() {
     engine.advance_frame(0.5);
     assert_eq!(engine.voices().unwrap().len(), 1);
 }
+
+#[test]
+fn a_bound_sound_plays_what_it_is_pointed_at() {
+    let show = r#"{
+      "name": "bed", "size": [8, 8],
+      "variables": { "mode": "" },
+      "layers": [
+        { "name": "bed", "type": "audio", "sound": "idle", "loop": true,
+          "bindings": [{ "property": "sound", "variable": "mode",
+                         "map": { "play": "theme", "over": "quiet" } }] }
+      ]
+    }"#;
+    let mut engine = Engine::new();
+    for name in ["idle", "theme", "quiet"] {
+        engine.set_sound(name, 4.0).unwrap();
+    }
+    engine.load_show(show).unwrap();
+
+    // Not told yet: a pointed layer that has heard nothing does not play,
+    // the same rule a video layer follows.
+    engine.advance_frame(0.0);
+    assert!(engine.voices().unwrap().is_empty());
+
+    engine.set_variable("mode", "play");
+    engine.advance_frame(0.016);
+    let voices = engine.voices().unwrap();
+    assert_eq!(voices.len(), 1);
+    assert_eq!(voices[0].sound, "theme");
+    assert!(voices[0].looping);
+
+    // Pointed somewhere else mid-play: the new one from the top, keeping
+    // the loop. That is what a play is, so `retrigger` governs it.
+    engine.advance_frame(1.0);
+    engine.set_variable("mode", "over");
+    engine.advance_frame(0.016);
+    let voices = engine.voices().unwrap();
+    assert_eq!(voices.len(), 1);
+    assert_eq!(voices[0].sound, "quiet");
+    assert!(voices[0].position < 0.1, "{:?}", voices[0].position);
+
+    // A value the map does not list says nothing, so the bed holds.
+    engine.set_variable("mode", "elsewhere");
+    engine.advance_frame(0.016);
+    assert_eq!(engine.voices().unwrap()[0].sound, "quiet");
+}
+
+#[test]
+fn sound_is_not_a_property_of_other_layers() {
+    let show = r#"{
+      "name": "no", "size": [8, 8],
+      "layers": [
+        { "name": "box", "type": "shape", "shape": { "kind": "rect", "width": 2, "height": 2 },
+          "bindings": [{ "property": "sound", "variable": "x" }] }
+      ]
+    }"#;
+    assert!(Engine::new().load_show(show).is_err());
+}

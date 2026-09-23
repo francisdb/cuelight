@@ -1160,6 +1160,11 @@
           "const": "video"
         },
         {
+          "description": "The sound an audio layer plays; bindable, not animatable, and the\nmirror of `video`. Binding it lets one layer sound whatever it is\npointed at: a bed that follows the state a show is in, rather than\na layer per track each having to stop the others.",
+          "type": "string",
+          "const": "sound"
+        },
+        {
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"
