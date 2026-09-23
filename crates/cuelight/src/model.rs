@@ -1582,6 +1582,20 @@ pub struct Timeline {
     /// Trigger fired when the timeline finishes (never for loops).
     #[serde(default)]
     pub on_end: Option<String>,
+    /// Keep the last value instead of giving the properties back.
+    ///
+    /// A timeline that ends hands its properties back to their binding or
+    /// base value, which is what a pulse or a flash wants. A fade *into* a
+    /// state wants to stay there, and writing the end value into the base
+    /// as well only works while nothing else ever animates that property.
+    ///
+    /// Held, a finished timeline keeps its properties at their last values
+    /// until it is started again or its scene is left, and it ranks below
+    /// any timeline still running, so a later flash on the same property
+    /// wins while it plays and hands back to the held value afterwards. It
+    /// means nothing on a loop, which never finishes.
+    #[serde(default)]
+    pub hold: bool,
     pub tracks: Vec<Track>,
 }
 

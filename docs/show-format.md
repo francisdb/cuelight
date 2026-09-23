@@ -898,20 +898,32 @@ A timeline is a keyframed animation owned by its layer:
   last repeat; loops never finish). It behaves exactly like a host firing
   the trigger, so it can start other timelines or restart a sequence, and
   it is reported to the host as an event (see [Host contract](#host-contract)).
+- `hold` keeps the last values instead of handing the properties back.
+  Ending and falling back is what a pulse or a flash wants; a fade *into*
+  a state wants to stay there. A held timeline still ends once, and fires
+  its `on_end` once, and then keeps its properties until it is started
+  again or its scene is left. It means nothing on a `loop`, which never
+  finishes.
 
 ## Property precedence
 
 Each frame a property resolves to, strongest first:
 
 1. a running timeline that animates it
-2. a binding
-3. the base value on the layer
+2. a finished timeline with `hold` that animated it
+3. a binding
+4. the base value on the layer
 
 So a timeline temporarily owns whatever it animates; when it finishes the
-property falls back to its binding or base value instantly. To avoid a
-visible jump, make base values match the timeline's endpoints. A binding's
-transition keeps following its variable underneath a timeline, so the
-property falls back to where the transition is by then.
+property falls back to its binding or base value instantly, unless it
+holds. To avoid a visible jump, make base values match the timeline's
+endpoints, or hold. A binding's transition keeps following its variable
+underneath a timeline, so the property falls back to where the transition
+is by then.
+
+Because a held timeline ranks below a running one, a flash over a faded-in
+panel plays on top and hands the property back to the held value rather
+than to the base when it ends.
 
 ## Host contract
 
