@@ -326,6 +326,18 @@ struct Sounding {
     playing: String,
 }
 
+/// Where a ducking layer's level is and when it started going there.
+#[derive(Debug, Clone, Copy)]
+struct Ducked {
+    /// Whether the bus it listens to was sounding at the last step.
+    down: bool,
+    /// Engine time the level started moving toward where it is going.
+    since: f64,
+    /// The level it was at when it started moving, so a ramp interrupted
+    /// halfway carries on from where it is rather than jumping.
+    from: f64,
+}
+
 /// What the engine knows of a video: how long it runs and how big it is.
 /// The frames are the host's business.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -429,6 +441,10 @@ pub struct Engine {
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
     debounced: HashMap<TransitionSite, Settling>,
+    /// Where each ducking layer's level is: whether its bus was sounding
+    /// at the last step and when that last changed, so a ramp knows where
+    /// it started.
+    ducking: HashMap<(Root, Vec<usize>), Ducked>,
     /// What each pointed layer last played, so pointing one somewhere new
     /// can be told from one that simply finished.
     shown: HashMap<(Root, Vec<usize>), String>,
@@ -538,6 +554,7 @@ impl Engine {
         self.reels.clear();
         self.spinning.clear();
         self.shown.clear();
+        self.ducking.clear();
         self.plays.clear();
         self.waiting.clear();
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
@@ -1355,6 +1372,140 @@ impl Engine {
             }
             self.events.push_back(Event::Trigger(name));
         }
+        self.follow_ducks();
+    }
+
+    /// Note, for every layer that ducks, whether the bus it listens to is
+    /// sounding now, and when that last changed.
+    ///
+    /// Only the change is remembered. What the level *is* at any moment is
+    /// a function of that and of the time, which is what keeps it seekable:
+    /// nothing here accumulates frame by frame.
+    fn follow_ducks(&mut self) {
+        let Some(show) = &self.show else { return };
+        let busy = self.busy_buses();
+        let mut found: Vec<((Root, Vec<usize>), bool)> = Vec::new();
+        let roots = std::iter::once(Root::Show).chain(self.active_scene.map(Root::Scene));
+        for root in roots {
+            let Some(layers) = root_layers(show, root) else {
+                continue;
+            };
+            type Busy = std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>>;
+            fn walk(
+                root: Root,
+                layers: &[Layer],
+                path: &mut Vec<usize>,
+                busy: &Busy,
+                out: &mut Vec<(Vec<usize>, bool)>,
+            ) {
+                for (i, layer) in layers.iter().enumerate() {
+                    path.push(i);
+                    if let LayerKind::Audio {
+                        duck: Some(duck), ..
+                    }
+                    | LayerKind::Video {
+                        duck: Some(duck), ..
+                    } = &layer.kind
+                    {
+                        // Its own plays do not duck it, so a layer on the
+                        // bus it listens to is not forever out of its own
+                        // way.
+                        let down = busy.get(&duck.under).is_some_and(|plays| {
+                            plays.iter().any(|(r, p)| !(*r == root && p == path))
+                        });
+                        out.push((path.clone(), down));
+                    }
+                    walk(root, layer.children(), path, busy, out);
+                    path.pop();
+                }
+            }
+            let mut here = Vec::new();
+            walk(root, layers, &mut Vec::new(), &busy, &mut here);
+            found.extend(here.into_iter().map(|(path, down)| ((root, path), down)));
+        }
+        let (time, mut ducking) = (self.time, std::mem::take(&mut self.ducking));
+        for (key, down) in found {
+            let level = self.duck_level_at(&key, time, &ducking);
+            let was = ducking.get(&key).map(|d| d.down);
+            if was != Some(down) {
+                ducking.insert(
+                    key,
+                    Ducked {
+                        down,
+                        since: time,
+                        // Where it had got to, so turning round halfway
+                        // carries on from there instead of jumping.
+                        from: level,
+                    },
+                );
+            }
+        }
+        self.ducking = ducking;
+    }
+
+    /// What is sounding on each bus right now, by the layer playing it,
+    /// so a layer can be left out of its own bus.
+    fn busy_buses(&self) -> std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>> {
+        let Some(show) = &self.show else {
+            return std::collections::BTreeMap::new();
+        };
+        let mut busy: std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>> =
+            std::collections::BTreeMap::new();
+        for play in &self.sounding {
+            let layer = root_layers(show, play.root).and_then(|l| layer_at(l, &play.layer_path));
+            let bus = match layer.map(|l| &l.kind) {
+                Some(LayerKind::Audio { bus, delay, .. } | LayerKind::Video { bus, delay, .. }) => {
+                    // Still waiting out its delay: not sounding yet.
+                    if self.time < play.started + delay.max(0.0) {
+                        continue;
+                    }
+                    bus
+                }
+                _ => continue,
+            };
+            busy.entry(effective_bus(bus).to_owned())
+                .or_default()
+                .push((play.root, play.layer_path.clone()));
+        }
+        busy
+    }
+
+    /// Where a ducking layer's level is: 1 when its bus is quiet, the
+    /// duck's `to` while it sounds, and on the ramp between.
+    fn duck_level_at(
+        &self,
+        key: &(Root, Vec<usize>),
+        time: f64,
+        ducking: &HashMap<(Root, Vec<usize>), Ducked>,
+    ) -> f64 {
+        let Some(state) = ducking.get(key) else {
+            return 1.0;
+        };
+        let duck = self
+            .show
+            .as_ref()
+            .and_then(|show| root_layers(show, key.0))
+            .and_then(|layers| layer_at(layers, &key.1))
+            .and_then(|layer| match &layer.kind {
+                LayerKind::Audio { duck, .. } | LayerKind::Video { duck, .. } => duck.as_ref(),
+                _ => None,
+            });
+        let Some(duck) = duck else { return 1.0 };
+        let (target, ramp) = if state.down {
+            (duck.to, duck.attack)
+        } else {
+            (1.0, duck.release)
+        };
+        if ramp <= 0.0 || !ramp.is_finite() {
+            return target;
+        }
+        let t = ((time - state.since) / ramp).clamp(0.0, 1.0);
+        state.from + (target - state.from) * t
+    }
+
+    /// The gain multiplier a ducking layer is at now.
+    fn duck_of(&self, root: Root, path: &[usize]) -> f64 {
+        self.duck_level_at(&(root, path.to_vec()), self.time, &self.ducking)
     }
 
     /// Take the events raised since the last call, oldest first. This is
@@ -1449,7 +1600,11 @@ impl Engine {
                         bus,
                         ..
                     } => {
-                        let gain = chain * self.number(root, layer, path, Property::Gain).max(0.0);
+                        // The duck multiplies like every other gain, so it
+                        // composes with bindings and the tree above.
+                        let gain = chain
+                            * self.number(root, layer, path, Property::Gain).max(0.0)
+                            * self.duck_of(root, path);
                         let plays = self
                             .sounding
                             .iter()
@@ -1475,7 +1630,7 @@ impl Engine {
                                 position,
                                 gain,
                                 looping: *looping,
-                                bus: bus.clone(),
+                                bus: Some(effective_bus(bus).to_owned()),
                             });
                         }
                     }
@@ -1522,7 +1677,7 @@ impl Engine {
                                 position,
                                 gain,
                                 looping: media.looping,
-                                bus: bus.clone(),
+                                bus: Some(effective_bus(bus).to_owned()),
                             });
                         }
                     }
@@ -3079,6 +3234,30 @@ fn validate(show: &Show) -> Result<(), Error> {
                     )));
                 }
             }
+            if let LayerKind::Audio {
+                duck: Some(duck), ..
+            }
+            | LayerKind::Video {
+                duck: Some(duck), ..
+            } = &layer.kind
+            {
+                let finite = |n: f64| n.is_finite() && n >= 0.0;
+                let problem = if duck.under.is_empty() {
+                    Some("needs a bus to listen to")
+                } else if !finite(duck.to) {
+                    Some("needs a gain of 0 or more to duck to")
+                } else if !finite(duck.attack) || !finite(duck.release) {
+                    Some("needs an attack and release of 0 or more")
+                } else {
+                    None
+                };
+                if let Some(problem) = problem {
+                    return Err(Error::InvalidShow(format!(
+                        "the duck of layer {:?} {problem}",
+                        layer.name
+                    )));
+                }
+            }
             for binding in &layer.bindings {
                 if binding.threshold.is_some_and(|t| !t.is_finite()) {
                     return Err(Error::InvalidShow(format!(
@@ -3546,4 +3725,9 @@ fn resolve_gradient(
         },
     };
     Ok(ResolvedGradient { kind, stops })
+}
+
+/// The bus a layer's sound is on: the one it names, or [`MAIN_BUS`].
+fn effective_bus(bus: &Option<String>) -> &str {
+    bus.as_deref().unwrap_or(crate::model::MAIN_BUS)
 }

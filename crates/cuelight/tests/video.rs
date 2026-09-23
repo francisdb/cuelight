@@ -575,3 +575,38 @@ fn a_layer_that_has_never_played_starts_when_it_is_pointed_somewhere() {
     engine.advance_frame(0.1);
     assert_eq!(engine.videos().unwrap()[0].video, "two");
 }
+
+#[test]
+fn a_clips_soundtrack_is_on_a_bus_and_can_duck() {
+    let show = r#"{
+      "name": "clip duck", "size": [64, 64],
+      "layers": [
+        { "name": "bed", "type": "audio", "sound": "theme", "loop": true,
+          "autoplay": true, "gain": 0.5, "bus": "music",
+          "duck": { "under": "main", "to": 0.1 } },
+        { "name": "picture", "type": "video", "video": "clip", "trigger": "go" }
+      ]
+    }"#;
+    let mut engine = Engine::new();
+    engine.set_sound("theme", 30.0).unwrap();
+    engine.set_video("clip", 4.0, [64.0, 64.0]).unwrap();
+    engine.set_sound("clip", 4.0).unwrap();
+    engine.load_show(show).unwrap();
+    let bed = |e: &Engine| {
+        e.voices()
+            .unwrap()
+            .iter()
+            .find(|v| v.layer == "bed")
+            .map_or(0.0, |v| v.gain)
+    };
+    engine.advance_frame(0.1);
+    assert!((bed(&engine) - 0.5).abs() < 1e-9);
+
+    // A clip speaking ducks the bed exactly as a sound does.
+    engine.trigger("go");
+    engine.advance_frame(0.016);
+    assert!((bed(&engine) - 0.05).abs() < 1e-9, "{}", bed(&engine));
+    let voices = engine.voices().unwrap();
+    let clip = voices.iter().find(|v| v.layer == "picture").unwrap();
+    assert_eq!(clip.bus.as_deref(), Some("main"));
+}

@@ -686,9 +686,14 @@ pub enum LayerKind {
         #[serde(default = "default_scale")]
         gain: f64,
         /// Name of the bus the clip's sound plays through; hosts route
-        /// buses to outputs. Their default when omitted.
+        /// buses to outputs. [`MAIN_BUS`] when omitted, so every sound is
+        /// on one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bus: Option<String>,
+        /// Step back while something else is sounding; see [`Duck`]. A
+        /// clip with a soundtrack wants this as much as a sound does.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duck: Option<Duck>,
     },
     /// A sound the host registered under `sound` with its duration
     /// ([`Engine::set_sound`](crate::Engine::set_sound)), played the way a
@@ -738,9 +743,12 @@ pub enum LayerKind {
         #[serde(default = "default_scale")]
         gain: f64,
         /// Name of the bus the sound plays through; hosts route buses to
-        /// outputs. Their default when omitted.
+        /// outputs. [`MAIN_BUS`] when omitted, so every sound is on one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bus: Option<String>,
+        /// Step back while something else is sounding; see [`Duck`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duck: Option<Duck>,
     },
 }
 
@@ -1095,6 +1103,42 @@ pub struct Stop {
     pub at: f64,
     /// `#RRGGBB` or `#RRGGBBAA`.
     pub color: String,
+}
+
+/// The bus a sound is on when it names none.
+///
+/// Every sound is on a bus, so a show that never mentions one can still
+/// be ducked under: give the bed a bus of its own and point its `duck` at
+/// this.
+pub const MAIN_BUS: &str = "main";
+
+/// Step this layer back while something on another bus is sounding.
+///
+/// A bed under clips that speak over it has to get out of the way and
+/// come back, which is the ordinary arrangement whenever there is music
+/// under anything that talks. `gain` is bindable and a transition can
+/// ease it, but nothing in a show can see that something else is
+/// sounding, so without this a host has to watch the engine's voices and
+/// feed a variable back, putting show structure outside the show.
+///
+/// It multiplies like every other gain, so it composes with bindings and
+/// with the gain of the groups above rather than fighting them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Duck {
+    /// The bus to listen to. Anything sounding on it ducks this layer;
+    /// the layer's own plays never do.
+    pub under: String,
+    /// Gain multiplier while that bus sounds. 0.1 is a tenth.
+    pub to: f64,
+    /// Seconds to go down. 0 (the default) drops at once, which is what
+    /// makes room in time for the first word.
+    #[serde(default)]
+    pub attack: f64,
+    /// Seconds to come back up once the bus falls silent. The part that
+    /// has to be smooth.
+    #[serde(default)]
+    pub release: f64,
 }
 
 /// An outline drawn along a shape's edge, centered on it.

@@ -509,3 +509,139 @@ fn sound_is_not_a_property_of_other_layers() {
     }"#;
     assert!(Engine::new().load_show(show).is_err());
 }
+
+/// A bed on one bus, a clip on another that it steps back for.
+fn bedded(attack: f64, release: f64) -> Engine {
+    let show = format!(
+        r#"{{
+      "name": "duck", "size": [8, 8],
+      "layers": [
+        {{ "name": "bed", "type": "audio", "sound": "theme", "loop": true,
+           "autoplay": true, "gain": 0.5, "bus": "music",
+           "duck": {{ "under": "voice", "to": 0.1,
+                     "attack": {attack}, "release": {release} }} }},
+        {{ "name": "line", "type": "audio", "sound": "word", "trigger": "say",
+           "bus": "voice" }}
+      ]
+    }}"#
+    );
+    let mut engine = Engine::new();
+    engine.set_sound("theme", 30.0).unwrap();
+    engine.set_sound("word", 1.0).unwrap();
+    engine.load_show(&show).unwrap();
+    engine
+}
+
+fn bed_gain(engine: &Engine) -> f64 {
+    engine
+        .voices()
+        .unwrap()
+        .iter()
+        .find(|v| v.layer == "bed")
+        .map_or(0.0, |v| v.gain)
+}
+
+#[test]
+fn a_bed_steps_back_while_another_bus_sounds() {
+    let mut engine = bedded(0.0, 0.0);
+    engine.advance_frame(0.1);
+    assert!(
+        (bed_gain(&engine) - 0.5).abs() < 1e-9,
+        "{}",
+        bed_gain(&engine)
+    );
+
+    engine.trigger("say");
+    engine.advance_frame(0.016);
+    assert!(
+        (bed_gain(&engine) - 0.05).abs() < 1e-9,
+        "a tenth of its own gain: {}",
+        bed_gain(&engine)
+    );
+
+    // The clip runs out and the bed comes back.
+    engine.advance_frame(1.2);
+    assert!(
+        (bed_gain(&engine) - 0.5).abs() < 1e-9,
+        "{}",
+        bed_gain(&engine)
+    );
+}
+
+#[test]
+fn the_release_is_a_ramp_and_the_attack_can_be_instant() {
+    let mut engine = bedded(0.0, 0.2);
+    engine.advance_frame(0.1);
+    engine.trigger("say");
+    engine.advance_frame(0.016);
+    assert!((bed_gain(&engine) - 0.05).abs() < 1e-9, "down at once");
+
+    // 1.0s in, the word (1.0s) has ended; halfway up the release.
+    engine.advance_frame(1.0);
+    engine.advance_frame(0.1);
+    let half = bed_gain(&engine);
+    assert!(
+        half > 0.05 && half < 0.5,
+        "on the way back, not there yet: {half}"
+    );
+    engine.advance_frame(0.2);
+    assert!(
+        (bed_gain(&engine) - 0.5).abs() < 1e-9,
+        "{}",
+        bed_gain(&engine)
+    );
+}
+
+#[test]
+fn every_sound_is_on_a_bus_without_naming_one() {
+    // A bed with a bus of its own, ducking under everything that names
+    // none: the common arrangement, and it needs one annotation.
+    let show = r#"{
+      "name": "default", "size": [8, 8],
+      "layers": [
+        { "name": "bed", "type": "audio", "sound": "theme", "loop": true,
+          "autoplay": true, "gain": 0.5, "bus": "music",
+          "duck": { "under": "main", "to": 0.1 } },
+        { "name": "line", "type": "audio", "sound": "word", "trigger": "say" }
+      ]
+    }"#;
+    let mut engine = Engine::new();
+    engine.set_sound("theme", 30.0).unwrap();
+    engine.set_sound("word", 1.0).unwrap();
+    engine.load_show(show).unwrap();
+    engine.advance_frame(0.1);
+    assert!((bed_gain(&engine) - 0.5).abs() < 1e-9);
+
+    engine.trigger("say");
+    engine.advance_frame(0.016);
+    assert!(
+        (bed_gain(&engine) - 0.05).abs() < 1e-9,
+        "the clip named no bus and is still on one: {}",
+        bed_gain(&engine)
+    );
+    // And a voice says which bus it is really on.
+    let voices = engine.voices().unwrap();
+    let line = voices.iter().find(|v| v.layer == "line").unwrap();
+    assert_eq!(line.bus.as_deref(), Some("main"));
+}
+
+#[test]
+fn a_layer_does_not_duck_under_its_own_bus() {
+    let show = r#"{
+      "name": "self", "size": [8, 8],
+      "layers": [
+        { "name": "bed", "type": "audio", "sound": "theme", "loop": true,
+          "autoplay": true, "bus": "music",
+          "duck": { "under": "music", "to": 0.1 } }
+      ]
+    }"#;
+    let mut engine = Engine::new();
+    engine.set_sound("theme", 30.0).unwrap();
+    engine.load_show(show).unwrap();
+    engine.advance_frame(0.1);
+    assert!(
+        (bed_gain(&engine) - 1.0).abs() < 1e-9,
+        "its own play must not hold it down forever: {}",
+        bed_gain(&engine)
+    );
+}

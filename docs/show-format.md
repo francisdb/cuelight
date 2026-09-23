@@ -467,6 +467,36 @@ controlled the way a timeline is, with the same names and meanings:
 
 - `trigger` (a name or a list) plays it; `autoplay` plays it when the show
   loads or its scene is entered.
+- `duck`: step this layer back while something on another bus is
+  sounding.
+
+  ```json
+  { "name": "bed", "type": "audio", "sound": "theme", "loop": true, "bus": "music",
+    "duck": { "under": "voice", "to": 0.1, "attack": 0, "release": 0.1 } }
+  ```
+
+  A bed under clips that speak over it has to get out of the way and come
+  back, which is the ordinary arrangement whenever there is music under
+  anything that talks. `under` names the bus to listen to, `to` is the
+  gain multiplier while it sounds, and `attack` and `release` are how long
+  the level takes to get down and back, in seconds.
+
+  Every sound is on a bus: the one its layer names, or `main`. So a bed
+  with a bus of its own, ducking `under: "main"`, needs one annotation and
+  works for every sound and every clip's soundtrack in the show. The cost
+  of that default is that a sound added later, naming no bus, joins
+  `main` and ducks the bed too; give it a bus of its own, or point the
+  duck at a narrower one, if that is not wanted. A video layer takes
+  `duck` as well, since a clip with a soundtrack wants it as much as a
+  sound does. 0 is instant, which is
+  usually right for the attack: the drop makes room for the first word,
+  and it is the return that has to be smooth.
+
+  It multiplies like every other gain, so it composes with bindings and
+  with the gain of the groups above. A layer's own plays never duck it, so
+  naming the bus it plays on does not hold it down for ever. Only the
+  moment the bus changed is remembered; where the level *is* is a function
+  of that and the time, so seeking stays possible.
 - `delay`, `loop`, `repeat`, `on_end`: as on timelines. `on_end` fires when
   a play finishes (after its repeats, never for loops) and is reported to
   the host like a timeline's.
