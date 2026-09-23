@@ -62,9 +62,44 @@ A show exists in three forms:
                         .ogg, .mp3)
   ```
 
+- A **show beside media it does not own**: a `show.json` dropped into a
+  collection that is already arranged the way whoever made it wanted.
+  Instead of a stem, an asset is named by a path relative to the
+  document:
+
+  ```text
+  mycollection/
+    show.json
+    Intro/ Amazonia/ Fonts/ overlays/      whatever was already there
+  ```
+
+  ```json
+  { "type": "video", "video": "AmazoniaProgress/Amazonia14.mp4" }
+  ```
+
+  Nothing is copied and nothing is linked, which is the point: a few
+  hundred clips are hundreds of megabytes to copy, and a symbolic link is
+  not something an ordinary Windows user can make. Folders that reuse a
+  filename stay apart without renaming, and the names in the document are
+  the names on disk.
+
+  A name counts as a path when it holds a `/` or ends in an asset
+  extension; anything else is still a stem from `assets/`, so existing
+  shows are untouched and the two can be mixed. Paths are relative,
+  `/`-separated, and may not climb out of the show's folder: `..`, an
+  absolute path and a drive letter are refused rather than sanitized,
+  because a document that asks for something outside its folder is wrong
+  about where it is. A named file that is not there is reported in
+  `skipped` rather than failing the load.
+
+  The document decides what is loaded, which is the other half of this:
+  the conventional folders are read whether anything uses them or not,
+  while a collection of hundreds of clips loads only what a layer names.
+
 - A **packed show**: the folder as one file, `myshow.cuelight`, a plain
   zip with the folder's contents at its root (`show.json`, the driver,
-  `assets/...`). The `cuelight-pack` tool of `cuelight-loader` writes it;
+  `assets/...`, and every file the document names by a path of its own,
+  wherever beside the document that was). The `cuelight-pack` tool of `cuelight-loader` writes it;
   any zip tool opens it, and a zip that wraps the folder in a directory is
   accepted too. Media that is already compressed (PNG, Ogg, MP3, FLAC) is
   stored as is, the rest deflated. The player and the loader open it like

@@ -24,8 +24,13 @@ fn zip_error(path: &Path, e: impl std::fmt::Display) -> LoadError {
 /// Pack the show folder at `dir` into the file at `out`, the files a
 /// [`Manifest`] lists (nothing else: no manifest, no stray files). Returns
 /// how many files went in.
+///
+/// The show is loaded first and the pack is refused if it does not load,
+/// so a corrupt asset cannot be shipped: packing only moves bytes and
+/// would not otherwise notice.
 pub fn pack(dir: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<usize, LoadError> {
     let (dir, out) = (dir.as_ref(), out.as_ref());
+    check(dir)?;
     let manifest = Manifest::for_dir(dir)?;
     let file = std::fs::File::create(out).map_err(|source| LoadError::Io {
         path: out.to_owned(),
@@ -52,6 +57,15 @@ pub fn pack(dir: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<usize, LoadE
         .and_then(|mut w| w.flush().map_err(Into::into))
         .map_err(|e| zip_error(out, e))?;
     Ok(manifest.files.len())
+}
+
+/// Refuse a show folder that would pack into something that cannot load.
+///
+/// Loading is the check: it decodes every asset, so a corrupt one fails
+/// here rather than in whatever opens the pack. Packing itself only moves
+/// bytes and would not notice.
+fn check(dir: &Path) -> Result<(), LoadError> {
+    crate::load(&mut cuelight::Engine::new(), dir).map(|_| ())
 }
 
 /// The files of a packed show, by their path in the folder, from the
