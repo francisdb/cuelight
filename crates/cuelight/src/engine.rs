@@ -906,10 +906,12 @@ impl Engine {
                 let Some(now) = self.pointed_at(root, layer, &path) else {
                     continue;
                 };
-                // Nothing to show, or the clip it last finished: it stays
-                // as it is until it is pointed somewhere new.
+                // The clip it last finished: it stays as it is until it
+                // is pointed somewhere new. Never having played counts as
+                // somewhere new, so the first name a host gives a surface
+                // starts it like every name after.
                 let shown = self.shown.get(&(root, path.clone()));
-                if !now.is_empty() && shown.is_some_and(|last| *last != now) {
+                if !now.is_empty() && shown.is_none_or(|last| *last != now) {
                     out.push((root, path));
                 }
             }
@@ -978,14 +980,30 @@ impl Engine {
         self.pointed_at(root, layer, path)
     }
 
-    /// Where a layer is pointed, when its video name is bound to
-    /// something: a layer told what to show ignores any list of its own.
+    /// What a binding has pointed this layer at, if one has.
+    ///
+    /// `None` covers two cases that have to stay apart: a layer with no
+    /// video binding at all, which plays a list of its own, and one whose
+    /// binding has nothing to say yet, because its variable is unset or
+    /// its map does not list the value. Neither has been told what to
+    /// show, and a layer that has not been told does not play. Falling
+    /// back to the layer's own `video` here would make those look like an
+    /// instruction to show it.
     fn pointed_at(&self, root: Root, layer: &Layer, path: &[usize]) -> Option<String> {
-        layer
-            .bindings
-            .iter()
-            .any(|b| b.property == Property::Video)
-            .then(|| self.text(root, layer, path, Property::Video))
+        let mut pointed = None;
+        for (index, b) in layer.bindings.iter().enumerate() {
+            if b.property != Property::Video {
+                continue;
+            }
+            let bound = self.in_transition(root, path, index, b).or_else(|| {
+                self.binding_value(&(root, path.to_vec(), index), b)
+                    .and_then(|value| self.convert(b, value))
+            });
+            if let Some(bound) = bound {
+                pointed = Some(bound.to_text());
+            }
+        }
+        pointed
     }
 
     /// The asset the layer at `path` is showing: what its running play
