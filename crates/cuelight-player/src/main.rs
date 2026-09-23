@@ -882,7 +882,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }
             videos = decode_videos(&mut engine, &loaded.videos);
-            let clip_sound = decode_video_sound(&mut engine, &videos);
+            // Nothing will play them, and decoding a folder of clips'
+            // audio is neither quick nor small.
+            let clip_sound = if cli.no_audio {
+                Vec::new()
+            } else {
+                decode_video_sound(&mut engine, &videos)
+            };
             want_audio(&engine, &mut audio, !clip_sound.is_empty());
             if let Some(audio) = &audio {
                 for (name, sound) in clip_sound {
