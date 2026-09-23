@@ -225,8 +225,12 @@ impl Clip {
     fn start(&self) -> Source {
         #[cfg(feature = "ffmpeg-process")]
         {
-            let megabytes = self.details.bytes_in_full() / (1024 * 1024);
-            if self.details.bytes_in_full() <= self.how.budget {
+            let bytes = self.details.bytes_in_full();
+            let megabytes = bytes / (1024 * 1024);
+            // Cheap enough to hold, or short enough that streaming would
+            // cost more than holding it does.
+            let brief = self.details.duration <= self.how.hold_under && bytes <= self.how.ceiling;
+            if bytes <= self.how.budget || brief {
                 log::debug!(
                     "{:?}: {megabytes} MB of frames, holding all of it",
                     self.path
@@ -285,11 +289,22 @@ pub struct Decode {
     /// bound rather than a size. A backglass video is often far larger
     /// than the canvas it plays on, and frames cost by the pixel.
     pub size: Option<[u32; 2]>,
-    /// How much memory a clip may take before [`Clip::open`] decodes it
-    /// as it plays instead of holding it. 32 MB by default, which keeps
-    /// short loops in memory, where they never stutter, and streams the
-    /// rest.
+    /// How much memory a clip may take before it is decoded as it plays
+    /// instead of held. 32 MB by default.
     pub budget: u64,
+    /// Seconds under which a clip is held whatever it costs, up to
+    /// [`Decode::ceiling`].
+    ///
+    /// Streaming pays off over a long clip and is the wrong trade for a
+    /// short one: a clip that runs for a second and a half and loops
+    /// restarts its decoder every second and a half, which is a stall
+    /// every time and far more work than decoding it once. Backdrops are
+    /// exactly this shape, and at HD a second of them is well past
+    /// `budget`, so size alone sends them the wrong way.
+    pub hold_under: f64,
+    /// The most a short clip may take before it is streamed after all, so
+    /// `hold_under` cannot be talked into holding something enormous.
+    pub ceiling: u64,
 }
 
 impl Default for Decode {
@@ -298,6 +313,8 @@ impl Default for Decode {
             rate: Some(30.0),
             size: None,
             budget: 32 * 1024 * 1024,
+            hold_under: 15.0,
+            ceiling: 512 * 1024 * 1024,
         }
     }
 }
