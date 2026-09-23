@@ -145,6 +145,14 @@ struct Change {
     start: f64,
     target: f64,
     started: f64,
+    /// Whether this change runs between whole numbers, which is what
+    /// decides if a counter shows whole numbers on the way.
+    ///
+    /// It has to be remembered rather than read off `start`, because a
+    /// change that interrupts another starts from wherever the last one
+    /// had got to, which is a fraction. What matters is the values the
+    /// binding was given, not where the interruption happened to land.
+    whole: bool,
 }
 
 /// A color on its way to another one. The same shape as a [`Change`], and
@@ -1633,6 +1641,7 @@ impl Engine {
                             start: target,
                             target,
                             started: self.time,
+                            whole: false,
                         }
                     })
                     .collect()
@@ -1643,6 +1652,7 @@ impl Engine {
                     start: 0.0,
                     target: 0.0,
                     started: self.time,
+                    whole: false,
                 },
             );
             let ring_length = reel.ring();
@@ -1663,6 +1673,7 @@ impl Engine {
                     start: reached,
                     target: reel.travel(reached, character),
                     started: self.time + delay,
+                    whole: false,
                 };
             }
         }
@@ -1761,11 +1772,15 @@ impl Engine {
                 start: target,
                 target,
                 started: self.time,
+                whole: target.fract() == 0.0,
             });
             if change.target != target {
                 let reached =
                     transition.value_at(change.start, change.target, self.time - change.started);
                 *change = Change {
+                    // Both values the binding was given: the one it was
+                    // heading for, and the one it is heading for now.
+                    whole: change.target.fract() == 0.0 && target.fract() == 0.0,
                     start: reached,
                     target,
                     started: self.time,
@@ -1797,7 +1812,7 @@ impl Engine {
             return Some(Value::Number(n));
         }
         // A counter between whole numbers shows whole numbers.
-        if change.start.fract() == 0.0 && change.target.fract() == 0.0 {
+        if change.whole {
             n = n.round();
         }
         Some(Value::Text(b.format.format(n)))

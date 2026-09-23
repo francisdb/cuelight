@@ -758,7 +758,9 @@ it goes from one whole number to another; text that is not a number
 jumps. `font` bindings cannot have a transition.
 
 A change while a transition runs starts a new one from the value reached
-so far, with the full duration. When a show loads or a scene is entered,
+so far, with the full duration. A counter keeps counting in whole numbers
+across such a change: what decides that is the values the binding was
+given, not where the interruption landed. When a show loads or a scene is entered,
 properties start at their value: nothing eases in from the base. The value
 is a function of time only, so it does not depend on the frame rate.
 
