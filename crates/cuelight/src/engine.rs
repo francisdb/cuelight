@@ -2127,6 +2127,7 @@ impl Engine {
                 let mut bitmap = |raster: &Arc<TextRaster>, dx: f64, dy: f64, alpha: f64| {
                     let [ox, oy] = raster.offset;
                     out.push(ResolvedLayer {
+                        gradient: None,
                         name: name.to_owned(),
                         shape: ResolvedShape::Bitmap {
                             x: x + f64::from(ox) * scale + dx,
@@ -2165,6 +2166,7 @@ impl Engine {
                     .map(|b| (rgba(&b.color), f64::from(b.width) * scale));
                 let mut run = |ink: [u8; 4], edge: Option<([u8; 4], f64)>, dx: f64, dy: f64| {
                     out.push(ResolvedLayer {
+                        gradient: None,
                         name: name.to_owned(),
                         shape: ResolvedShape::GlyphRun {
                             font: data.clone(),
@@ -2231,6 +2233,7 @@ impl Engine {
                 let origin = [x + left * placed.scale, y + top * placed.scale];
                 for item in &data.paths {
                     out.push(ResolvedLayer {
+                        gradient: None,
                         name: placed.name.to_owned(),
                         shape: ResolvedShape::Path {
                             elements: item
@@ -2260,6 +2263,7 @@ impl Engine {
                 }
                 let (fit, left, top) = fitted(natural_width, natural_height);
                 out.push(ResolvedLayer {
+                    gradient: None,
                     name: placed.name.to_owned(),
                     shape: ResolvedShape::Image {
                         image: name.to_owned(),
@@ -2370,6 +2374,7 @@ impl Engine {
             let position = positions.get(i).copied().unwrap_or_default();
             let cell_x = x + i as f64 * cell_w;
             let marker = |shape| ResolvedLayer {
+                gradient: None,
                 name: placed.name.to_owned(),
                 shape,
                 color: [0; 4],
@@ -2460,6 +2465,7 @@ impl Engine {
                         // A blended group is composited as one picture.
                         let mut marker = |shape: ResolvedShape| {
                             out.push(ResolvedLayer {
+                                gradient: None,
                                 name: layer.name.clone(),
                                 shape,
                                 color: [0; 4],
@@ -2479,6 +2485,7 @@ impl Engine {
                         self.walk(root, children, path, m, opacity, out)?;
                         if clip.is_some() {
                             out.push(ResolvedLayer {
+                                gradient: None,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::ClipEnd,
                                 color: [0; 4],
@@ -2489,6 +2496,7 @@ impl Engine {
                         }
                         if layer.blend != Blend::Normal {
                             out.push(ResolvedLayer {
+                                gradient: None,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::BlendEnd,
                                 color: [0; 4],
@@ -2503,8 +2511,23 @@ impl Engine {
                         fill,
                         stroke,
                     } => {
-                        let color =
-                            parse_color(fill).ok_or_else(|| Error::InvalidColor(fill.clone()))?;
+                        // A gradient keeps the layer's color as what a
+                        // host without gradients would draw: its first stop.
+                        let (color, gradient) = match fill {
+                            crate::model::Fill::Color(color) => (
+                                parse_color(color)
+                                    .ok_or_else(|| Error::InvalidColor(color.clone()))?,
+                                None,
+                            ),
+                            crate::model::Fill::Gradient(gradient) => (
+                                gradient
+                                    .stops()
+                                    .first()
+                                    .and_then(|s| parse_color(&s.color))
+                                    .unwrap_or([255; 4]),
+                                Some(resolve_gradient(gradient, x, y, scale)?),
+                            ),
+                        };
                         let stroke = stroke
                             .as_ref()
                             .map(|s| {
@@ -2514,6 +2537,7 @@ impl Engine {
                             })
                             .transpose()?;
                         out.push(ResolvedLayer {
+                            gradient,
                             name: layer.name.clone(),
                             shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
@@ -2529,6 +2553,7 @@ impl Engine {
                             let (sx, sy) = (w / data.width * scale, h / data.height * scale);
                             for item in &data.paths {
                                 out.push(ResolvedLayer {
+                                    gradient: None,
                                     name: layer.name.clone(),
                                     shape: ResolvedShape::Path {
                                         elements: item
@@ -2563,6 +2588,7 @@ impl Engine {
                             );
                             let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
+                                gradient: None,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: video.to_owned(),
@@ -2595,6 +2621,7 @@ impl Engine {
                             };
                             let [width, height] = size.unwrap_or(natural);
                             out.push(ResolvedLayer {
+                                gradient: None,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
@@ -2658,6 +2685,7 @@ impl Engine {
                                     let mut push = |mask: u16, color: [u8; 4]| {
                                         for points in segments::polygons(*style, mask, cell, snap) {
                                             out.push(ResolvedLayer {
+                                                gradient: None,
                                                 name: layer.name.clone(),
                                                 shape: ResolvedShape::Polygon { points },
                                                 color,
@@ -2912,6 +2940,36 @@ fn validate(show: &Show) -> Result<(), Error> {
     }
     fn layers(show: &Show, list: &[Layer]) -> Result<(), Error> {
         for layer in list {
+            if let LayerKind::Shape {
+                fill: crate::model::Fill::Gradient(gradient),
+                ..
+            } = &layer.kind
+            {
+                let stops = gradient.stops();
+                let problem = if stops.is_empty() {
+                    Some("needs a stop".to_owned())
+                } else if !stops.iter().all(|s| s.at.is_finite()) {
+                    Some("needs finite stop positions".to_owned())
+                } else if stops.windows(2).any(|w| w[1].at < w[0].at) {
+                    Some("needs its stops in order".to_owned())
+                } else if matches!(
+                    gradient,
+                    crate::model::Gradient::Radial { radius, .. } if !(radius.is_finite() && *radius > 0.0)
+                ) {
+                    Some("needs a radius above 0".to_owned())
+                } else {
+                    stops
+                        .iter()
+                        .find(|s| parse_color(&s.color).is_none())
+                        .map(|s| format!("has a stop that is not a color: {:?}", s.color))
+                };
+                if let Some(problem) = problem {
+                    return Err(Error::InvalidShow(format!(
+                        "the gradient of layer {:?} {problem}",
+                        layer.name
+                    )));
+                }
+            }
             if let LayerKind::Shape {
                 stroke: Some(stroke),
                 ..
@@ -3330,8 +3388,13 @@ fn resolve_shape(
 pub struct ResolvedLayer {
     pub name: String,
     pub shape: ResolvedShape,
-    /// Fill color as RGBA bytes; opaque white for images.
+    /// Fill color as RGBA bytes; opaque white for images. With a
+    /// `gradient` this is its first stop, so a host that draws no
+    /// gradients still draws something sensible.
     pub color: [u8; 4],
+    /// A gradient to fill the shape with instead of `color`, already in
+    /// the same space as the shape's coordinates.
+    pub gradient: Option<ResolvedGradient>,
     /// Effective opacity in [0, 1] (tree-multiplied).
     pub opacity: f64,
     /// How the item combines with what was painted before it. Markers
@@ -3419,4 +3482,51 @@ pub enum ResolvedShape {
         width: f64,
         height: f64,
     },
+}
+
+/// A gradient with its colors parsed and its geometry scaled, ready to
+/// draw: the shape's own space, like the shape's coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedGradient {
+    pub kind: ResolvedGradientKind,
+    /// `(position, RGBA)`, in order, at least one.
+    pub stops: Vec<(f32, [u8; 4])>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResolvedGradientKind {
+    Linear { from: [f64; 2], to: [f64; 2] },
+    Radial { center: [f64; 2], radius: f64 },
+}
+
+/// Parse a gradient's colors and scale its geometry the way a shape's
+/// coordinates are scaled.
+fn resolve_gradient(
+    gradient: &crate::model::Gradient,
+    x: f64,
+    y: f64,
+    scale: f64,
+) -> Result<ResolvedGradient, Error> {
+    use crate::model::Gradient;
+    let stops = gradient
+        .stops()
+        .iter()
+        .map(|stop| {
+            parse_color(&stop.color)
+                .map(|rgba| (stop.at as f32, rgba))
+                .ok_or_else(|| Error::InvalidColor(stop.color.clone()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let place = |[px, py]: [f64; 2]| [px * scale + x, py * scale + y];
+    let kind = match gradient {
+        Gradient::Linear { from, to, .. } => ResolvedGradientKind::Linear {
+            from: place(*from),
+            to: place(*to),
+        },
+        Gradient::Radial { center, radius, .. } => ResolvedGradientKind::Radial {
+            center: place(*center),
+            radius: radius * scale,
+        },
+    };
+    Ok(ResolvedGradient { kind, stops })
 }

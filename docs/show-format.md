@@ -287,11 +287,33 @@ Layer kinds:
   [Sound](#sound).
 - `shape`: `shape` is `{ "rect": [x, y, width, height] }`,
   `{ "circle": [cx, cy, radius] }` or `{ "path": "M 0 0 L 10 0 L 5 8 Z" }`
-  in the layer's local space, plus a `fill` color (`#00000000` for an
-  outline only). `path` takes SVG path data: `M L H V C S Q T A Z`,
-  absolute or relative; arcs become curves. Optional `stroke`
+  in the layer's local space, plus a `fill` (`#00000000` for an outline
+  only). `path` takes SVG path data: `M L H V C S Q T A Z`, absolute or
+  relative; arcs become curves. Optional `stroke`
   `{ "color": "#RRGGBB", "width": 1 }` outlines the shape, centered on its
   edge, in the layer's units (so it scales with the layer).
+
+  `fill` is a color, or a gradient:
+
+  ```json
+  { "fill": { "linear": { "from": [0, 0], "to": [0, 52],
+                          "stops": [{ "at": 0, "color": "#1B3A6B" },
+                                    { "at": 1, "color": "#F2B25C" }] } } }
+  { "fill": { "radial": { "center": [0, 0], "radius": 60,
+                          "stops": [{ "at": 0, "color": "#FFFFFFFF" },
+                                    { "at": 1, "color": "#FFFFFF00" }] } } }
+  ```
+
+  Any number of stops, alpha included, `at` a fraction from 0 to 1 and in
+  order. The geometry is in the same local space as the shape, so a
+  gradient travels with whatever moves or scales the layer. A linear one
+  holds its end colors beyond either end of its line, a radial one holds
+  its last color beyond `radius`. Glows, vignettes, the shading that makes
+  a drum look round and the sheen on glass are all gradients, and carrying
+  them as small raster images means the same workaround in every show and
+  blurring whenever one is scaled up. A host drawing the resolved list
+  itself gets the gradient beside the layer's `color`, which is its first
+  stop, so one that draws no gradients still draws something.
 - `vector`: `vector` names artwork the host registered with
   `Engine::set_vector`; the loader does that for every `assets/*.svg`,
   by stem. Drawn like an image: its top-left corner at the layer's x/y
