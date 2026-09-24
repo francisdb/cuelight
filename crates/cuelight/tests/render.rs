@@ -352,3 +352,75 @@ fn a_tiled_image_repeats_and_a_stretched_one_does_not() {
         "tiled: and it is a pattern, not one flat colour"
     );
 }
+
+#[test]
+fn a_tiled_pattern_is_laid_out_in_the_layers_own_space() {
+    // The same board two ways: one tile repeated across the box, and the
+    // whole thing as one image. They have to agree wherever the layer is
+    // put, or the pattern is being worked out on the canvas and sliding
+    // under the layer instead of being carried by it.
+    fn checker(px: u32, block: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        for y in 0..px {
+            for x in 0..px {
+                let dark = ((x / block) + (y / block)).is_multiple_of(2);
+                out.extend_from_slice(if dark {
+                    &[0, 0, 0, 255]
+                } else {
+                    &[255, 255, 255, 255]
+                });
+            }
+        }
+        out
+    }
+    // One source pixel per unit, so the two differ only where they are
+    // drawn, never in how they are sampled.
+    let frame = |tiled: bool, placing: &str| {
+        let layer = if tiled {
+            format!(
+                r##"{{ "name": "b", "type": "image", "image": "tile", "x": 300, "y": 200,
+                   "anchor": "center", "size": [340, 340],
+                   "repeat": {{ "size": [40, 40] }}, {placing} }}"##
+            )
+        } else {
+            format!(
+                r##"{{ "name": "b", "type": "image", "image": "full", "x": 300, "y": 200,
+                   "anchor": "center", "size": [340, 340], {placing} }}"##
+            )
+        };
+        let show = format!(
+            r##"{{ "name": "t", "size": [600, 400], "background": "#808080",
+                   "layers": [{layer}] }}"##
+        );
+        let mut engine = Engine::new();
+        engine.set_image("tile", 40, 40, checker(40, 20)).unwrap();
+        engine
+            .set_image("full", 340, 340, checker(340, 20))
+            .unwrap();
+        engine.load_show(&show).unwrap();
+        render(&engine)
+    };
+    for placing in [
+        r#""rotation": 0"#,
+        r#""rotation": 30, "scale": 1.3"#,
+        r#""rotation": 30, "scale_x": 1.3, "scale_y": 0.7"#,
+        r#""rotation": 90"#,
+    ] {
+        let (Some(a), Some(b)) = (frame(true, placing), frame(false, placing)) else {
+            return;
+        };
+        // Antialiasing along a square's edge differs between a repeated
+        // brush and one big picture; a pattern in the wrong place puts
+        // black where white should be, which this counts instead.
+        let flipped = a
+            .pixels
+            .chunks(4)
+            .zip(b.pixels.chunks(4))
+            .filter(|(p, q)| p[0].abs_diff(q[0]) > 200)
+            .count();
+        assert_eq!(
+            flipped, 0,
+            "with {placing} the tiled pattern is somewhere else"
+        );
+    }
+}
