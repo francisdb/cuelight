@@ -1507,6 +1507,24 @@ pub struct Binding {
     /// applies at once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debounce: Option<f64>,
+    /// Bend the value against the input instead of scaling it straight.
+    ///
+    /// Keys are a track's, with the input value where a track has time,
+    /// and the same easings between them: below the first key it holds
+    /// the first value, above the last it holds the last. A lamp whose
+    /// glow wants a gamma curve, a tachometer compressed at the low end,
+    /// a loudness in decibels rather than a linear gain.
+    ///
+    /// This shapes value against input; a [`Transition`]'s `ease` shapes
+    /// a change over time. A binding can have both, and they do different
+    /// things.
+    ///
+    /// It applies after `map` and before `scale` and `offset`, so the
+    /// curve is written in the variable's own units and `scale` stays the
+    /// last change of unit. It cannot be combined with `threshold`, which
+    /// is the same job done crudely: a `step` ease says it as a curve.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curve: Vec<Key>,
     /// Ease toward a new value instead of jumping to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,

@@ -104,6 +104,13 @@
       "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the variable as a\nfont style name.\n\nWith `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)\nis looked up first and the mapped value, or `default` when it is not\nlisted, takes the variable's place. Without either, the binding does\nnot apply and the property keeps its base value. The order is:\n`debounce`, `map`, `threshold`, `scale` and `offset`, `transition`.",
       "type": "object",
       "properties": {
+        "curve": {
+          "description": "Bend the value against the input instead of scaling it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map` and before `scale` and `offset`, so the\ncurve is written in the variable's own units and `scale` stays the\nlast change of unit. It cannot be combined with `threshold`, which\nis the same job done crudely: a `step` ease says it as a curve.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
         "debounce": {
           "description": "Seconds a new value has to hold before it reaches the property;\nchanges shorter than that (a strobing lamp, a bouncing switch)\nnever show. When a show loads or a scene is entered the value\napplies at once.",
           "type": [
