@@ -905,6 +905,28 @@ puts it on the canvas) or the `render` feature's vello rasterizer, plus
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
+## Rendering frames from the command line
+
+`cuelight-render`, in `cuelight-loader` behind the `render-cli` feature,
+loads a show the way the player does and writes frames without a window:
+
+```sh
+cuelight-render eclipse/ --at 4.1,19.5,26 -o frames/
+cuelight-render eclipse/ --every 0.5 --until 52 -o frames/
+cuelight-render eclipse/ --until 52 --events
+```
+
+Time is walked in fixed steps of `--fps` (60 by default) from 0, so a run
+is repeatable and a frame at a given time is reached the same way however
+many were asked for. `--events` prints what the show fired and when, and
+needs no GPU. `--trigger 2.5:go` and `--set 0:score=1500` add inputs at a
+time, and `--no-driver` ignores the folder's driver script.
+
+Determinism: within one run the engine and the renderer are exact, so a
+strip is internally consistent. Across runs the GPU can differ by one
+level on a pixel, so comparing frames from separate runs wants a
+tolerance.
+
 ## Regenerating the schema
 
 The schema is generated from the Rust model types (`schemars`) and checked
