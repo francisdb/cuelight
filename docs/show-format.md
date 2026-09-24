@@ -32,10 +32,13 @@ starting with `$`, like `$schema`, are never reported. The player logs the
 warnings at load.
 
 The same list reports bindings that will quietly do nothing: one reading a
-variable the show does not declare, and one whose variable starts at a
+name the show declares as neither a variable nor a
+[value](#values-the-show-animates), and one whose variable starts at a
 value the property cannot use, such as a `tint` variable starting at
-`"green"`. None of those is an error, since a host may set something
-usable later, but each looks exactly like a feature that does not work.
+`"green"`. A value counts as declared, and since a value is always a
+number, a `tint` or `font` binding on one is reported the same way. None
+of those is an error, since a host may set something usable later, but
+each looks exactly like a feature that does not work.
 
 Naming note: a **show** is the whole loaded document; **scenes** are the
 switchable views inside it (see [Scenes](#scenes)).
