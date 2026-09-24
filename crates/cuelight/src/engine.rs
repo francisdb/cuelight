@@ -545,7 +545,27 @@ impl Engine {
             ignored_fields(&raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, &mut self.load_warnings);
+        (self.transition_sites, self.debounce_sites) = binding_sites(&show);
+        self.reel_sites = reel_sites(&show);
+        self.show = Some(show);
+        self.restart();
+        Ok(())
+    }
+
+    /// Put the loaded show back to its beginning: time 0, the first
+    /// scene, nothing playing, every variable at the value the document
+    /// declares.
+    ///
+    /// Registered assets are host state and are left alone, so this is
+    /// cheap: no file is read and nothing is decoded again. Reaching a
+    /// moment is therefore restarting and advancing to it, which is what
+    /// lets a host scrub without the engine holding any history.
+    ///
+    /// Does nothing without a show.
+    pub fn restart(&mut self) {
+        let Some(show) = &self.show else { return };
         self.variables = show.variables.clone();
+        let scenes = !show.scenes.is_empty();
         self.playing.clear();
         self.sounding.clear();
         self.transitions.clear();
@@ -557,19 +577,15 @@ impl Engine {
         self.ducking.clear();
         self.plays.clear();
         self.waiting.clear();
-        (self.transition_sites, self.debounce_sites) = binding_sites(&show);
-        self.reel_sites = reel_sites(&show);
         self.events.clear();
         self.time = 0.0;
-        self.active_scene = (!show.scenes.is_empty()).then_some(0);
-        self.show = Some(show);
+        self.active_scene = scenes.then_some(0);
         self.start_matching(Some(Root::Show), |tl| tl.autoplay);
         self.play_autoplay(Root::Show);
         if let Some(scene) = self.active_scene {
             self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
             self.play_autoplay(Root::Scene(scene));
         }
-        Ok(())
     }
 
     /// Fields of the loaded show document that the engine did not

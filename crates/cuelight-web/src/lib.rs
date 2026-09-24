@@ -147,6 +147,8 @@ struct Inner {
     script: Option<Driver>,
     driver: Option<DriverPlayer>,
     driver_playing: bool,
+    /// The clock is stopped: frames still paint, nothing advances.
+    paused: bool,
     warnings: Vec<String>,
     canvas: HtmlCanvasElement,
     context: RenderContext,
@@ -206,7 +208,10 @@ impl Inner {
             .map_or(0.0, |last| (now_ms - last) / 1000.0)
             .clamp(0.0, MAX_FRAME_SECONDS);
         self.last_ms = Some(now_ms);
-        if self.driver_playing {
+        // Paused stops the clock, not the painting: a resize, a seek or a
+        // variable set from the page still shows.
+        let dt = if self.paused { 0.0 } else { dt };
+        if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
                 driver.advance(&mut self.engine, dt);
             }
@@ -364,6 +369,7 @@ impl CuelightPlayer {
         .map_err(|e| error(format!("renderer: {e}")))?;
 
         let inner = Rc::new(RefCell::new(Inner {
+            paused: false,
             engine,
             driver: loaded.driver.clone().map(DriverPlayer::new),
             driver_playing: loaded.driver.is_some(),
@@ -529,6 +535,48 @@ impl CuelightPlayer {
     #[wasm_bindgen(js_name = driverPause)]
     pub fn driver_pause(&self) {
         self.inner.borrow_mut().driver_playing = false;
+    }
+
+    /// Stop the clock. Frames keep painting, so a resize or a seek still
+    /// shows, but nothing advances and the driver stops with it.
+    pub fn pause(&self) {
+        self.inner.borrow_mut().paused = true;
+    }
+
+    /// Start the clock again from where it stopped.
+    pub fn resume(&self) {
+        self.inner.borrow_mut().paused = false;
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn paused(&self) -> bool {
+        self.inner.borrow().paused
+    }
+
+    /// Seconds of show time that have passed.
+    #[wasm_bindgen(getter)]
+    pub fn time(&self) -> f64 {
+        self.inner.borrow().engine.time()
+    }
+
+    /// Put the show at `seconds`, forwards or backwards.
+    ///
+    /// The show is restarted and advanced to that moment in steps of
+    /// `1 / fps`, replaying the driver script on the way, because a
+    /// show's state is a function of its inputs and the clock rather than
+    /// anything the engine remembers. A show of a minute costs a couple
+    /// of milliseconds, so a page may call this as a scrub bar moves.
+    ///
+    /// Use the rate the show plays at: a chain of timelines linked by
+    /// `on_end` lands on frame boundaries, so another rate can put them a
+    /// frame or two apart.
+    pub fn seek(&self, seconds: f64, fps: Option<f64>) {
+        let mut inner = self.inner.borrow_mut();
+        let script = inner.script.clone();
+        let fps = fps.filter(|f| f.is_finite() && *f > 0.0).unwrap_or(60.0);
+        let Inner { engine, .. } = &mut *inner;
+        let played = cuelight_loader::seek(engine, script, seconds.max(0.0), fps);
+        inner.driver = played;
     }
 
     /// Call `callback` with every event the show raises, as
