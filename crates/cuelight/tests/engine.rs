@@ -975,3 +975,40 @@ fn a_held_timeline_still_fires_its_end_and_can_be_restarted() {
     engine.advance_frame(0.0);
     assert!(opacity(&engine) < 0.01, "{}", opacity(&engine));
 }
+
+#[test]
+fn restarting_reaches_the_same_state_as_a_fresh_load() {
+    let mut walked = Engine::new();
+    walked.load_show(MINIGOLF).unwrap();
+    walked.trigger("putt");
+    for _ in 0..120 {
+        walked.advance_frame(1.0 / 60.0);
+    }
+    walked.set_variable("score", 7.0);
+
+    // Put back, then walked to the same place again.
+    walked.restart();
+    assert_eq!(walked.time(), 0.0);
+    let mut fresh = Engine::new();
+    fresh.load_show(MINIGOLF).unwrap();
+
+    for _ in 0..30 {
+        walked.advance_frame(1.0 / 60.0);
+        fresh.advance_frame(1.0 / 60.0);
+    }
+    assert_eq!(
+        walked.resolved_layers().unwrap(),
+        fresh.resolved_layers().unwrap(),
+        "a restart is the start, however the engine got there"
+    );
+    // Variables go back to what the document declares, not what a host
+    // last set: a restart is the show's beginning, not the host's.
+    assert_eq!(walked.variable("score"), fresh.variable("score"));
+}
+
+#[test]
+fn restarting_without_a_show_does_nothing() {
+    let mut engine = Engine::new();
+    engine.restart();
+    assert_eq!(engine.time(), 0.0);
+}

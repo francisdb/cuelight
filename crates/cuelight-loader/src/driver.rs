@@ -140,3 +140,36 @@ impl DriverPlayer {
         applied
     }
 }
+
+/// Put the show back to its beginning and walk it to `to` seconds in
+/// steps of `1 / fps`, replaying `driver` alongside. Hands back the
+/// driver where it ended up, so playing on from there continues.
+///
+/// A show's state is a function of its inputs and the clock, so reaching
+/// a moment is restarting and advancing to it. Nothing is stored, nothing
+/// is rewound, and a host can scrub by calling this as the pointer moves:
+/// a show of a minute takes a couple of milliseconds.
+///
+/// The step matters. A chain of timelines linked by `on_end` lands on
+/// frame boundaries, so seeking at one rate and playing at another can
+/// put them a frame or two apart; use the rate the show plays at.
+pub fn seek(
+    engine: &mut Engine,
+    driver: Option<Driver>,
+    to: f64,
+    fps: f64,
+) -> Option<DriverPlayer> {
+    engine.restart();
+    let mut player = driver.map(DriverPlayer::new);
+    let step = 1.0 / fps.max(1.0);
+    let mut time = 0.0;
+    while time < to {
+        let dt = step.min(to - time);
+        if let Some(player) = &mut player {
+            player.advance(engine, dt);
+        }
+        engine.advance_frame(dt);
+        time += dt;
+    }
+    player
+}

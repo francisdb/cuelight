@@ -16,7 +16,10 @@
 //! an action's number or name to fire it, `name=value` to set a variable,
 //! `q` to quit. Digit keys in the window fire actions too, `f` or F11
 //! switches fullscreen (as does starting with `--fullscreen`), escape
-//! leaves fullscreen or quits. All of it keeps working while a driver runs.
+//! leaves fullscreen or quits. Space stops the clock and starts it again,
+//! the arrows walk it (a frame, or a second with shift) and home goes back
+//! to the start; walking it stops it. All of it keeps working while a
+//! driver runs.
 //!
 //! Images, fonts and sounds a show references but nobody registered are
 //! logged as warnings at load and skipped. Sound plays through the default
@@ -189,6 +192,13 @@ struct App {
     videos: Videos,
     actions: Vec<String>,
     driver: Option<DriverPlayer>,
+    /// The show's own driver as written, for seeking: a scrub replays it
+    /// from the top rather than rewinding the one that is running.
+    script: Option<Driver>,
+    /// The clock is stopped: frames still paint, nothing advances.
+    paused: bool,
+    /// Shift is held, which makes an arrow a second instead of a frame.
+    shift: bool,
     /// The sound device, when one could be opened and was wanted.
     audio: Option<Output>,
     console: Receiver<String>,
@@ -314,6 +324,24 @@ impl App {
         true
     }
 
+    /// How far an arrow moves: a frame, or a second with shift held.
+    fn step(&self) -> f64 {
+        if self.shift {
+            1.0
+        } else {
+            1.0 / 60.0
+        }
+    }
+
+    /// Put the show `by` seconds from where it is, forwards or backwards,
+    /// and stop the clock so it stays there.
+    fn scrub(&mut self, by: f64) {
+        let to = (self.engine.time() + by).max(0.0);
+        self.paused = true;
+        self.driver = cuelight_loader::seek(&mut self.engine, self.script.clone(), to, 60.0);
+        log::info!("at {:.3}s", self.engine.time());
+    }
+
     /// Let the driver script apply what is due after `dt` more seconds.
     fn advance_driver(&mut self, dt: f64) {
         let Some(driver) = &mut self.driver else {
@@ -381,6 +409,9 @@ impl App {
         }
         let dt = elapsed.min(0.1);
         self.last_frame = now;
+        // Paused stops the clock, not the painting: a resize or a scrub
+        // still shows.
+        let dt = if self.paused { 0.0 } else { dt };
         self.advance_driver(dt);
         self.engine.advance_frame(dt);
         for event in self.engine.drain_events() {
@@ -618,6 +649,23 @@ impl ApplicationHandler for App {
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
                         self.set_fullscreen(!self.fullscreen);
                     }
+                    // Space stops the clock; the arrows walk it. A show is
+                    // a function of its inputs and the clock, so going
+                    // back is replaying to there, not rewinding.
+                    Key::Named(NamedKey::Space) => {
+                        self.paused = !self.paused;
+                        log::info!(
+                            "{} at {:.3}s",
+                            if self.paused { "paused" } else { "playing" },
+                            self.engine.time()
+                        );
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => self.scrub(-self.step()),
+                    Key::Named(NamedKey::ArrowRight) => self.scrub(self.step()),
+                    Key::Named(NamedKey::Home) => {
+                        let to = -self.engine.time();
+                        self.scrub(to);
+                    }
                     Key::Character(c) => {
                         if let Ok(digit) = c.as_str().parse::<usize>() {
                             self.fire_action(digit.wrapping_sub(1));
@@ -625,6 +673,9 @@ impl ApplicationHandler for App {
                     }
                     _ => {}
                 }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift = modifiers.state().shift_key();
             }
             // Only noted here: a drag can deliver several sizes per frame,
             // and each reconfiguration of the surface costs milliseconds.
@@ -955,14 +1006,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     for field in engine.load_warnings() {
         log::warn!("show field {field:?} is not understood and was ignored");
     }
-    let driver = driver.filter(|_| !cli.no_driver).map(|driver| {
+    let script = driver.filter(|_| !cli.no_driver).inspect(|driver| {
         log::info!(
             "driver: {} steps{}",
             driver.steps.len(),
             if driver.looping { ", looping" } else { "" }
         );
-        DriverPlayer::new(driver)
     });
+    let driver = script.clone().map(DriverPlayer::new);
 
     let show = engine.show().expect("show loaded");
     for layers in show.layer_trees() {
@@ -978,6 +1029,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         engine,
         videos,
         actions,
+        script: script.clone(),
+        paused: false,
+        shift: false,
         driver,
         audio,
         console: rx,

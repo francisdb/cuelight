@@ -517,3 +517,76 @@ fn a_packed_show_carries_the_media_it_names_by_path() {
     std::fs::remove_file(&out).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn seeking_lands_where_playing_there_would_have() {
+    let show = r##"{
+      "name": "seek", "size": [64, 64],
+      "layers": [{ "name": "box", "type": "shape", "x": 0,
+                   "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+                   "timelines": [{ "name": "slide", "autoplay": true,
+                     "tracks": [{ "property": "x",
+                                  "keys": [{ "t": 0, "v": 0 }, { "t": 4, "v": 40 }] }] }] }]
+    }"##;
+    let at = |engine: &Engine| engine.resolved_layers().unwrap()[0].transform.0[4];
+
+    let mut played = Engine::new();
+    played.load_show(show).unwrap();
+    for _ in 0..120 {
+        played.advance_frame(1.0 / 60.0);
+    }
+
+    // Seeking from cold, and seeking backwards from further on, both land
+    // where playing there would have.
+    let mut sought = Engine::new();
+    sought.load_show(show).unwrap();
+    cuelight_loader::seek(&mut sought, None, 2.0, 60.0);
+    assert!(
+        (at(&sought) - at(&played)).abs() < 1e-9,
+        "{} vs {}",
+        at(&sought),
+        at(&played)
+    );
+
+    for _ in 0..120 {
+        sought.advance_frame(1.0 / 60.0);
+    }
+    cuelight_loader::seek(&mut sought, None, 2.0, 60.0);
+    assert!(
+        (at(&sought) - at(&played)).abs() < 1e-9,
+        "going back is the same place"
+    );
+    assert!((sought.time() - 2.0).abs() < 1e-9, "{}", sought.time());
+}
+
+#[test]
+fn seeking_replays_the_driver_on_the_way() {
+    let show = r##"{ "name": "driven", "size": [8, 8], "variables": { "score": 0 },
+      "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                   "fill": "#FFFFFF" }] }"##;
+    let driver = Driver::from_json(
+        r#"{ "steps": [{ "set": { "score": 10 } }, { "wait": 1 },
+                       { "set": { "score": 20 } }, { "wait": 1 },
+                       { "set": { "score": 30 } }] }"#,
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+
+    cuelight_loader::seek(&mut engine, Some(driver.clone()), 0.5, 60.0);
+    assert_eq!(
+        engine.variable("score"),
+        Some(&cuelight::Value::Number(10.0))
+    );
+    cuelight_loader::seek(&mut engine, Some(driver.clone()), 1.5, 60.0);
+    assert_eq!(
+        engine.variable("score"),
+        Some(&cuelight::Value::Number(20.0))
+    );
+    // And back: the driver is replayed from the top, not rewound.
+    cuelight_loader::seek(&mut engine, Some(driver), 0.5, 60.0);
+    assert_eq!(
+        engine.variable("score"),
+        Some(&cuelight::Value::Number(10.0))
+    );
+}
