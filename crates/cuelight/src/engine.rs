@@ -305,10 +305,35 @@ struct Playhead {
     layer_path: Vec<usize>,
     /// Timeline index within that layer.
     timeline: usize,
-    /// Seconds since the delay ended: negative while delayed.
-    time: f64,
+    /// The instant on the show's clock the timeline's first key falls on:
+    /// when it was started, plus its delay. A playhead keeps no clock of
+    /// its own; where it is is worked out from this and the show's clock,
+    /// so however long a chain of `on_end` runs for, the two can never
+    /// drift apart.
+    starts: f64,
     /// Finished, but holding its properties at their last values.
     held: bool,
+}
+
+impl Playhead {
+    /// Seconds since the delay ended at show time `now`: negative while
+    /// still delayed, and wrapped for a `loop`.
+    fn at(&self, now: f64, tl: &Timeline) -> f64 {
+        if self.held {
+            return tl.play_time();
+        }
+        let elapsed = now - self.starts;
+        let duration = tl.duration();
+        if elapsed > 0.0 && tl.looping && duration > 0.0 {
+            return elapsed % duration;
+        }
+        elapsed
+    }
+
+    /// The instant it finishes, for a timeline that does finish.
+    fn ends(&self, tl: &Timeline) -> f64 {
+        self.starts + tl.play_time()
+    }
 }
 
 /// One play of an audio layer, from its trigger until it ends or is
@@ -406,6 +431,25 @@ pub enum Event {
 /// Events kept while the host does not drain them; the oldest are dropped
 /// beyond this so an uninterested host costs nothing.
 const MAX_PENDING_EVENTS: usize = 256;
+
+/// How many times one frame may be split at something ending.
+///
+/// A frame holds as many endings as the show puts in it, and each is
+/// worth stopping at. What this guards against is a chain of
+/// zero-length timelines linked by `on_end`, which would end for ever
+/// without moving the clock; past this the rest of the frame is taken in
+/// one piece and the chain carries on next frame.
+const MAX_SUBSTEPS: usize = 64;
+
+/// Two instants closer together than this are the same instant.
+///
+/// Time is seconds in an `f64`, so the same instant reached two ways --
+/// counting frames of a sixtieth, or adding up three clips of 0.7 s --
+/// comes out a few parts in 10^15 apart. Without this a clip whose end
+/// lands a femtosecond past a frame boundary waits a whole frame. A
+/// microsecond is far under anything a show can ask for or a frame can
+/// resolve, and far over that noise at any show length.
+const SAME_INSTANT: f64 = 1e-6;
 
 /// The engine: owns the loaded show and all runtime state.
 ///
@@ -1255,7 +1299,83 @@ impl Engine {
     /// progress, looping ones wrap, finished ones stop (their properties
     /// fall back to bindings/base values) and fire their `on_end` trigger,
     /// which is also reported through [`drain_events`](Engine::drain_events).
+    ///
+    /// A frame is not one step. Anything that ends inside it ends at the
+    /// instant it ends, not at the end of the frame, so a chain of
+    /// timelines linked by `on_end` keeps the schedule its durations
+    /// describe whatever the frame rate is. The host still hears about
+    /// the event when the frame returns; the show's own clocks are
+    /// already right.
     pub fn advance_frame(&mut self, dt: f64) {
+        let end = self.time + dt;
+        // Each pass runs to the first thing that ends, so the pass after
+        // it starts exactly where that one finished.
+        for _ in 0..MAX_SUBSTEPS {
+            let to = self.first_ending(end);
+            self.step(to - self.time, to);
+            if self.time >= end {
+                return;
+            }
+        }
+        // A show whose chain is all zero-length timelines would split a
+        // frame for ever; it gets the rest of the frame in one piece.
+        self.step(end - self.time, end);
+    }
+
+    /// The instant the first thing ends, or `end` if nothing does before
+    /// then.
+    ///
+    /// Every end is an instant on the show's clock, never a countdown:
+    /// the same expression picks the instant here and recognises it in
+    /// [`Self::step`], so a step that lands on it cannot land a float's
+    /// width short and put the ending off to the next frame.
+    ///
+    /// Only what is already running counts: whatever an `on_end` starts is
+    /// looked at on the next pass, having begun at the right instant.
+    fn first_ending(&self, end: f64) -> f64 {
+        let Some(show) = &self.show else {
+            return end;
+        };
+        let mut first = end;
+        for p in &self.playing {
+            if p.held {
+                continue;
+            }
+            let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
+            let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
+                continue;
+            };
+            if tl.looping || tl.duration() <= 0.0 {
+                continue;
+            }
+            let ends = p.ends(tl);
+            if ends > self.time + SAME_INSTANT && ends < first {
+                first = ends;
+            }
+        }
+        for play in &self.sounding {
+            let layer = root_layers(show, play.root).and_then(|l| layer_at(l, &play.layer_path));
+            let Some(media) = layer.and_then(|l| l.kind.media()) else {
+                continue;
+            };
+            if media.looping {
+                continue;
+            }
+            let Some(length) = self.media_duration(&media, &play.playing) else {
+                continue;
+            };
+            let plays = media.repeat.unwrap_or(1.0).max(0.0);
+            let ends = play.started + media.delay.max(0.0) + length * plays;
+            if ends > self.time + SAME_INSTANT && ends < first {
+                first = ends;
+            }
+        }
+        first
+    }
+
+    /// One indivisible move of the clock, landing exactly on `to`; see
+    /// [`Self::advance_frame`].
+    fn step(&mut self, dt: f64, to: f64) {
         self.settle_debounces(dt);
         self.follow_transitions();
         self.follow_reels();
@@ -1291,17 +1411,22 @@ impl Engine {
                 }
                 _ => {
                     let play = &mut self.sounding[i];
-                    play.playing = now;
+                    play.playing = now.clone();
                     play.started = self.time;
                     self.next_voice += 1;
                     play.id = self.next_voice;
+                    // Being pointed somewhere new in place is still a
+                    // play of that clip: without this the layer would be
+                    // told to start it again the moment it ended.
+                    self.shown.insert((root, path), now);
                 }
             }
         }
         for (root, path) in self.repointed() {
             self.play(root, path);
         }
-        self.time += dt;
+        self.time = to;
+        let now = self.time;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
         let mut on_end: Vec<String> = Vec::new();
@@ -1311,23 +1436,24 @@ impl Engine {
                 finished.push(i);
                 continue;
             };
-            // A held one is done moving: its time stays where it stopped.
+            // A held one is done moving: it stays where it stopped.
             if p.held {
                 continue;
             }
-            p.time += dt;
-            if p.time < 0.0 {
+            if now < p.starts {
                 continue;
             }
             let duration = tl.duration();
             if tl.looping && duration > 0.0 {
-                p.time %= duration;
-            } else if duration <= 0.0 || p.time >= tl.play_time() {
+                continue;
+            }
+            // Compared as instants on the one clock, the same way the
+            // step that landed here was chosen.
+            if duration <= 0.0 || now + SAME_INSTANT >= p.ends(tl) {
                 on_end.extend(tl.on_end.clone());
                 // Holding is not playing: it ends, fires its `on_end` once
                 // like any other, and then keeps its last values.
                 if tl.hold && !tl.looping && duration > 0.0 {
-                    p.time = tl.play_time();
                     p.held = true;
                 } else {
                     finished.push(i);
@@ -1355,7 +1481,7 @@ impl Engine {
                 continue;
             };
             let plays = media.repeat.unwrap_or(1.0).max(0.0);
-            if time - s.started - media.delay.max(0.0) >= duration * plays {
+            if time + SAME_INSTANT - s.started - media.delay.max(0.0) >= duration * plays {
                 ended.push(i);
                 on_end.extend(media.on_end.map(str::to_owned));
             }
@@ -1735,7 +1861,7 @@ impl Engine {
                 root,
                 layer_path,
                 timeline,
-                time: -delay,
+                starts: self.time + delay,
                 held: false,
             });
         }
@@ -2036,7 +2162,7 @@ impl Engine {
                     continue;
                 };
                 // Still waiting out its delay: it owns nothing yet.
-                let Some(time) = tl.local_time(p.time) else {
+                let Some(time) = tl.local_time(p.at(self.time, tl)) else {
                     continue;
                 };
                 for track in tl.tracks.iter().filter(|t| t.property == prop) {

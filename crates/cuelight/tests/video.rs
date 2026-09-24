@@ -408,7 +408,9 @@ fn ignore_drops_a_trigger_that_arrives_mid_clip() {
         .unwrap();
     engine.trigger("go");
     engine.advance_frame(0.4);
-    engine.set_variable("clip", "two");
+    // The same clip again, so what is being tested is the trigger and not
+    // the binding: a layer still pointed somewhere new would rightly play
+    // that when the first one ran out.
     engine.trigger("go");
     engine.advance_frame(0.0);
     assert_eq!(engine.videos().unwrap()[0].video, "one");
