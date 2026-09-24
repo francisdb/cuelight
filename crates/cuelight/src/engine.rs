@@ -443,11 +443,22 @@ const MAX_PENDING_EVENTS: usize = 256;
 /// How many times one frame may be split at something ending.
 ///
 /// A frame holds as many endings as the show puts in it, and each is
-/// worth stopping at. What this guards against is a chain of
-/// zero-length timelines linked by `on_end`, which would end for ever
-/// without moving the clock; past this the rest of the frame is taken in
-/// one piece and the chain carries on next frame.
-const MAX_SUBSTEPS: usize = 64;
+/// worth stopping at, so this has to be far above anything a show would
+/// ask for: one long frame at a low frame rate can hold hundreds of
+/// links of a chain, and capping it would make the frame rate part of
+/// the answer, which is the one thing the clock must not depend on.
+///
+/// What it guards against is a show whose links are shorter than
+/// [`SAME_INSTANT`], where a frame could be split until it ran out of
+/// floats. Past this the rest of the frame is taken in one piece and the
+/// chain carries on next frame, which is no longer exact; a show that
+/// reaches it is asking for more than a hundred thousand endings inside
+/// one frame.
+const MAX_SUBSTEPS: usize = 100_000;
+
+/// What is sounding on each bus, by the layer playing it and the instant
+/// that play started sounding.
+type BusyBuses = std::collections::BTreeMap<String, Vec<((Root, Vec<usize>), f64)>>;
 
 /// Two instants closer together than this are the same instant.
 ///
@@ -1326,7 +1337,27 @@ impl Engine {
     /// the event when the frame returns; the show's own clocks are
     /// already right.
     pub fn advance_frame(&mut self, dt: f64) {
-        let end = self.time + dt;
+        self.advance_to(self.time + dt);
+    }
+
+    /// Advance to the instant `to`, which is where the clock lands.
+    ///
+    /// The same as [`advance_frame`](Engine::advance_frame) except in
+    /// what it is told. A host that knows what time it is -- replaying a
+    /// script, rendering chosen moments, seeking -- should say so: a
+    /// delta has to be worked out from where the clock already is, and
+    /// `previous + delta` is not the instant that was meant, so the same
+    /// moment reached at two frame rates lands a rounding error apart.
+    /// Told the instant, the clock is exactly it.
+    ///
+    /// Going backwards does nothing; a show is walked forwards from its
+    /// start. Landing where the clock already is runs a step without
+    /// moving it, which is how a host settles a show it has just poked.
+    pub fn advance_to(&mut self, to: f64) {
+        if to < self.time {
+            return;
+        }
+        let end = to;
         // Each pass runs to the first thing that ends, so the pass after
         // it starts exactly where that one finished.
         for _ in 0..MAX_SUBSTEPS {
@@ -1400,6 +1431,11 @@ impl Engine {
     /// anything a fraction of a frame away from where the show says it
     /// should be.
     fn step(&mut self, to: f64) {
+        // Also before the step, not only after it: a play triggered
+        // between two frames starts the bus at the instant the step
+        // begins, and a long frame would otherwise see it begin and end
+        // without ever noticing it sounded.
+        self.follow_ducks();
         self.settle_debounces(to);
         self.follow_transitions();
         self.follow_reels();
@@ -1560,21 +1596,22 @@ impl Engine {
     /// a function of that and of the time, which is what keeps it seekable:
     /// nothing here accumulates frame by frame.
     fn follow_ducks(&mut self) {
+        type Found = Vec<((Root, Vec<usize>), Option<f64>)>;
         let Some(show) = &self.show else { return };
         let busy = self.busy_buses();
-        let mut found: Vec<((Root, Vec<usize>), bool)> = Vec::new();
+        let mut found: Found = Vec::new();
         let roots = std::iter::once(Root::Show).chain(self.active_scene.map(Root::Scene));
         for root in roots {
             let Some(layers) = root_layers(show, root) else {
                 continue;
             };
-            type Busy = std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>>;
+            type Busy = BusyBuses;
             fn walk(
                 root: Root,
                 layers: &[Layer],
                 path: &mut Vec<usize>,
                 busy: &Busy,
-                out: &mut Vec<(Vec<usize>, bool)>,
+                out: &mut Vec<(Vec<usize>, Option<f64>)>,
             ) {
                 for (i, layer) in layers.iter().enumerate() {
                     path.push(i);
@@ -1587,11 +1624,16 @@ impl Engine {
                     {
                         // Its own plays do not duck it, so a layer on the
                         // bus it listens to is not forever out of its own
-                        // way.
-                        let down = busy.get(&duck.under).is_some_and(|plays| {
-                            plays.iter().any(|(r, p)| !(*r == root && p == path))
+                        // way. The instant the first of them started is
+                        // when the bus became busy.
+                        let since = busy.get(&duck.under).and_then(|plays| {
+                            plays
+                                .iter()
+                                .filter(|((r, p), _)| !(*r == root && p == path))
+                                .map(|(_, at)| *at)
+                                .min_by(f64::total_cmp)
                         });
-                        out.push((path.clone(), down));
+                        out.push((path.clone(), since));
                     }
                     walk(root, layer.children(), path, busy, out);
                     path.pop();
@@ -1599,23 +1641,23 @@ impl Engine {
             }
             let mut here = Vec::new();
             walk(root, layers, &mut Vec::new(), &busy, &mut here);
-            found.extend(here.into_iter().map(|(path, down)| ((root, path), down)));
+            found.extend(here.into_iter().map(|(path, since)| ((root, path), since)));
         }
         let (time, mut ducking) = (self.time, std::mem::take(&mut self.ducking));
-        for (key, down) in found {
-            let level = self.duck_level_at(&key, time, &ducking);
+        for (key, busy_since) in found {
+            let down = busy_since.is_some();
             let was = ducking.get(&key).map(|d| d.down);
             if was != Some(down) {
-                ducking.insert(
-                    key,
-                    Ducked {
-                        down,
-                        since: time,
-                        // Where it had got to, so turning round halfway
-                        // carries on from there instead of jumping.
-                        from: level,
-                    },
-                );
+                // When the bus started, not when this step noticed it: a
+                // play that began part way through a frame started the
+                // ramp then, so where the level is now does not depend on
+                // where the frame happened to end. Going quiet is already
+                // exact, because a step always lands on a play's end.
+                let since = busy_since.unwrap_or(time).min(time);
+                let from = self.duck_level_at(&key, since, &ducking);
+                // Where it had got to, so turning round halfway carries
+                // on from there instead of jumping.
+                ducking.insert(key, Ducked { down, since, from });
             }
         }
         self.ducking = ducking;
@@ -1623,12 +1665,11 @@ impl Engine {
 
     /// What is sounding on each bus right now, by the layer playing it,
     /// so a layer can be left out of its own bus.
-    fn busy_buses(&self) -> std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>> {
+    fn busy_buses(&self) -> BusyBuses {
         let Some(show) = &self.show else {
             return std::collections::BTreeMap::new();
         };
-        let mut busy: std::collections::BTreeMap<String, Vec<(Root, Vec<usize>)>> =
-            std::collections::BTreeMap::new();
+        let mut busy: BusyBuses = std::collections::BTreeMap::new();
         for play in &self.sounding {
             let layer = root_layers(show, play.root).and_then(|l| layer_at(l, &play.layer_path));
             let bus = match layer.map(|l| &l.kind) {
@@ -1637,13 +1678,14 @@ impl Engine {
                     if self.time < play.started + delay.max(0.0) {
                         continue;
                     }
-                    bus
+                    (bus, play.started + delay.max(0.0))
                 }
                 _ => continue,
             };
+            let (bus, since) = bus;
             busy.entry(effective_bus(bus).to_owned())
                 .or_default()
-                .push((play.root, play.layer_path.clone()));
+                .push(((play.root, play.layer_path.clone()), since));
         }
         busy
     }
@@ -1709,6 +1751,64 @@ impl Engine {
     ///
     /// Property precedence, strongest first: running timeline, binding,
     /// base value from the show description.
+    /// Every property every layer resolves to now, with no geometry
+    /// built: the state the show is in at [`time`](Engine::time).
+    ///
+    /// One level below [`resolved_layers`](Engine::resolved_layers),
+    /// which turns this into shapes, paths and transforms for a renderer.
+    /// That step costs around ninety times what the clock does and
+    /// discards nothing the timing model produced, so this is what to
+    /// compare two moments by, and what a test should assert on.
+    ///
+    /// Layers come in draw order, each with its name, and only the
+    /// properties that layer actually has.
+    pub fn values(&self) -> Result<Vec<(String, Property, Value)>, Error> {
+        const EVERY: [Property; 15] = [
+            Property::X,
+            Property::Y,
+            Property::Opacity,
+            Property::Scale,
+            Property::ScaleX,
+            Property::ScaleY,
+            Property::Rotation,
+            Property::Text,
+            Property::Font,
+            Property::Video,
+            Property::Sound,
+            Property::Frame,
+            Property::Gain,
+            Property::Visible,
+            Property::Tint,
+        ];
+        fn walk(
+            engine: &Engine,
+            root: Root,
+            layers: &[Layer],
+            path: &mut Vec<usize>,
+            out: &mut Vec<(String, Property, Value)>,
+        ) {
+            for (i, layer) in layers.iter().enumerate() {
+                path.push(i);
+                for prop in EVERY {
+                    if let Some(value) = engine.resolve(root, layer, path, prop) {
+                        out.push((layer.name.clone(), prop, value));
+                    }
+                }
+                walk(engine, root, layer.children(), path, out);
+                path.pop();
+            }
+        }
+        let show = self.show.as_ref().ok_or(Error::NoShow)?;
+        let mut out = Vec::new();
+        walk(self, Root::Show, &show.layers, &mut Vec::new(), &mut out);
+        if let Some(scene) = self.active_scene {
+            if let Some(layers) = root_layers(show, Root::Scene(scene)) {
+                walk(self, Root::Scene(scene), layers, &mut Vec::new(), &mut out);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn resolved_layers(&self) -> Result<Vec<ResolvedLayer>, Error> {
         let show = self.show.as_ref().ok_or(Error::NoShow)?;
         let mut out = Vec::new();
