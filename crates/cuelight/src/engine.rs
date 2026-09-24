@@ -322,7 +322,15 @@ impl Playhead {
         if self.held {
             return tl.play_time();
         }
-        let elapsed = now - self.starts;
+        let mut elapsed = now - self.starts;
+        // An anchor a hair ahead of the clock is one that has just
+        // started, not one still waiting: the same instant, as in every
+        // other comparison. Without this a link handed the property over
+        // a rounding error early owns nothing for a frame, and the layer
+        // falls back to its base value for it.
+        if elapsed < 0.0 && elapsed > -SAME_INSTANT {
+            elapsed = 0.0;
+        }
         let duration = tl.duration();
         if elapsed > 0.0 && tl.looping && duration > 0.0 {
             return elapsed % duration;
@@ -1458,7 +1466,7 @@ impl Engine {
             if p.held {
                 continue;
             }
-            if now < p.starts {
+            if now + SAME_INSTANT < p.starts {
                 continue;
             }
             let duration = tl.duration();
