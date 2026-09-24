@@ -63,6 +63,14 @@
       "maxItems": 2,
       "minItems": 2
     },
+    "values": {
+      "description": "Values the show animates itself, read by bindings the way a\nvariable is. For motion that belongs to the content rather than\nto whatever is driving it.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/ShowValue"
+      },
+      "default": {}
+    },
     "variables": {
       "description": "Declared variables and their initial values.",
       "type": "object",
@@ -1671,6 +1679,20 @@
         "columns"
       ]
     },
+    "ShowValue": {
+      "description": "A value the show owns and animates, named and read like a variable.\n\nA timeline animates a property of its own layer, so two layers that\nmust move together have to duplicate its keys, and nothing then says\nthey are meant to agree: a scene restarting one, or an edit to one set\nof keys, parts them silently. A group shares a transform instead, but\nit scales positions along with everything else, so it only works when\nevery reader sits at the group's origin.\n\nA show value is the source both of them read. A host that sets a\nvariable of the same name takes it over, so a show can ship with its\nown motion that a host is free to seize.\n\nNothing in a show writes one. Variables are the host's inputs, and\ncontent writing them would make ownership ambiguous and allow a\nvariable that drives a timeline that writes that variable.",
+      "type": "object",
+      "properties": {
+        "timelines": {
+          "description": "What moves it, played exactly as a layer's timelines are. Several\nof them cover one value in stretches, each started by its own\ntrigger, the way a layer holds several timelines for one property.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ValueTimeline"
+          }
+        }
+      }
+    },
     "Stop": {
       "description": "One color of a gradient, `at` a fraction of the way along it.",
       "type": "object",
@@ -1870,6 +1892,66 @@
         {
           "type": "string"
         }
+      ]
+    },
+    "ValueTimeline": {
+      "description": "One stretch of a show value's motion: a timeline whose keys are the\nvalue itself, so it has no tracks and names no property.\n\nEverything above `keys` means what it means on a\n[`Timeline`](crate::Timeline), and the two are kept in step.",
+      "type": "object",
+      "properties": {
+        "autoplay": {
+          "description": "Start it when the show loads.",
+          "type": "boolean",
+          "default": false
+        },
+        "delay": {
+          "description": "Seconds to wait after starting before the first key.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "hold": {
+          "description": "Keep the last value instead of handing the value back.",
+          "type": "boolean",
+          "default": false
+        },
+        "keys": {
+          "description": "Keyframes of the value itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "loop": {
+          "description": "Repeat for ever; cannot be combined with `repeat`.",
+          "type": "boolean",
+          "default": false
+        },
+        "name": {
+          "type": "string"
+        },
+        "on_end": {
+          "description": "Trigger fired when it finishes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repeat": {
+          "description": "Play it this many times; fractions stop part way.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "trigger": {
+          "description": "What starts it; firing any of several has the same effect.",
+          "$ref": "#/$defs/Triggers"
+        }
+      },
+      "required": [
+        "name",
+        "keys"
       ]
     }
   }

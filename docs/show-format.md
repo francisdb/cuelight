@@ -948,6 +948,52 @@ A timeline is a keyframed animation owned by its layer:
   again or its scene is left. It means nothing on a `loop`, which never
   finishes.
 
+## Values the show animates
+
+A timeline animates a property of its own layer. Two layers that must move
+together therefore have to duplicate its keys, and nothing then says they
+are meant to agree: a scene restarting one, or an edit to one set of keys,
+parts them silently. A group shares a transform instead, but it scales
+positions along with everything else, so it only works when every reader
+sits at the group's origin.
+
+`values` names a value the show animates itself, which bindings read the
+way they read a variable:
+
+```json
+{
+  "values": {
+    "distance": { "timelines": [
+      { "name": "approach", "autoplay": true, "on_end": "c1",
+        "keys": [{ "t": 0, "v": 270 }, { "t": 4, "v": 206 }] },
+      { "name": "partial_in", "trigger": "c1", "on_end": "beads",
+        "keys": [{ "t": 0, "v": 206 }, { "t": 14, "v": 22 }] }
+    ] }
+  }
+}
+```
+
+```json
+{ "property": "x", "variable": "distance", "scale": 0.5 }
+```
+
+- A value is played by timelines, exactly as a layer is. `name`,
+  `trigger`, `autoplay`, `delay`, `loop`, `repeat`, `on_end` and `hold`
+  all mean what they mean on a layer's timeline, and `keys` are a track's
+  keys, eases and all. What a value has instead of `tracks` is one set of
+  keys, because the value is the one thing being animated.
+- Several timelines cover one value in stretches, each started by its own
+  trigger, the way a layer holds several timelines for one property. A
+  running one wins over one that has finished and is holding.
+- A value that just cycles is one timeline with `loop`.
+- A host that sets a variable of the same name takes it over, so a show
+  can ship with motion of its own that a host is free to seize.
+- Nothing in a show writes one. Variables are the host's inputs; content
+  writing them would make ownership ambiguous and allow a variable that
+  drives a timeline that writes that variable.
+- `Engine::value(name)` reads either: the host's variable when it set one,
+  else the show's value at that moment.
+
 ## Property precedence
 
 Each frame a property resolves to, strongest first:

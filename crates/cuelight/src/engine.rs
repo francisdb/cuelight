@@ -2,7 +2,8 @@ use crate::font::{BitmapFont, Rgba, StyledFont};
 use crate::lru::ByteLru;
 use crate::model::{
     parse_color, Align, Binding, Blend, Choice, DigitDisplay, Justify, Layer, LayerKind, MediaKind,
-    Output, Pass, Pick, Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, FORMAT,
+    Output, Pass, Pick, Property, Retrigger, Scaling, Shape, Sheet, Show, Timeline, Triggers,
+    ValueTimeline, FORMAT,
 };
 use crate::output::OutputColor;
 use crate::path::{self, PathElement};
@@ -297,13 +298,107 @@ impl Default for TextCache {
 /// recently used rasters go first, which keeps static labels cached.
 const MAX_RASTER_BYTES: usize = 32 * 1024 * 1024;
 
+/// What a playhead's timeline belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Owner {
+    /// A layer's timeline, animating that layer's properties.
+    Layer { root: Root, path: Vec<usize> },
+    /// A show value's timeline, animating the value itself.
+    Value(String),
+}
+
+impl Owner {
+    /// Which tree it lives in. A value belongs to the show, so leaving a
+    /// scene does not stop one.
+    fn root(&self) -> Root {
+        match self {
+            Owner::Layer { root, .. } => *root,
+            Owner::Value(_) => Root::Show,
+        }
+    }
+
+    /// Whether it is the timeline of exactly this layer.
+    fn is_layer(&self, root: Root, path: &[usize]) -> bool {
+        matches!(self, Owner::Layer { root: r, path: p } if *r == root && p == path)
+    }
+}
+
+/// A timeline's timing, whatever it animates: what the clock needs from
+/// a layer's timeline and from a value's alike.
+#[derive(Debug, Clone, Copy)]
+struct Timing<'a> {
+    duration: f64,
+    play_time: f64,
+    looping: bool,
+    hold: bool,
+    on_end: Option<&'a str>,
+}
+
+impl<'a> From<&'a Timeline> for Timing<'a> {
+    fn from(tl: &'a Timeline) -> Self {
+        Timing {
+            duration: tl.duration(),
+            play_time: tl.play_time(),
+            looping: tl.looping,
+            hold: tl.hold,
+            on_end: tl.on_end.as_deref(),
+        }
+    }
+}
+
+impl<'a> From<&'a ValueTimeline> for Timing<'a> {
+    fn from(tl: &'a ValueTimeline) -> Self {
+        Timing {
+            duration: tl.duration(),
+            play_time: tl.play_time(),
+            looping: tl.looping,
+            hold: tl.hold,
+            on_end: tl.on_end.as_deref(),
+        }
+    }
+}
+
+/// Which timelines a start is asking for.
+#[derive(Debug, Clone, Copy)]
+enum Want<'a> {
+    /// Everything that starts when the show loads or a scene is entered.
+    Autoplay,
+    /// Everything this trigger starts.
+    Trigger(&'a str),
+}
+
+impl Want<'_> {
+    fn picks(self, autoplay: bool, trigger: &Triggers) -> bool {
+        match self {
+            Want::Autoplay => autoplay,
+            Want::Trigger(name) => trigger.contains(name),
+        }
+    }
+}
+
+/// The timing of whatever `p` is playing, from the loaded show.
+///
+/// Free rather than a method so it can be called while the playheads are
+/// borrowed.
+fn timing_in<'a>(show: &'a Show, p: &Playhead) -> Option<Timing<'a>> {
+    match &p.owner {
+        Owner::Layer { root, path } => root_layers(show, *root)
+            .and_then(|layers| layer_at(layers, path))
+            .and_then(|layer| layer.timelines.get(p.timeline))
+            .map(Timing::from),
+        Owner::Value(name) => show
+            .values
+            .get(name)
+            .and_then(|value| value.timelines.get(p.timeline))
+            .map(Timing::from),
+    }
+}
+
 /// A running timeline instance.
 #[derive(Debug, Clone)]
 struct Playhead {
-    root: Root,
-    /// Path to the owning layer within its root's layer tree.
-    layer_path: Vec<usize>,
-    /// Timeline index within that layer.
+    owner: Owner,
+    /// Timeline index within its owner.
     timeline: usize,
     /// The instant on the show's clock the timeline's first key falls on:
     /// when it was started, plus its delay. A playhead keeps no clock of
@@ -318,9 +413,9 @@ struct Playhead {
 impl Playhead {
     /// Seconds since the delay ended at show time `now`: negative while
     /// still delayed, and wrapped for a `loop`.
-    fn at(&self, now: f64, tl: &Timeline) -> f64 {
+    fn at(&self, now: f64, tl: Timing<'_>) -> f64 {
         if self.held {
-            return tl.play_time();
+            return tl.play_time;
         }
         let mut elapsed = now - self.starts;
         // An anchor a hair ahead of the clock is one that has just
@@ -331,16 +426,15 @@ impl Playhead {
         if elapsed < 0.0 && elapsed > -SAME_INSTANT {
             elapsed = 0.0;
         }
-        let duration = tl.duration();
-        if elapsed > 0.0 && tl.looping && duration > 0.0 {
-            return elapsed % duration;
+        if elapsed > 0.0 && tl.looping && tl.duration > 0.0 {
+            return elapsed % tl.duration;
         }
         elapsed
     }
 
     /// The instant it finishes, for a timeline that does finish.
-    fn ends(&self, tl: &Timeline) -> f64 {
-        self.starts + tl.play_time()
+    fn ends(&self, tl: Timing<'_>) -> f64 {
+        self.starts + tl.play_time
     }
 }
 
@@ -643,10 +737,10 @@ impl Engine {
         self.events.clear();
         self.time = 0.0;
         self.active_scene = scenes.then_some(0);
-        self.start_matching(Some(Root::Show), self.time, |tl| tl.autoplay);
+        self.start_matching(Some(Root::Show), self.time, Want::Autoplay);
         self.play_autoplay(Root::Show);
         if let Some(scene) = self.active_scene {
-            self.start_matching(Some(Root::Scene(scene)), self.time, |tl| tl.autoplay);
+            self.start_matching(Some(Root::Scene(scene)), self.time, Want::Autoplay);
             self.play_autoplay(Root::Scene(scene));
         }
     }
@@ -666,6 +760,41 @@ impl Engine {
 
     pub fn variable(&self, name: &str) -> Option<&Value> {
         self.variables.get(name)
+    }
+
+    /// What `name` reads as now: the host's variable of that name, or
+    /// failing that the show's own value of it.
+    ///
+    /// A host that sets a variable takes the show's value over, so a show
+    /// can ship with its own motion that a host is free to seize.
+    pub fn value(&self, name: &str) -> Option<Value> {
+        self.variables
+            .get(name)
+            .cloned()
+            .or_else(|| self.show_value(name).map(Value::Number))
+    }
+
+    /// The number a show value stands at now, from whichever of its
+    /// timelines is running: a held one only if nothing else is, as a
+    /// layer's properties resolve.
+    fn show_value(&self, name: &str) -> Option<f64> {
+        let show = self.show.as_ref()?;
+        let value = show.values.get(name)?;
+        let mut out = None;
+        for running in [false, true] {
+            for p in self.playing.iter().filter(|p| p.held != running) {
+                if !matches!(&p.owner, Owner::Value(v) if v == name) {
+                    continue;
+                }
+                let Some(tl) = value.timelines.get(p.timeline) else {
+                    continue;
+                };
+                if let Some(v) = tl.at(p.at(self.time, tl.into())) {
+                    out = Some(v);
+                }
+            }
+        }
+        out
     }
 
     /// Register (or replace) a named RGBA8 image that image layers can
@@ -961,7 +1090,7 @@ impl Engine {
         if let Some(scene) = entered {
             self.enter_scene(scene);
         }
-        self.start_matching(None, at, |tl| tl.trigger.contains(name));
+        self.start_matching(None, at, Want::Trigger(name));
         self.set_spinning(name);
         let roots: Vec<Root> = std::iter::once(Root::Show)
             .chain(self.active_scene.map(Root::Scene))
@@ -1310,7 +1439,7 @@ impl Engine {
     }
 
     fn enter_scene(&mut self, scene: usize) {
-        self.playing.retain(|p| p.root == Root::Show);
+        self.playing.retain(|p| p.owner.root() == Root::Show);
         // Leaving a scene stops its sounds.
         self.sounding.retain(|s| s.root == Root::Show);
         self.waiting.retain(|(root, ..)| *root == Root::Show);
@@ -1321,7 +1450,7 @@ impl Engine {
         self.debounced.retain(|(root, ..), _| *root == Root::Show);
         self.reels.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
-        self.start_matching(Some(Root::Scene(scene)), self.time, |tl| tl.autoplay);
+        self.start_matching(Some(Root::Scene(scene)), self.time, Want::Autoplay);
         self.play_autoplay(Root::Scene(scene));
     }
 
@@ -1391,11 +1520,10 @@ impl Engine {
             if p.held {
                 continue;
             }
-            let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
-            let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
+            let Some(tl) = timing_in(show, p) else {
                 continue;
             };
-            if tl.looping || tl.duration() <= 0.0 {
+            if tl.looping || tl.duration <= 0.0 {
                 continue;
             }
             let ends = p.ends(tl);
@@ -1502,8 +1630,7 @@ impl Engine {
         // the clock: that is what the next link in a chain is timed from.
         let mut on_end: Vec<(String, f64)> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
-            let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
-            let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
+            let Some(tl) = timing_in(show, p) else {
                 finished.push(i);
                 continue;
             };
@@ -1514,18 +1641,17 @@ impl Engine {
             if now + SAME_INSTANT < p.starts {
                 continue;
             }
-            let duration = tl.duration();
-            if tl.looping && duration > 0.0 {
+            if tl.looping && tl.duration > 0.0 {
                 continue;
             }
             // Compared as instants on the one clock, the same way the
             // step that landed here was chosen.
-            if duration <= 0.0 || now + SAME_INSTANT >= p.ends(tl) {
-                let ends = if duration <= 0.0 { now } else { p.ends(tl) };
-                on_end.extend(tl.on_end.iter().map(|name| (name.clone(), ends)));
+            if tl.duration <= 0.0 || now + SAME_INSTANT >= p.ends(tl) {
+                let ends = if tl.duration <= 0.0 { now } else { p.ends(tl) };
+                on_end.extend(tl.on_end.map(|name| (name.to_owned(), ends)));
                 // Holding is not playing: it ends, fires its `on_end` once
                 // like any other, and then keeps its last values.
-                if tl.hold && !tl.looping && duration > 0.0 {
+                if tl.hold && !tl.looping && tl.duration > 0.0 {
                     p.held = true;
                 } else {
                     finished.push(i);
@@ -1975,7 +2101,11 @@ impl Engine {
 
     /// (Re)start the timelines `want` selects, in `root` or, with `None`,
     /// in the show's layers and the active scene.
-    fn start_matching(&mut self, root: Option<Root>, at: f64, want: impl Fn(&Timeline) -> bool) {
+    ///
+    /// A show value's timelines are selected the same way and by the same
+    /// call, since a trigger means the same thing to both. Values belong
+    /// to the show, so they are left alone when only a scene is asked for.
+    fn start_matching(&mut self, root: Option<Root>, at: f64, want: Want<'_>) {
         let Some(show) = &self.show else { return };
         let roots = match root {
             Some(root) => vec![root],
@@ -1983,28 +2113,35 @@ impl Engine {
                 .chain(self.active_scene.map(Root::Scene))
                 .collect(),
         };
-        let mut starts = Vec::new();
+        let mut starts: Vec<(Owner, usize, f64)> = Vec::new();
         for root in roots {
             let Some(layers) = root_layers(show, root) else {
                 continue;
             };
             collect_timelines(layers, &mut Vec::new(), &mut |path, idx, tl| {
-                if want(tl) {
-                    starts.push((root, path.to_vec(), idx));
+                if want.picks(tl.autoplay, &tl.trigger) {
+                    let owner = Owner::Layer {
+                        root,
+                        path: path.to_vec(),
+                    };
+                    starts.push((owner, idx, tl.delay.max(0.0)));
                 }
             });
         }
-        for (root, layer_path, timeline) in starts {
-            self.playing.retain(|p| {
-                !(p.root == root && p.layer_path == layer_path && p.timeline == timeline)
-            });
-            let delay = root_layers(show, root)
-                .and_then(|layers| layer_at(layers, &layer_path))
-                .and_then(|l| l.timelines.get(timeline))
-                .map_or(0.0, |tl| tl.delay.max(0.0));
+        if root.is_none_or(|root| root == Root::Show) {
+            for (name, value) in &show.values {
+                for (idx, tl) in value.timelines.iter().enumerate() {
+                    if want.picks(tl.autoplay, &tl.trigger) {
+                        starts.push((Owner::Value(name.clone()), idx, tl.delay.max(0.0)));
+                    }
+                }
+            }
+        }
+        for (owner, timeline, delay) in starts {
+            self.playing
+                .retain(|p| !(p.owner == owner && p.timeline == timeline));
             self.playing.push(Playhead {
-                root,
-                layer_path,
+                owner,
                 timeline,
                 starts: at + delay,
                 held: false,
@@ -2030,7 +2167,7 @@ impl Engine {
             let Some((binding, hold)) = binding.and_then(|b| Some((b, b.debounce?))) else {
                 continue;
             };
-            let Some(value) = self.variables.get(&binding.variable) else {
+            let Some(value) = self.value(&binding.variable) else {
                 debounced.remove(site);
                 continue;
             };
@@ -2039,7 +2176,7 @@ impl Engine {
                 candidate: value.clone(),
                 since: self.time,
             });
-            if settling.candidate != *value {
+            if settling.candidate != value {
                 settling.candidate = value.clone();
                 settling.since = self.time;
             }
@@ -2298,14 +2435,14 @@ impl Engine {
         // finished and is holding its last value.
         for running in [false, true] {
             for p in self.playing.iter().filter(|p| p.held != running) {
-                if p.root != root || p.layer_path != path {
+                if !p.owner.is_layer(root, path) {
                     continue;
                 }
                 let Some(tl) = layer.timelines.get(p.timeline) else {
                     continue;
                 };
                 // Still waiting out its delay: it owns nothing yet.
-                let Some(time) = tl.local_time(p.at(self.time, tl)) else {
+                let Some(time) = tl.local_time(p.at(self.time, tl.into())) else {
                     continue;
                 };
                 for track in tl.tracks.iter().filter(|t| t.property == prop) {
@@ -2334,7 +2471,8 @@ impl Engine {
     fn binding_value(&self, site: &TransitionSite, b: &Binding) -> Option<Value> {
         let value = match (b.debounce, self.debounced.get(site)) {
             (Some(_), Some(settling)) => &settling.settled,
-            _ => self.variables.get(&b.variable)?,
+            // The show's own value when no host set one.
+            _ => &self.value(&b.variable)?,
         };
         match &b.map {
             None => Some(value.clone()),

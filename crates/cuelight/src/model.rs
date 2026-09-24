@@ -40,6 +40,11 @@ pub struct Show {
     /// Declared variables and their initial values.
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
+    /// Values the show animates itself, read by bindings the way a
+    /// variable is. For motion that belongs to the content rather than
+    /// to whatever is driving it.
+    #[serde(default)]
+    pub values: BTreeMap<String, ShowValue>,
     /// Layers that are always present, painted behind the active scene.
     #[serde(default)]
     pub layers: Vec<Layer>,
@@ -1714,6 +1719,96 @@ impl Track {
     /// End time of the track's last key, 0.0 when empty.
     pub fn duration(&self) -> f64 {
         self.keys.last().map(|k| k.t).unwrap_or(0.0)
+    }
+}
+
+/// A value the show owns and animates, named and read like a variable.
+///
+/// A timeline animates a property of its own layer, so two layers that
+/// must move together have to duplicate its keys, and nothing then says
+/// they are meant to agree: a scene restarting one, or an edit to one set
+/// of keys, parts them silently. A group shares a transform instead, but
+/// it scales positions along with everything else, so it only works when
+/// every reader sits at the group's origin.
+///
+/// A show value is the source both of them read. A host that sets a
+/// variable of the same name takes it over, so a show can ship with its
+/// own motion that a host is free to seize.
+///
+/// Nothing in a show writes one. Variables are the host's inputs, and
+/// content writing them would make ownership ambiguous and allow a
+/// variable that drives a timeline that writes that variable.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ShowValue {
+    /// What moves it, played exactly as a layer's timelines are. Several
+    /// of them cover one value in stretches, each started by its own
+    /// trigger, the way a layer holds several timelines for one property.
+    #[serde(default)]
+    pub timelines: Vec<ValueTimeline>,
+}
+
+/// One stretch of a show value's motion: a timeline whose keys are the
+/// value itself, so it has no tracks and names no property.
+///
+/// Everything above `keys` means what it means on a
+/// [`Timeline`](crate::Timeline), and the two are kept in step.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ValueTimeline {
+    pub name: String,
+    /// What starts it; firing any of several has the same effect.
+    #[serde(default, skip_serializing_if = "Triggers::is_empty")]
+    pub trigger: Triggers,
+    /// Start it when the show loads.
+    #[serde(default)]
+    pub autoplay: bool,
+    /// Repeat for ever; cannot be combined with `repeat`.
+    #[serde(default, rename = "loop")]
+    pub looping: bool,
+    /// Seconds to wait after starting before the first key.
+    #[serde(default)]
+    pub delay: f64,
+    /// Play it this many times; fractions stop part way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat: Option<f64>,
+    /// Trigger fired when it finishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_end: Option<String>,
+    /// Keep the last value instead of handing the value back.
+    #[serde(default)]
+    pub hold: bool,
+    /// Keyframes of the value itself.
+    pub keys: Vec<Key>,
+}
+
+impl ValueTimeline {
+    /// One play, in seconds.
+    pub fn duration(&self) -> f64 {
+        self.keys.last().map(|k| k.t).unwrap_or(0.0)
+    }
+
+    /// Time after its delay at which a non-looping one finishes.
+    pub fn play_time(&self) -> f64 {
+        self.duration() * self.repeat.unwrap_or(1.0).max(0.0)
+    }
+
+    /// Where within one play the keys are sampled, `elapsed` seconds
+    /// after the delay; `None` while still delayed.
+    pub fn local_time(&self, elapsed: f64) -> Option<f64> {
+        if elapsed < 0.0 {
+            return None;
+        }
+        let duration = self.duration();
+        if self.repeat.is_some() && duration > 0.0 && elapsed < self.play_time() {
+            return Some(elapsed % duration);
+        }
+        Some(elapsed)
+    }
+
+    /// The value `elapsed` seconds after its delay.
+    pub fn at(&self, elapsed: f64) -> Option<f64> {
+        sample_keys(&self.keys, self.local_time(elapsed)?)
     }
 }
 
