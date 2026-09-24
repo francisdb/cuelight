@@ -3911,6 +3911,26 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
         for layer in layers {
             for binding in &layer.bindings {
                 let name = &binding.variable;
+                if !show.variables.contains_key(name) && show.values.contains_key(name) {
+                    // A value the show animates is declared as much as a
+                    // variable is. It is always a number, though, so a
+                    // property that cannot take one without a map still
+                    // gets nothing.
+                    let problem = match binding.property {
+                        _ if binding.map.is_some() => None,
+                        Property::Tint => Some("a color like \"#RRGGBB\""),
+                        Property::Font => Some("one of the show's font styles"),
+                        _ => None,
+                    };
+                    if let Some(wanted) = problem {
+                        out.push(format!(
+                            "the {:?} binding of layer {:?} reads value {name:?}, which is a \
+                             number, not {wanted}; values it cannot use leave the property alone",
+                            binding.property, layer.name
+                        ));
+                    }
+                    continue;
+                }
                 let Some(value) = show.variables.get(name) else {
                     out.push(format!(
                         "the {:?} binding of layer {:?} reads variable {name:?}, which the show \

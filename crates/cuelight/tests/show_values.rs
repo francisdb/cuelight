@@ -90,3 +90,50 @@ fn a_host_variable_takes_the_value_over() {
     let (a, b) = xs(&engine);
     assert_eq!((a, b), (7.0, 3.5));
 }
+
+#[test]
+fn reading_a_value_is_not_reading_an_undeclared_variable() {
+    let mut engine = Engine::new();
+    engine.load_show(CHAIN).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "reading a show value warned: {:?}",
+        engine.load_warnings()
+    );
+}
+
+#[test]
+fn a_value_still_warns_where_a_number_is_no_use() {
+    // A value is always a number, so binding one to a color without a
+    // map is as quiet as a variable that starts at the wrong thing.
+    let show = r##"{
+      "format": 1, "name": "v", "size": [8, 8],
+      "values": { "n": { "timelines": [
+        { "name": "go", "autoplay": true, "keys": [{ "t": 0, "v": 1 }] } ] } },
+      "layers": [{ "name": "pic", "type": "image", "image": "none",
+        "bindings": [{ "property": "tint", "variable": "n" }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("which is a number"), "{warnings:?}");
+}
+
+#[test]
+fn a_mistyped_variable_is_still_reported() {
+    let show = r##"{
+      "format": 1, "name": "v", "size": [8, 8],
+      "values": { "zoom": { "timelines": [
+        { "name": "go", "autoplay": true, "keys": [{ "t": 0, "v": 1 }] } ] } },
+      "layers": [{ "name": "box", "type": "shape", "shape": { "rect": [0,0,4,4] },
+        "fill": "#FFFFFF",
+        "bindings": [{ "property": "x", "variable": "zoomm" }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    assert_eq!(
+        engine.load_warnings().len(),
+        1,
+        "{:?}",
+        engine.load_warnings()
+    );
+}
