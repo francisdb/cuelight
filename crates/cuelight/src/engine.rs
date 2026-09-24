@@ -1192,7 +1192,7 @@ impl Engine {
         // otherwise do with it.
         if media.rest > 0.0 {
             let last = self.plays.get(&(root, path.clone())).map(|p| p.at);
-            if last.is_some_and(|at| self.time - at < media.rest) {
+            if last.is_some_and(|last| at - last < media.rest) {
                 return;
             }
         }
@@ -1323,14 +1323,14 @@ impl Engine {
         // it starts exactly where that one finished.
         for _ in 0..MAX_SUBSTEPS {
             let to = self.first_ending(end);
-            self.step(to - self.time, to);
+            self.step(to);
             if self.time >= end {
                 return;
             }
         }
         // A show whose chain is all zero-length timelines would split a
         // frame for ever; it gets the rest of the frame in one piece.
-        self.step(end - self.time, end);
+        self.step(end);
     }
 
     /// The instant the first thing ends, or `end` if nothing does before
@@ -1386,8 +1386,13 @@ impl Engine {
 
     /// One indivisible move of the clock, landing exactly on `to`; see
     /// [`Self::advance_frame`].
-    fn step(&mut self, dt: f64, to: f64) {
-        self.settle_debounces(dt);
+    ///
+    /// It is given where to land, never how far to go: everything inside
+    /// is worked out from instants on the clock, so a step cannot leave
+    /// anything a fraction of a frame away from where the show says it
+    /// should be.
+    fn step(&mut self, to: f64) {
+        self.settle_debounces(to);
         self.follow_transitions();
         self.follow_reels();
         // A layer pointed at another clip shows that one, from the top,
@@ -1481,6 +1486,9 @@ impl Engine {
         // has no end yet.
         let time = self.time;
         let mut ended: Vec<usize> = Vec::new();
+        // The instant each layer fell idle, for whatever is queued behind
+        // it: its turn starts where the play before it stopped.
+        let mut freed: Vec<(Root, Vec<usize>, f64)> = Vec::new();
         for (i, s) in self.sounding.iter().enumerate() {
             let layer = root_layers(show, s.root).and_then(|l| layer_at(l, &s.layer_path));
             let Some(media) = layer.and_then(|layer| layer.kind.media()) else {
@@ -1498,6 +1506,7 @@ impl Engine {
             let ends = s.started + media.delay.max(0.0) + duration * plays;
             if time + SAME_INSTANT >= ends {
                 ended.push(i);
+                freed.push((s.root, s.layer_path.clone(), ends));
                 on_end.extend(media.on_end.map(|name| (name.to_owned(), ends)));
             }
         }
@@ -1520,7 +1529,11 @@ impl Engine {
             false
         });
         for (root, path, asked) in turn {
-            self.start(root, path, asked, self.time);
+            let at = freed
+                .iter()
+                .find(|(r, p, _)| *r == root && *p == path)
+                .map_or(self.time, |(.., ends)| *ends);
+            self.start(root, path, asked, at);
         }
         for (name, at) in on_end {
             self.trigger_at(&name, at);
@@ -1886,9 +1899,9 @@ impl Engine {
 
     /// Let every binding with a debounce take in its variable: a new value
     /// becomes the candidate, and a candidate that will have held for the
-    /// debounce time by the end of this step of `dt` settles, so it shows
+    /// debounce time by `to`, where this step lands, settles, so it shows
     /// in the frame the hold runs out. A first look settles at once.
-    fn settle_debounces(&mut self, dt: f64) {
+    fn settle_debounces(&mut self, to: f64) {
         let Some(show) = &self.show else { return };
         let mut debounced = std::mem::take(&mut self.debounced);
         for site in &self.debounce_sites {
@@ -1915,9 +1928,7 @@ impl Engine {
                 settling.candidate = value.clone();
                 settling.since = self.time;
             }
-            // Tolerant of a hold that ends a rounding error short.
-            if settling.settled != settling.candidate
-                && self.time + dt - settling.since >= hold - 1e-9
+            if settling.settled != settling.candidate && to + SAME_INSTANT - settling.since >= hold
             {
                 settling.settled = settling.candidate.clone();
             }
