@@ -9,6 +9,7 @@ keywords = ["multimedia", "animation", "assets", "loader"]
 categories = ["multimedia", "rendering"]
 
 [dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
 cuelight = { path = "../cuelight", version = "0.0.1", default-features = false }
 png = { version = "0.18", optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -34,7 +35,14 @@ png = ["dep:png"]
 # Register .ttf / .otf files as outline fonts (pulls the font metrics code
 # into the engine). Without it such files are reported as skipped.
 outline-fonts = ["cuelight/outline-fonts"]
+# The `cuelight-render` tool: frames at chosen times, and what a show
+# fired and when. Pulls in the renderer, and with it wgpu.
+render-cli = ["dep:clap", "png", "cuelight/render"]
 
 [[bin]]
 name = "cuelight-pack"
 required-features = ["pack"]
+
+[[bin]]
+name = "cuelight-render"
+required-features = ["render-cli"]

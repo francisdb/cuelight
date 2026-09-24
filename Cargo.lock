@@ -572,6 +572,7 @@ dependencies = [
 name = "cuelight-loader"
 version = "0.0.1"
 dependencies = [
+ "clap",
  "cuelight",
  "png",
  "serde",
