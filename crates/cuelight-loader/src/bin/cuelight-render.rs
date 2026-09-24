@@ -155,6 +155,7 @@ fn run(cli: &Cli) -> Result<(), String> {
     // Walked in fixed steps from 0, so the run is repeatable and a frame
     // at a time is reached the same way however many were asked for.
     let mut time = 0.0;
+    let mut steps = 0u64;
     let mut frames = 0;
     loop {
         while inputs.peek().is_some_and(|i| i.at <= time) {
@@ -183,7 +184,9 @@ fn run(cli: &Cli) -> Result<(), String> {
         }
         if cli.events {
             for event in engine.drain_events() {
-                println!("{time:8.3}  {event:?}");
+                // The engine's own clock, not the frame clock: an event
+                // that landed part way through a frame says when.
+                println!("{:8.3}  {event:?}", engine.time());
             }
         }
         if time >= last {
@@ -197,7 +200,9 @@ fn run(cli: &Cli) -> Result<(), String> {
             }
         }
         engine.advance_frame(step);
-        time += step;
+        steps += 1;
+        // Multiplied, not accumulated, so the walk does not drift.
+        time = steps as f64 * step;
     }
     if frames > 0 {
         println!("{frames} frame(s) in {}", cli.out.display());

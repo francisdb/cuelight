@@ -969,6 +969,15 @@ puts it on the canvas) or the `render` feature's vello rasterizer, plus
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
+`dt` is how much time passed, not how much of the show to play in one
+piece. A frame is cut at every instant something inside it ends, so a
+timeline or a clip lasts exactly as long as it says whatever the frame
+rate is, and a chain of them linked by `on_end` lasts what its parts add
+up to: three ten-second clips end at thirty seconds at 60 fps and at
+0.1 fps alike. Frame rate only decides when the host is *told*, since
+`drain_events()` is read once a frame; the show's own clock is already
+right.
+
 ## Rendering frames from the command line
 
 `cuelight-render`, in `cuelight-loader` behind the `render-cli` feature,

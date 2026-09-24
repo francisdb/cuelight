@@ -1012,3 +1012,90 @@ fn restarting_without_a_show_does_nothing() {
     engine.restart();
     assert_eq!(engine.time(), 0.0);
 }
+
+/// Three ten-second clips, each starting the next: the show is thirty
+/// seconds long whatever the frame rate, including one frame every ten
+/// seconds.
+#[test]
+fn a_chain_lasts_what_its_parts_add_up_to_at_any_frame_rate() {
+    let show = r#"{
+      "name": "chain", "size": [8, 8],
+      "layers": [{ "name": "screen", "type": "video", "video": "a",
+                   "autoplay": true, "on_end": "b" },
+                 { "name": "screen2", "type": "video", "video": "b",
+                   "trigger": "b", "on_end": "c" },
+                 { "name": "screen3", "type": "video", "video": "c",
+                   "trigger": "c", "on_end": "done" }]
+    }"#;
+    for fps in [60.0, 30.0, 7.0, 3.0, 1.0, 0.1] {
+        let mut engine = Engine::new();
+        for name in ["a", "b", "c"] {
+            engine.set_video(name, 10.0, [8.0, 8.0]).unwrap();
+        }
+        engine.load_show(show).unwrap();
+
+        let step = 1.0 / fps;
+        let mut done = None;
+        let mut t = 0.0;
+        while t < 40.0 && done.is_none() {
+            engine.advance_frame(step);
+            t += step;
+            if engine
+                .drain_events()
+                .iter()
+                .any(|e| matches!(e, Event::Trigger(name) if name == "done"))
+            {
+                // The frame it was noticed in; the show's own clock is
+                // what has to be exact.
+                done = Some(engine.time());
+            }
+        }
+        let at = done.unwrap_or_else(|| panic!("{fps} fps: never finished"));
+        // Noticed in the frame the thirtieth second falls in: never
+        // before it, and never a frame after it. The clock itself is a
+        // running total of the frame lengths the host handed in, so it
+        // is a hair off a round thirty by the time it gets there.
+        assert!(
+            at > 30.0 - 1e-6 && at < 30.0 + step,
+            "{fps} fps: finished at {at}, wanted 30.0 within one frame"
+        );
+    }
+}
+
+#[test]
+fn a_chain_of_timelines_keeps_its_spacing_however_the_frames_fall() {
+    // 0.7 s links against a sixtieth of a second: neither is exact in
+    // binary, so each link's end sits a hair off a frame boundary, in
+    // whichever direction the rounding went. Each link still lasts 0.7 s.
+    let show = r##"{
+      "format": 1, "name": "chain", "size": [8, 8],
+      "layers": [{ "name": "box", "type": "shape",
+                   "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+                   "timelines": [
+        { "name": "l1", "trigger": "go",    "on_end": "d1", "hold": true,
+          "tracks": [{ "property": "x", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
+        { "name": "l2", "trigger": "d1", "on_end": "d2", "hold": true,
+          "tracks": [{ "property": "y", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
+        { "name": "l3", "trigger": "d2", "on_end": "d3", "hold": true,
+          "tracks": [{ "property": "opacity", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
+        { "name": "l4", "trigger": "d3", "on_end": "d4", "hold": true,
+          "tracks": [{ "property": "rotation", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] }
+      ]}]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("go");
+
+    let step = 1.0 / 60.0;
+    let mut ends = Vec::new();
+    for frame in 1..=200 {
+        engine.advance_frame(step);
+        for event in engine.drain_events() {
+            if matches!(&event, Event::Trigger(name) if name.starts_with('d')) {
+                ends.push(frame);
+            }
+        }
+    }
+    // 0.7 s is 42 frames; four links, each the same 42 frames later.
+    assert_eq!(ends, vec![42, 84, 126, 168]);
+}
