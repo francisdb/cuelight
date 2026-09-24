@@ -618,7 +618,8 @@ fn scenes_entered_part_way_through_a_frame() {
 /// numbers and in colour. Variables moved at instants no frame lands on.
 /// Media position, `delay`, `repeat`, `loop`, every `retrigger` with
 /// several `voices`, chains by `on_end`, `rest`, and picking from a list.
-/// Ducking under a bus, including a ramp turned round halfway. Reel cells
+/// Ducking under a bus, including a ramp turned round halfway and a clip
+/// whose delay runs out mid-frame. Reel cells
 /// with stagger. A counter stepping through whole numbers. Scenes entered
 /// part way through a frame.
 ///
@@ -641,3 +642,24 @@ fn scenes_entered_part_way_through_a_frame() {
 ///   is only reproducible once its input is recorded.
 #[allow(dead_code)]
 const COVERED: () = ();
+
+#[test]
+fn ducking_under_a_delayed_clip() {
+    // The clip is audible only over [0.3, 0.5), and nothing else puts a
+    // step boundary at 0.3. A frame that spans the whole of it has to
+    // duck anyway: what moves the bus is the delay running out, not a
+    // frame noticing.
+    let s = r##"{ "format": 1, "name": "t", "size": [8, 8], "layers": [
+      { "name": "bed", "type": "audio", "sound": "a", "loop": true,
+        "autoplay": true, "bus": "music",
+        "duck": { "under": "voice", "to": 0.1, "attack": 0.05, "release": 0.05 } },
+      { "name": "vox", "type": "audio", "sound": "b", "bus": "voice",
+        "delay": 0.3, "trigger": "say" } ] }"##;
+    let script = [(0.0, Input::Trigger("say")), (1.13, Input::Trigger("say"))];
+    plays_the_same_at_any_rate(
+        "delayed duck",
+        s,
+        &script,
+        &[0.2, 0.31, 0.36, 0.45, 0.55, 0.7, 1.2, 1.45, 1.5, 1.7, 2.0],
+    );
+}

@@ -1361,7 +1361,7 @@ impl Engine {
         // Each pass runs to the first thing that ends, so the pass after
         // it starts exactly where that one finished.
         for _ in 0..MAX_SUBSTEPS {
-            let to = self.first_ending(end);
+            let to = self.next_change(end);
             self.step(to);
             if self.time >= end {
                 return;
@@ -1372,8 +1372,8 @@ impl Engine {
         self.step(end);
     }
 
-    /// The instant the first thing ends, or `end` if nothing does before
-    /// then.
+    /// The instant something next changes, or `end` if nothing does
+    /// before then.
     ///
     /// Every end is an instant on the show's clock, never a countdown:
     /// the same expression picks the instant here and recognises it in
@@ -1382,7 +1382,7 @@ impl Engine {
     ///
     /// Only what is already running counts: whatever an `on_end` starts is
     /// looked at on the next pass, having begun at the right instant.
-    fn first_ending(&self, end: f64) -> f64 {
+    fn next_change(&self, end: f64) -> f64 {
         let Some(show) = &self.show else {
             return end;
         };
@@ -1415,7 +1415,16 @@ impl Engine {
                 continue;
             };
             let plays = media.repeat.unwrap_or(1.0).max(0.0);
-            let ends = play.started + media.delay.max(0.0) + length * plays;
+            let starts = play.started + media.delay.max(0.0);
+            // When it starts sounding, as well as when it stops. A play
+            // waiting out a delay is not on its bus yet, so anything
+            // ducking under that bus turns at this instant; without it a
+            // frame could span a short delayed clip from before it was
+            // audible to after it was over, and nothing would duck.
+            if starts > self.time + SAME_INSTANT && starts < first {
+                first = starts;
+            }
+            let ends = starts + length * plays;
             if ends > self.time + SAME_INSTANT && ends < first {
                 first = ends;
             }
