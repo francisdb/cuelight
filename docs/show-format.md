@@ -971,16 +971,26 @@ than to the base when it ends.
 ## Host contract
 
 The engine is driven exclusively through four calls: `load_show` (JSON in),
-`set_variable`, `trigger`, and `advance_frame(dt)`. What the show itself
+`set_variable`, `trigger`, and moving the clock. What the show itself
 fires (`on_end` triggers) comes back through `drain_events()`, so content
 can tell the host that something finished. Output is either
 `resolved_layers()` (a flat, GPU-free draw list; each item carries a
 `transform` that is the identity unless a rotation or uneven scale placed
 it, in which case the shape is in its layer's space and the transform
 puts it on the canvas) or the `render` feature's vello rasterizer, plus
-`voices()` for what should be heard (see [Sound](#sound)). Everything else, including where variable values and
+`voices()` for what should be heard (see [Sound](#sound)), and
+`values()` for what every layer's properties resolved to, with no
+geometry built. Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
+
+The clock moves with `advance_to(instant)` or `advance_frame(dt)`.
+A host that knows what time it is should say so: `advance_frame` can only
+add the delta to where the clock already is, and `previous + delta` is
+not the instant that was meant, so the same moment reached at two frame
+rates lands a rounding error apart. A host reading a real frame clock has
+only a delta and `advance_frame` is what it wants; one replaying a
+script, rendering chosen moments or seeking has the instant.
 
 `dt` is how much time passed, not how much of the show to play in one
 piece. A frame is cut at every instant something inside it ends, so a

@@ -199,10 +199,13 @@ fn run(cli: &Cli) -> Result<(), String> {
                 }
             }
         }
-        engine.advance_frame(step);
         steps += 1;
-        // Multiplied, not accumulated, so the walk does not drift.
+        // Multiplied, not accumulated, and handed to the engine as the
+        // instant to land on rather than as a delta, so a run at one
+        // frame rate reaches a given time in exactly the state a run at
+        // another does.
         time = steps as f64 * step;
+        engine.advance_to(time);
     }
     if frames > 0 {
         println!("{frames} frame(s) in {}", cli.out.display());
