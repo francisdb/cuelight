@@ -1170,3 +1170,37 @@ fn a_chain_runs_at_its_own_rate_not_the_frame_rate() {
     // 6000 frames is 100 s, which holds 5999.8 links of 0.0166671666666667.
     assert_eq!(ends, 5999);
 }
+
+#[test]
+fn a_chain_hands_the_property_straight_over() {
+    // Neither link holds, so between them nothing owns x and the layer
+    // would fall back to its base. A handover that lands a rounding
+    // error either side of a frame is still a handover, not a gap.
+    let show = r##"{
+      "format": 1, "name": "gap", "size": [8, 8],
+      "layers": [{ "name": "box", "type": "shape",
+                   "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+                   "x": -1,
+                   "timelines": [
+        { "name": "a", "trigger": ["go", "d2"], "on_end": "d1",
+          "tracks": [{ "property": "x", "keys": [{"t":0,"v":10},{"t":0.7,"v":20}] }] },
+        { "name": "b", "trigger": "d1", "on_end": "d2",
+          "tracks": [{ "property": "x", "keys": [{"t":0,"v":20},{"t":0.7,"v":30}] }] }
+      ]}]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("go");
+
+    for frame in 1..=4200 {
+        engine.advance_frame(1.0 / 60.0);
+        let layers = engine.resolved_layers().unwrap();
+        let ResolvedShape::Rect { x, .. } = layers[0].shape else {
+            panic!("box should be a rect")
+        };
+        assert!(
+            x >= 10.0,
+            "frame {frame}: nobody owns x, it fell back to {x}"
+        );
+    }
+}
