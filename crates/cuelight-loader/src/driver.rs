@@ -162,14 +162,18 @@ pub fn seek(
     engine.restart();
     let mut player = driver.map(DriverPlayer::new);
     let step = 1.0 / fps.max(1.0);
-    let mut time = 0.0;
+    let (mut steps, mut time) = (0u64, 0.0_f64);
     while time < to {
         let dt = step.min(to - time);
         if let Some(player) = &mut player {
             player.advance(engine, dt);
         }
-        engine.advance_frame(dt);
-        time += dt;
+        steps += 1;
+        // Counted from the start and handed over as the instant to land
+        // on, so scrubbing to a moment reaches the state playing to it
+        // would, whatever `fps` the walk used.
+        time = (steps as f64 * step).min(to);
+        engine.advance_to(time);
     }
     player
 }
