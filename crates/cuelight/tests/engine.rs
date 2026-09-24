@@ -1065,37 +1065,34 @@ fn a_chain_lasts_what_its_parts_add_up_to_at_any_frame_rate() {
 #[test]
 fn a_chain_of_timelines_keeps_its_spacing_however_the_frames_fall() {
     // 0.7 s links against a sixtieth of a second: neither is exact in
-    // binary, so each link's end sits a hair off a frame boundary, in
-    // whichever direction the rounding went. Each link still lasts 0.7 s.
+    // binary, so a link's end sits a hair off a frame boundary, on
+    // whichever side the rounding fell. Two timelines firing each other
+    // round and round, so any slack in the handover would pile up.
     let show = r##"{
       "format": 1, "name": "chain", "size": [8, 8],
       "layers": [{ "name": "box", "type": "shape",
                    "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
                    "timelines": [
-        { "name": "l1", "trigger": "go",    "on_end": "d1", "hold": true,
+        { "name": "a", "trigger": ["go", "d2"], "on_end": "d1", "hold": true,
           "tracks": [{ "property": "x", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
-        { "name": "l2", "trigger": "d1", "on_end": "d2", "hold": true,
-          "tracks": [{ "property": "y", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
-        { "name": "l3", "trigger": "d2", "on_end": "d3", "hold": true,
-          "tracks": [{ "property": "opacity", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] },
-        { "name": "l4", "trigger": "d3", "on_end": "d4", "hold": true,
-          "tracks": [{ "property": "rotation", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] }
+        { "name": "b", "trigger": "d1", "on_end": "d2", "hold": true,
+          "tracks": [{ "property": "y", "keys": [{"t":0,"v":0},{"t":0.7,"v":1}] }] }
       ]}]
     }"##;
     let mut engine = Engine::new();
     engine.load_show(show).unwrap();
     engine.trigger("go");
 
-    let step = 1.0 / 60.0;
     let mut ends = Vec::new();
-    for frame in 1..=200 {
-        engine.advance_frame(step);
+    for frame in 1..=4200 {
+        engine.advance_frame(1.0 / 60.0);
         for event in engine.drain_events() {
             if matches!(&event, Event::Trigger(name) if name.starts_with('d')) {
                 ends.push(frame);
             }
         }
     }
-    // 0.7 s is 42 frames; four links, each the same 42 frames later.
-    assert_eq!(ends, vec![42, 84, 126, 168]);
+    // 0.7 s is 42 frames, a hundred times over, the last at 70 seconds.
+    let want: Vec<usize> = (1..=100).map(|n| n * 42).collect();
+    assert_eq!(ends, want);
 }

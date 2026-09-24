@@ -624,10 +624,10 @@ impl Engine {
         self.events.clear();
         self.time = 0.0;
         self.active_scene = scenes.then_some(0);
-        self.start_matching(Some(Root::Show), |tl| tl.autoplay);
+        self.start_matching(Some(Root::Show), self.time, |tl| tl.autoplay);
         self.play_autoplay(Root::Show);
         if let Some(scene) = self.active_scene {
-            self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
+            self.start_matching(Some(Root::Scene(scene)), self.time, |tl| tl.autoplay);
             self.play_autoplay(Root::Scene(scene));
         }
     }
@@ -924,6 +924,17 @@ impl Engine {
     /// (re)starts from 0, and every audio layer declaring it plays (or
     /// stops, when it is the layer's `stop`).
     pub fn trigger(&mut self, name: &str) {
+        self.trigger_at(name, self.time);
+    }
+
+    /// Fire `name` as if at the instant `at`, which is what whatever it
+    /// starts is timed from.
+    ///
+    /// For a trigger from the host that instant is the clock. For an
+    /// `on_end` it is the instant the thing that fired it finished, which
+    /// is not quite the clock when the frame had to land a hair short of
+    /// it; anchoring there is what stops a chain's slack adding up.
+    fn trigger_at(&mut self, name: &str, at: f64) {
         let entered = self
             .show
             .as_ref()
@@ -931,7 +942,7 @@ impl Engine {
         if let Some(scene) = entered {
             self.enter_scene(scene);
         }
-        self.start_matching(None, |tl| tl.trigger.contains(name));
+        self.start_matching(None, at, |tl| tl.trigger.contains(name));
         self.set_spinning(name);
         let roots: Vec<Root> = std::iter::once(Root::Show)
             .chain(self.active_scene.map(Root::Scene))
@@ -947,7 +958,7 @@ impl Engine {
                     self.waiting.retain(|(r, p, _)| !(*r == root && *p == path));
                 }
                 if plays {
-                    self.play(root, path);
+                    self.play(root, path, at);
                 }
             }
         }
@@ -1155,19 +1166,19 @@ impl Engine {
         }
         walk(layers, &mut Vec::new(), &mut starts);
         for path in starts {
-            self.play(root, path);
+            self.play(root, path, self.time);
         }
     }
 
     /// Play the audio layer at `path`, as its `retrigger` says when it
     /// already plays.
-    fn play(&mut self, root: Root, path: Vec<usize>) {
-        self.start(root, path, None);
+    fn play(&mut self, root: Root, path: Vec<usize>, at: f64) {
+        self.start(root, path, None, at);
     }
 
     /// Start a play of the layer at `path`, of `asked` when the caller
     /// has already settled which asset it wants.
-    fn start(&mut self, root: Root, path: Vec<usize>, asked: Option<String>) {
+    fn start(&mut self, root: Root, path: Vec<usize>, asked: Option<String>, at: f64) {
         let layer = self
             .show
             .as_ref()
@@ -1225,12 +1236,12 @@ impl Engine {
         self.shown.insert((root, path.clone()), playing.clone());
         let played = self.plays.entry((root, path.clone())).or_default();
         played.count += 1;
-        played.at = self.time;
+        played.at = at;
         self.sounding.push(Sounding {
             root,
             layer_path: path,
             id: self.next_voice,
-            started: self.time,
+            started: at,
             playing,
         });
     }
@@ -1291,7 +1302,7 @@ impl Engine {
         self.debounced.retain(|(root, ..), _| *root == Root::Show);
         self.reels.retain(|(root, ..), _| *root == Root::Show);
         self.active_scene = Some(scene);
-        self.start_matching(Some(Root::Scene(scene)), |tl| tl.autoplay);
+        self.start_matching(Some(Root::Scene(scene)), self.time, |tl| tl.autoplay);
         self.play_autoplay(Root::Scene(scene));
     }
 
@@ -1423,13 +1434,15 @@ impl Engine {
             }
         }
         for (root, path) in self.repointed() {
-            self.play(root, path);
+            self.play(root, path, self.time);
         }
         self.time = to;
         let now = self.time;
         let Some(show) = &self.show else { return };
         let mut finished: Vec<usize> = Vec::new();
-        let mut on_end: Vec<String> = Vec::new();
+        // Each with the instant the thing that fired it finished, not
+        // the clock: that is what the next link in a chain is timed from.
+        let mut on_end: Vec<(String, f64)> = Vec::new();
         for (i, p) in self.playing.iter_mut().enumerate() {
             let layer = root_layers(show, p.root).and_then(|l| layer_at(l, &p.layer_path));
             let Some(tl) = layer.and_then(|l| l.timelines.get(p.timeline)) else {
@@ -1450,7 +1463,8 @@ impl Engine {
             // Compared as instants on the one clock, the same way the
             // step that landed here was chosen.
             if duration <= 0.0 || now + SAME_INSTANT >= p.ends(tl) {
-                on_end.extend(tl.on_end.clone());
+                let ends = if duration <= 0.0 { now } else { p.ends(tl) };
+                on_end.extend(tl.on_end.iter().map(|name| (name.clone(), ends)));
                 // Holding is not playing: it ends, fires its `on_end` once
                 // like any other, and then keeps its last values.
                 if tl.hold && !tl.looping && duration > 0.0 {
@@ -1481,9 +1495,10 @@ impl Engine {
                 continue;
             };
             let plays = media.repeat.unwrap_or(1.0).max(0.0);
-            if time + SAME_INSTANT - s.started - media.delay.max(0.0) >= duration * plays {
+            let ends = s.started + media.delay.max(0.0) + duration * plays;
+            if time + SAME_INSTANT >= ends {
                 ended.push(i);
-                on_end.extend(media.on_end.map(str::to_owned));
+                on_end.extend(media.on_end.map(|name| (name.to_owned(), ends)));
             }
         }
         for i in ended.into_iter().rev() {
@@ -1505,10 +1520,10 @@ impl Engine {
             false
         });
         for (root, path, asked) in turn {
-            self.start(root, path, asked);
+            self.start(root, path, asked, self.time);
         }
-        for name in on_end {
-            self.trigger(&name);
+        for (name, at) in on_end {
+            self.trigger_at(&name, at);
             if self.events.len() == MAX_PENDING_EVENTS {
                 self.events.pop_front();
             }
@@ -1832,7 +1847,7 @@ impl Engine {
 
     /// (Re)start the timelines `want` selects, in `root` or, with `None`,
     /// in the show's layers and the active scene.
-    fn start_matching(&mut self, root: Option<Root>, want: impl Fn(&Timeline) -> bool) {
+    fn start_matching(&mut self, root: Option<Root>, at: f64, want: impl Fn(&Timeline) -> bool) {
         let Some(show) = &self.show else { return };
         let roots = match root {
             Some(root) => vec![root],
@@ -1863,7 +1878,7 @@ impl Engine {
                 root,
                 layer_path,
                 timeline,
-                starts: self.time + delay,
+                starts: at + delay,
                 held: false,
             });
         }
