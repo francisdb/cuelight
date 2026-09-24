@@ -848,8 +848,31 @@ flicker:
   property. Shorter changes (a strobing lamp, a switch that bounces) never
   show. At load and on entering a scene the current value applies at once.
 
-The order is: `debounce`, then `map`, `threshold`, `scale` and `offset`,
-then `transition`.
+- `curve`: bend the value against the input instead of scaling it
+  straight. Keys are a track's, with the input value where a track has
+  time, and the same easings between them; below the first key it holds
+  the first value, above the last it holds the last.
+
+  ```json
+  { "property": "opacity", "variable": "brightness",
+    "curve": [ { "t": 0, "v": 0 }, { "t": 0.5, "v": 0.2, "ease": "quad_in" },
+               { "t": 1, "v": 1 } ] }
+  ```
+
+  A lamp whose glow wants a gamma curve, a tachometer compressed at the
+  low end, a loudness in decibels rather than a linear gain. One variable
+  can feed several properties that each bend it their own way, which is
+  what a host bending it before sending cannot do.
+
+  A curve shapes value against **input**; a `transition`'s `ease` shapes a
+  change over **time**. A binding can have both. It cannot have both
+  `curve` and `threshold`, which are the same job: a threshold is two keys
+  with a `step` ease. It only bends numbers, so one on `tint`, `font`,
+  `video` or `sound` is reported as a binding that does nothing.
+
+The order is: `debounce`, then `map`, `threshold`, `curve`, `scale` and
+`offset`, then `transition`. So a curve is written in the variable's own
+units and `scale` stays the last change of unit.
 
 ```json
 { "property": "visible", "variable": "lamp_41", "threshold": 0.5, "debounce": 0.05 }

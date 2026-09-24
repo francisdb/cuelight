@@ -3556,6 +3556,9 @@ fn scaled(b: &Binding, n: f64) -> f64 {
         }
         None => n,
     };
+    // Bent against the input before any change of unit, so the curve is
+    // written in whatever the variable counts in.
+    let n = crate::model::sample_keys(&b.curve, n).unwrap_or(n);
     n * b.scale + b.offset
 }
 
@@ -3766,6 +3769,31 @@ fn validate(show: &Show) -> Result<(), Error> {
                         binding.property, layer.name
                     )));
                 }
+                if !binding.curve.is_empty() {
+                    let sorted = binding.curve.windows(2).all(|w| w[0].t <= w[1].t);
+                    let finite = binding
+                        .curve
+                        .iter()
+                        .all(|k| k.t.is_finite() && k.v.is_finite());
+                    let problem = if binding.threshold.is_some() {
+                        // The same job: a threshold is a curve of two keys
+                        // with a `step` ease, so doing both says nothing
+                        // clear about which happens first.
+                        Some("sets both curve and threshold, which are the same job")
+                    } else if !finite {
+                        Some("needs finite curve keys")
+                    } else if !sorted {
+                        Some("needs its curve keys in order of input")
+                    } else {
+                        None
+                    };
+                    if let Some(problem) = problem {
+                        return Err(Error::InvalidShow(format!(
+                            "the {:?} binding of layer {:?} {problem}",
+                            binding.property, layer.name
+                        )));
+                    }
+                }
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
                     let ring = transition.wrap.is_some() || transition.direction.is_some();
@@ -3910,6 +3938,20 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
     fn walk(show: &Show, layers: &[Layer], out: &mut Vec<String>) {
         for layer in layers {
             for binding in &layer.bindings {
+                // A curve bends a number, and these properties never hold
+                // one, so it would quietly do nothing.
+                if !binding.curve.is_empty()
+                    && matches!(
+                        binding.property,
+                        Property::Tint | Property::Font | Property::Video | Property::Sound
+                    )
+                {
+                    out.push(format!(
+                        "the {:?} binding of layer {:?} has a curve, which only bends a number; \
+                         this property never holds one",
+                        binding.property, layer.name
+                    ));
+                }
                 let name = &binding.variable;
                 if !show.variables.contains_key(name) && show.values.contains_key(name) {
                     // A value the show animates is declared as much as a
