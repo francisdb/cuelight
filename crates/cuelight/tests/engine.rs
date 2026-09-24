@@ -1096,3 +1096,77 @@ fn a_chain_of_timelines_keeps_its_spacing_however_the_frames_fall() {
     let want: Vec<usize> = (1..=100).map(|n| n * 42).collect();
     assert_eq!(ends, want);
 }
+
+#[test]
+fn what_starts_late_is_already_that_far_into_itself() {
+    // A 10.5 s clip at 1 fps ends half way through the eleventh frame.
+    // The timeline its `on_end` starts is not seen until that frame is
+    // over, half a second later, and by then it is half a second in.
+    let show = r##"{
+      "format": 1, "name": "late", "size": [8, 8],
+      "layers": [
+        { "name": "screen", "type": "video", "video": "clip",
+          "autoplay": true, "on_end": "next" },
+        { "name": "box", "type": "shape", "shape": { "rect": [0, 0, 1, 1] },
+          "fill": "#FFFFFF", "x": 0,
+          "timelines": [{ "name": "slide", "trigger": "next",
+            "tracks": [{ "property": "x",
+                         "keys": [{"t":0,"v":0},{"t":10,"v":100}] }] }] }
+      ]
+    }"##;
+    let mut engine = Engine::new();
+    engine.set_video("clip", 10.5, [8.0, 8.0]).unwrap();
+    engine.load_show(show).unwrap();
+
+    for _ in 0..11 {
+        engine.advance_frame(1.0);
+    }
+    let layers = engine.resolved_layers().unwrap();
+    let box_x = layers.iter().find(|l| l.name == "box").unwrap();
+    let ResolvedShape::Rect { x, .. } = box_x.shape else {
+        panic!("box should be a rect")
+    };
+    // 0.5 s along a track that covers 100 over 10 s.
+    assert!(
+        (x - 5.0).abs() < 1e-9,
+        "at 11 s the box is at {x}, wanted 5"
+    );
+}
+
+#[test]
+fn a_chain_runs_at_its_own_rate_not_the_frame_rate() {
+    // Links half a microsecond longer than a frame, so every end lands
+    // just past a boundary and is noticed a touch early. Timed from the
+    // instant each one should have started, the slack never piles up:
+    // the chain keeps its own rate and slowly falls behind the frames,
+    // which is what its durations say. Timed from the clock instead, it
+    // would be rounded back onto a boundary every link and run fast.
+    let show = r##"{
+      "format": 1, "name": "cycle", "size": [8, 8],
+      "layers": [{ "name": "box", "type": "shape",
+                   "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+                   "timelines": [
+        { "name": "a", "trigger": ["go", "d2"], "on_end": "d1", "hold": true,
+          "tracks": [{ "property": "x",
+                       "keys": [{"t":0,"v":0},{"t":0.0166671666666667,"v":1}] }] },
+        { "name": "b", "trigger": "d1", "on_end": "d2", "hold": true,
+          "tracks": [{ "property": "y",
+                       "keys": [{"t":0,"v":0},{"t":0.0166671666666667,"v":1}] }] }
+      ]}]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("go");
+
+    let mut ends = 0;
+    for _ in 0..6000 {
+        engine.advance_frame(1.0 / 60.0);
+        ends += engine
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, Event::Trigger(name) if name.starts_with('d')))
+            .count();
+    }
+    // 6000 frames is 100 s, which holds 5999.8 links of 0.0166671666666667.
+    assert_eq!(ends, 5999);
+}
