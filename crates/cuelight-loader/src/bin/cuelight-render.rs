@@ -10,6 +10,8 @@
 //! A frame is the canvas at the show's own size; `--scale` writes what a
 //! host would show instead. Sound lengths come from the file's header, so
 //! a sound's `on_end` fires; no device is opened and nothing is played.
+//! A video layer draws the frame it is playing, decoded one frame at a
+//! time for the frames that are written.
 //!
 //! Time is walked in fixed steps of `--fps`, from 0, so a run is
 //! repeatable: the same command writes the same bytes. That is also what
@@ -18,6 +20,7 @@
 use cuelight::render::Renderer;
 use cuelight::Engine;
 use cuelight_loader::{DriverPlayer, Step};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 #[derive(clap::Parser)]
@@ -189,6 +192,38 @@ fn wanted(cli: &Cli) -> Result<Vec<f64>, String> {
     Ok(times)
 }
 
+/// Hand the engine the frame of every video that should be showing, so
+/// the picture is there when the frame is drawn.
+///
+/// Only for frames that are written: the engine says which clip is
+/// playing where and how far in, and one frame of it is decoded on the
+/// spot. A run that writes one frame at twenty seconds decodes one frame
+/// of each clip, not twenty seconds of video. A clip that cannot be
+/// decoded at all (no ffmpeg on the machine) is reported once and drawn
+/// as nothing, which is what a show with no decoder has always done.
+fn show_video_frames(
+    engine: &mut Engine,
+    clips: &BTreeMap<String, cuelight_video::Clip>,
+    quiet: &mut BTreeSet<String>,
+) {
+    for playing in engine.videos().unwrap_or_default() {
+        let Some(clip) = clips.get(&playing.video) else {
+            continue;
+        };
+        let details = clip.details();
+        let frame = clip.still(playing.position).and_then(|frame| {
+            engine
+                .set_image(&playing.video, details.width, details.height, frame)
+                .map_err(|e| e.to_string())
+        });
+        if let Err(e) = frame {
+            if quiet.insert(playing.video.clone()) {
+                eprintln!("warning: video {:?}: {e}", playing.video);
+            }
+        }
+    }
+}
+
 fn run(cli: &Cli) -> Result<(), Stop> {
     let mut engine = Engine::new();
     let loaded = cuelight_loader::load(&mut engine, &cli.show).map_err(|e| e.to_string())?;
@@ -232,6 +267,7 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         size: engine.show().map(|show| show.size),
         ..cuelight_video::Decode::default()
     };
+    let mut clips: BTreeMap<String, cuelight_video::Clip> = BTreeMap::new();
     for path in &loaded.videos {
         let name = path
             .file_stem()
@@ -243,10 +279,15 @@ fn run(cli: &Cli) -> Result<(), Stop> {
                 engine
                     .set_video(&name, details.duration, details.size())
                     .map_err(|e| e.to_string())?;
+                clips.insert(name, clip);
             }
             Err(e) => eprintln!("warning: video {name:?}: {e}"),
         }
     }
+    // A clip that would not give a frame is said so once rather than per
+    // frame written: a strip of a hundred frames of a show whose decoder
+    // is missing should not print a hundred lines.
+    let mut quiet: BTreeSet<String> = BTreeSet::new();
     let mut driver = loaded
         .driver
         .filter(|_| !cli.no_driver)
@@ -302,6 +343,7 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         while times.peek().is_some_and(|t| *t <= time + step / 2.0) {
             let at = times.next().expect("peeked");
             if let Some(renderer) = &mut renderer {
+                show_video_frames(&mut engine, &clips, &mut quiet);
                 let file = cli.out.join(format!("t{at:08.3}.png"));
                 let size = engine.show().ok_or("no show")?.size;
                 let target = match (cli.scale, cli.width) {

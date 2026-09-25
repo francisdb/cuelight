@@ -174,6 +174,50 @@ pub fn decode(source: Source<'_>, how: Decode) -> Result<Video, String> {
     Video::from_frames([width, height], rate, frames)
 }
 
+/// One frame of the video at `path`, the one showing `position` seconds
+/// in, at the size and rate `details` says the clip is read at.
+///
+/// Seeks there and decodes a single picture, so a still of a clip costs
+/// about what a probe costs rather than the whole video. The position is
+/// quantised to the clip's own frames first, the way every other reader
+/// here picks one, so the same second always gives the same picture.
+pub fn still(path: &Path, position: f64, details: crate::Details) -> Result<Vec<u8>, String> {
+    let (width, height) = (details.width, details.height);
+    let rate = if details.rate > 0.0 {
+        details.rate
+    } else {
+        30.0
+    };
+    let at = (position.max(0.0) * rate).floor() / rate;
+    // Seeking before the input, which is the fast one: ffmpeg jumps to the
+    // keyframe before `at` and decodes from there to it, rather than
+    // reading the clip from the top.
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-ss", &format!("{at}"), "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-s"])
+        .arg(format!("{width}x{height}"))
+        .arg("pipe:1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("ffmpeg did not run ({e}); is it installed?"))?;
+    if !output.status.success() {
+        let why = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg failed: {}", why.trim()));
+    }
+    let wanted = width as usize * height as usize * 4;
+    if output.stdout.len() < wanted {
+        // Past the end of the clip, or a container that gave nothing.
+        let why = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("no frame at {at:.3}s. {}", why.trim()));
+    }
+    let mut frame = output.stdout;
+    frame.truncate(wanted);
+    Ok(frame)
+}
+
 /// Whether the file has an audio stream at all, so a clip without one
 /// costs a probe rather than a decode that produces nothing.
 pub fn has_sound(path: &Path) -> bool {

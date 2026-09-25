@@ -198,6 +198,34 @@ impl Clip {
         }
     }
 
+    /// The one frame showing `position` seconds in, decoded there and
+    /// then.
+    ///
+    /// For a host drawing stills rather than playing a show: an offline
+    /// render asks only for the frames it writes, so a still of a show
+    /// at twenty seconds costs a seek and one frame of each clip, not
+    /// twenty seconds of video. [`Clip::frame_at`] is the one to use
+    /// while a show plays: it never waits, and this one does.
+    pub fn still(&self, position: f64) -> Result<Vec<u8>, String> {
+        // Already in hand: a clip built from frames has nothing to seek
+        // in, and one decoded whole has the picture here.
+        if let Source::Whole(video) = &self.source {
+            return video
+                .frame_at(position)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| "the clip has no frames".to_owned());
+        }
+        #[cfg(feature = "ffmpeg-process")]
+        {
+            ffmpeg::still(&self.path, position, self.details)
+        }
+        #[cfg(not(feature = "ffmpeg-process"))]
+        {
+            let _ = position;
+            Err("no video decoder is compiled in".into())
+        }
+    }
+
     /// Give back what the clip is using; it starts again on the next
     /// frame asked for. A clip being decoded as it plays holds a decoder
     /// open, which is worth stopping the moment nothing is watching. One
@@ -435,5 +463,36 @@ impl Video {
         self.frames
             .get(index.min(self.frames.len() - 1))
             .map(Vec::as_slice)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Four frames at 2 fps, each a solid shade, so which one came back
+    /// is plain to read.
+    fn stripes() -> Clip {
+        let frames = (1..=4u8).map(|n| vec![n * 10; 4]).collect();
+        Clip::held(Video::from_frames([1, 1], 2.0, frames).unwrap())
+    }
+
+    #[test]
+    fn a_still_is_the_frame_the_position_falls_in() {
+        let clip = stripes();
+        assert_eq!(clip.still(0.0).unwrap()[0], 10);
+        // Anywhere inside a frame's half second gives that frame, so a
+        // still asked for twice at the same time is the same picture.
+        assert_eq!(clip.still(0.5).unwrap()[0], 20);
+        assert_eq!(clip.still(0.99).unwrap()[0], 20);
+        assert_eq!(clip.still(1.0).unwrap()[0], 30);
+        // Past the end it holds the last, as a playhead does.
+        assert_eq!(clip.still(9.0).unwrap()[0], 40);
+    }
+
+    #[test]
+    fn a_still_of_a_clip_with_nothing_in_it_says_so() {
+        let clip = Clip::held(Video::from_frames([1, 1], 2.0, Vec::new()).unwrap());
+        assert!(clip.still(0.0).is_err());
     }
 }
