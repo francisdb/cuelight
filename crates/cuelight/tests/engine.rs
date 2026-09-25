@@ -1294,3 +1294,97 @@ fn a_condition_needs_a_variable_and_a_finite_threshold() {
     }"##;
     assert!(Engine::new().load_show(bad).is_err());
 }
+
+/// A lamp with two animations: a flash on the rising edge, and a blink
+/// that should run for as long as the lamp is lit.
+const LIT: &str = r##"{
+  "name": "lit", "size": [32, 32],
+  "variables": { "lamp": 0 },
+  "scenes": [
+    { "name": "board", "trigger": "board", "layers": [{
+      "name": "bulb", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+      "fill": "#FFFFFF", "x": 0, "y": 0,
+      "timelines": [
+        { "name": "flash", "when": { "variable": "lamp" }, "on_end": "flashed",
+          "tracks": [{ "property": "x", "keys": [{"t":0,"v":0},{"t":0.2,"v":8}] }] },
+        { "name": "blink", "loop": true, "while": { "variable": "lamp" },
+          "tracks": [{ "property": "y", "keys": [{"t":0,"v":0},{"t":0.4,"v":8}] }] }
+      ] }] },
+    { "name": "away", "trigger": "away", "layers": [] }
+  ] }"##;
+
+#[test]
+fn a_while_condition_runs_only_as_long_as_it_holds() {
+    let mut engine = Engine::new();
+    engine.load_show(LIT).unwrap();
+    engine.trigger("board");
+    engine.advance_to(0.1);
+    // Dark: neither runs.
+    let dark = engine.resolved_layers().unwrap();
+    engine.set_variable("lamp", 1.0);
+    engine.advance_to(0.2);
+    let lit = engine.resolved_layers().unwrap();
+    assert_ne!(dark, lit, "the lamp coming on should start something");
+
+    // Lit and looping: y keeps moving across frames.
+    let mut y = Vec::new();
+    for i in 1..=6 {
+        engine.advance_to(0.2 + f64::from(i) * 0.05);
+        y.push(format!("{:?}", engine.resolved_layers().unwrap()[0].shape));
+    }
+    assert!(y.windows(2).any(|w| w[0] != w[1]), "the blink should run");
+
+    // Off: the loop stops rather than blinking over a dark lamp.
+    engine.set_variable("lamp", 0.0);
+    engine.advance_to(0.6);
+    let stopped = format!("{:?}", engine.resolved_layers().unwrap()[0].shape);
+    for i in 1..=6 {
+        engine.advance_to(0.6 + f64::from(i) * 0.05);
+        let now = format!("{:?}", engine.resolved_layers().unwrap()[0].shape);
+        assert_eq!(now, stopped, "the blink should have stopped");
+    }
+}
+
+#[test]
+fn an_edge_belongs_to_the_variable_not_to_the_scene() {
+    let mut engine = Engine::new();
+    engine.load_show(LIT).unwrap();
+    engine.trigger("board");
+    engine.set_variable("lamp", 1.0);
+    engine.advance_to(0.05);
+    let flashes = |engine: &mut Engine| {
+        engine
+            .drain_events()
+            .iter()
+            .filter(|e| matches!(e, Event::Trigger(n) if n == "flashed"))
+            .count()
+    };
+    engine.advance_to(0.5);
+    assert_eq!(flashes(&mut engine), 1, "the lamp came on once");
+
+    // Away and back with the lamp still on: it did not come on again.
+    engine.trigger("away");
+    engine.advance_to(1.0);
+    engine.trigger("board");
+    engine.advance_to(1.5);
+    assert_eq!(
+        flashes(&mut engine),
+        0,
+        "coming back is not the lamp coming on"
+    );
+
+    // Away, the lamp turns on while the scene is gone, and back: it did.
+    engine.set_variable("lamp", 0.0);
+    engine.advance_to(1.6);
+    engine.trigger("away");
+    engine.advance_to(2.0);
+    engine.set_variable("lamp", 1.0);
+    engine.advance_to(2.1);
+    engine.trigger("board");
+    engine.advance_to(2.5);
+    assert_eq!(
+        flashes(&mut engine),
+        1,
+        "it turned on while the scene was away"
+    );
+}

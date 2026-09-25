@@ -1082,9 +1082,25 @@ A timeline is a keyframed animation owned by its layer:
   "multiball": 1 } }` is true exactly in that mode. What starts the
   timeline is *becoming* true, not being true, so a lamp that stays on
   plays its animation once; going false and true again starts it again.
-  A condition already true when the show loads, or when its scene is
-  entered, counts as becoming true. `trigger` and `when` can both be set:
-  either starts it.
+  The edge belongs to the variable, not to the scene: leaving a scene and
+  coming back does not replay it, unless the condition turned true while
+  the scene was away. A condition already true when the show loads counts
+  as becoming true. `trigger` and `when` can both be set: either starts
+  it, which is what a test trigger on top of a state wants.
+
+  `while` runs a timeline for as long as its condition holds, and stops
+  it when it stops holding:
+
+  ```json
+  { "name": "blink", "loop": true, "while": { "variable": "lamp_12" },
+    "tracks": [] }
+  ```
+
+  A blink that means "this is lit" should last as long as it is lit, and
+  a looping timeline started on an edge would never stop. Unlike `when`,
+  entering a scene starts it again, since it describes a state the scene
+  is in rather than something that happened. Stopping is not finishing,
+  so it fires no `on_end`. A timeline takes one or the other, not both.
 - Keys are `(t seconds, value)`; between two keys the value interpolates
   using the **later** key's `ease` (before the first key it holds the
   first value, after the last it holds the last). Easings: `linear`
