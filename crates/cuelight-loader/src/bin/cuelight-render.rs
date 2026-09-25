@@ -264,7 +264,16 @@ fn run(cli: &Cli) -> Result<(), Stop> {
                     None => renderer.render_to_rgba(&engine),
                     Some(scale) => {
                         let [w, h] = engine.show().ok_or("no show")?.size;
-                        renderer.present_to_rgba(&engine, [w * scale, h * scale])
+                        // Checked: wrapping here would land on a size the
+                        // renderer is happy with and quietly draw the
+                        // wrong one.
+                        let target =
+                            w.checked_mul(scale)
+                                .zip(h.checked_mul(scale))
+                                .ok_or_else(|| {
+                                    format!("--scale {scale} is past what {w}x{h} can be scaled to")
+                                })?;
+                        renderer.present_to_rgba(&engine, [target.0, target.1])
                     }
                 };
                 frame
