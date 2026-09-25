@@ -62,8 +62,8 @@ struct Cli {
     /// pass needs about 3 to become dots at all.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "width")]
     scale: Option<u32>,
-    /// Render the frame as a host would show it, about this many pixels
-    /// wide: the nearest size that keeps whole pixels, up or down. For a
+    /// Render the frame as a host would show it, at most this many pixels
+    /// wide: the largest size that fits and keeps whole pixels. For a
     /// gallery of shows of different sizes.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     width: Option<u32>,
@@ -114,7 +114,7 @@ fn inputs(cli: &Cli) -> Result<Vec<Input>, String> {
     Ok(out)
 }
 
-/// The frame size nearest `width` wide that keeps whole pixels.
+/// The largest frame no wider than `width` that keeps whole pixels.
 ///
 /// A show narrower than `width` goes up by the largest whole factor that
 /// fits, so a pixel-perfect show gets no letterbox and no uneven pixels.

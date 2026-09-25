@@ -1115,8 +1115,8 @@ the show's `scaling` asks, with its output mode and passes applied. A
 `dots` pass needs about `--scale 3` before there are enough pixels to
 make dots out of.
 
-`--width W` picks the factor instead, for a gallery of shows that are not
-all the same size:
+`--width W` picks the factor instead, giving a frame at most `W` wide,
+for a gallery of shows that are not all the same size:
 
 ```sh
 # 128x32 becomes 640x160, 192x64 becomes 576x192,
