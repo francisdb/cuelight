@@ -185,6 +185,18 @@ and the generated JSON Schema at
 types by a CI check; show files can reference it via `$schema` for editor
 autocomplete and validation).
 
+## Credits
+
+Work by others that cuelight builds on, beyond its dependencies:
+
+- The incandescent lamp model uses heating and cooling times from D. C.
+  Agrawal, *Heating-times of tungsten filament incandescent lamps*,
+  European Journal of Physics 32 (2011).
+- Its filament colour uses the curve fit published by Tanner Helland,
+  *How to Convert Temperature (K) to RGB*, itself fitted to Mitchell
+  Charity's blackbody colour table, *What color is a blackbody?*
+  (Harvard-Smithsonian Center for Astrophysics).
+
 ## License
 
 Licensed under either of

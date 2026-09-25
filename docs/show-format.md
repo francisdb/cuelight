@@ -923,6 +923,77 @@ By default a bound property jumps when its variable changes. With a
 
 - `duration`: seconds a change takes, from the value the property has now.
 - `ease` (default `linear`): any easing timelines know.
+- `model`: follow a physical model instead, which decides its own timing;
+  a `duration`, a `wrap` or a `direction` beside one is an error. The only
+  model is `incandescent`, a glowing filament, shaped by three optional
+  numbers: `kelvin`, how hot it runs at full power and so what colour it
+  glows there (2700 by default, a warm white); `heating`, the seconds it
+  takes to close about two thirds of the gap when the power goes up
+  (0.007, so full brightness in a few tens of milliseconds); and
+  `cooling`, the same going down, which on a real filament is the slower
+  of the two (0.06).
+  A bigger lamp is hotter and slower, a small one cooler and quicker.
+
+  ```json
+  { "property": "opacity", "variable": "lamp_12",
+    "transition": { "model": "incandescent" } }
+  ```
+
+  A lamp is not a fade, and much of how a panel of lamps looks is how
+  they switch. The binding's value is the **drive**, 0 to 1: what a dimmer
+  or a duty cycle sets, not a brightness already worked out. The
+  filament's temperature chases it: full brightness in a few tens of
+  milliseconds, most of the light gone as fast when the power goes, then a
+  dim glow for much longer, and a filament re-lit while still warm coming
+  up quicker than a cold one. No duration and ease can say that.
+
+  Light does not follow drive in a straight line, on a real lamp or here.
+  At rest the default lamp shows:
+
+  | drive | 0.25 | 0.5 | 0.75 | 1 |
+  | --- | --- | --- | --- | --- |
+  | shown | 9% | 33% | 64% | 100% |
+
+  So half drive is a lamp turned well down, not a lamp at half. A host
+  that already has the brightness it wants should bend it on the way in
+  with a [`curve`](#bindings), rather than expect this to be linear.
+
+  A numeric property gets the light the filament gives. A `tint` gets the
+  colour it gives, which reddens as it cools, and there its variable is a
+  power level rather than a colour. Put both bindings on the same variable
+  and they agree, because they are the same filament run twice:
+
+  ```json
+  "bindings": [
+    { "property": "opacity", "variable": "lamp_12",
+      "transition": { "model": "incandescent" } },
+    { "property": "tint", "variable": "lamp_12",
+      "transition": { "model": "incandescent" } }
+  ]
+  ```
+
+  Entering a scene starts its properties at their values, as at load, so
+  a lamp in a scene is cold again however warm it was when the scene was
+  left. One that should keep its heat belongs in the show's own layers,
+  which are never left.
+
+  A `model` and a `curve` both bend a number, and they are not the same
+  thing: a curve maps a value against its **input**, and stays where it
+  is put; a model is a thing with **state**, whose output depends on how
+  warm it already was. A lamp whose brightness is simply the wrong shape
+  wants a curve; one that should come up fast and fade slowly, and come
+  up faster when it is already warm, wants this. A binding can have both,
+  the curve shaping what is fed in.
+
+  The heating and cooling times come from D. C. Agrawal's *Heating-times
+  of tungsten filament incandescent lamps*, and the colour from Tanner
+  Helland's fit to Mitchell Charity's blackbody table; both are credited
+  in the README.
+
+  A show starts with its lamps cold, whatever they are being told, so a
+  filament takes its time even on the first frame. Like every transition it
+  stays a function of time, so a render is independent of the frame rate
+  and seeking works.
 - `wrap`: the value lives on a ring of this size: 360 for an angle, 10 for
   a sheet with one frame per digit. `direction` picks the way round:
   `shortest` (default), `forward` (a reel: 9 to 0 rolls on) or `backward`.

@@ -423,3 +423,170 @@ fn tiling_is_only_a_property_of_images() {
     }"##;
     assert!(Engine::new().load_show(show).is_err());
 }
+
+/// One lamp: its brightness and its colour both follow the filament.
+const LAMP: &str = r##"{
+  "name": "lamp", "size": [32, 32],
+  "variables": { "power": 0 },
+  "layers": [{
+    "name": "bulb", "type": "image", "image": "glass", "opacity": 0,
+    "bindings": [
+      { "property": "opacity", "variable": "power",
+        "transition": { "model": "incandescent" } },
+      { "property": "tint", "variable": "power",
+        "transition": { "model": "incandescent" } }
+    ]
+  }]
+}"##;
+
+fn lamp() -> Engine {
+    let mut engine = Engine::new();
+    engine.set_image("glass", 1, 1, vec![255; 4]).unwrap();
+    engine.load_show(LAMP).unwrap();
+    engine
+}
+
+fn bulb(engine: &Engine) -> (f64, [u8; 4]) {
+    let layer = &engine.resolved_layers().unwrap()[0];
+    (layer.opacity, layer.color)
+}
+
+#[test]
+fn a_bulb_takes_time_to_come_up_and_longer_to_go_out() {
+    let mut engine = lamp();
+    engine.advance_frame(0.0);
+    assert_eq!(bulb(&engine).0, 0.0, "a show starts with its lamps cold");
+
+    engine.set_variable("power", 1.0);
+    engine.advance_frame(0.010);
+    let early = bulb(&engine).0;
+    assert!(early > 0.0 && early < 0.9, "still coming up: {early}");
+    engine.advance_frame(0.050);
+    assert!(bulb(&engine).0 > 0.98, "there: {}", bulb(&engine).0);
+
+    // Out: most of the light goes fast, and the rest lingers.
+    engine.set_variable("power", 0.0);
+    engine.advance_frame(0.030);
+    let fading = bulb(&engine).0;
+    assert!(fading < 0.1, "dim fast: {fading}");
+    assert!(fading > 0.0, "but not out yet: {fading}");
+    engine.advance_frame(0.5);
+    assert!(bulb(&engine).0 < 0.001, "out: {}", bulb(&engine).0);
+}
+
+#[test]
+fn the_same_filament_gives_the_colour() {
+    let mut engine = lamp();
+    engine.set_variable("power", 1.0);
+    engine.advance_frame(0.2);
+    let [_, hot_g, hot_b, _] = bulb(&engine).1;
+
+    // Cooling: the blue goes first, so it reddens on the way out.
+    engine.set_variable("power", 0.0);
+    engine.advance_frame(0.060);
+    let [_, cool_g, cool_b, _] = bulb(&engine).1;
+    assert!(cool_b < hot_b, "blue first: {cool_b} was {hot_b}");
+    assert!(cool_g < hot_g, "then green: {cool_g} was {hot_g}");
+}
+
+#[test]
+fn a_warm_bulb_comes_up_quicker_than_a_cold_one() {
+    let mut engine = lamp();
+    engine.set_variable("power", 1.0);
+    engine.advance_frame(0.010);
+    let cold = bulb(&engine).0;
+
+    // Off for a moment, then on again while it is still hot.
+    engine.set_variable("power", 0.0);
+    engine.advance_frame(0.005);
+    engine.set_variable("power", 1.0);
+    engine.advance_frame(0.010);
+    assert!(bulb(&engine).0 > cold, "{} vs {cold}", bulb(&engine).0);
+}
+
+#[test]
+fn a_modelled_transition_has_no_duration_of_its_own() {
+    let bad = LAMP.replace(
+        r#""model": "incandescent""#,
+        r#""model": "incandescent", "duration": 0.2"#,
+    );
+    let err = Engine::new().load_show(&bad).unwrap_err().to_string();
+    assert!(err.contains("decides its own timing"), "{err}");
+}
+
+#[test]
+fn a_lamp_in_a_scene_comes_back_cold() {
+    // Entering a scene starts its properties at their values, as at
+    // load, so its lamps are cold again however warm they were when it
+    // was left. A lamp that should keep its heat across a scene change
+    // belongs in the show's own layers, which are never left.
+    let show = r##"{
+      "name": "scenes", "size": [32, 32],
+      "variables": { "power": 1 },
+      "scenes": [
+        { "name": "lit", "trigger": "lit", "layers": [{
+          "name": "bulb", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+          "fill": "#FFFFFF", "opacity": 0,
+          "bindings": [{ "property": "opacity", "variable": "power",
+                         "transition": { "model": "incandescent" } }] }] },
+        { "name": "dark", "trigger": "dark", "layers": [] }
+      ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let lit = |engine: &Engine| {
+        engine
+            .values()
+            .unwrap()
+            .into_iter()
+            .find(|(n, p, _)| n == "bulb" && *p == cuelight::Property::Opacity)
+            .map(|(_, _, v)| v.as_number())
+            .unwrap_or(0.0)
+    };
+    // Warm it up.
+    engine.trigger("lit");
+    engine.advance_to(1.0);
+    let warm = lit(&engine);
+    assert!(warm > 0.9, "the lamp should be lit, is {warm}");
+
+    // Away and back: the same instant of its life, from cold.
+    engine.trigger("dark");
+    engine.advance_to(2.0);
+    engine.trigger("lit");
+    engine.advance_to(2.001);
+    let again = lit(&engine);
+    assert!(
+        again < warm / 2.0,
+        "back from a scene it should be cold, is {again} against {warm}"
+    );
+}
+
+#[test]
+fn a_filament_takes_only_what_it_can_use() {
+    // Everything a model has no use for, or cannot use, is refused
+    // rather than quietly ignored.
+    let cases = [
+        (r#""model": "incandescent", "duration": 0.2"#, "own timing"),
+        (
+            r#""model": "incandescent", "ease": "quad_in""#,
+            "own timing",
+        ),
+        (r#""model": "incandescent", "step": 1"#, "own timing"),
+        (r#""model": "incandescent", "kelvin": 0"#, "above 0"),
+        (r#""model": "incandescent", "heating": -1"#, "above 0"),
+        (
+            r#""duration": 0.2, "kelvin": 2900"#,
+            "without naming a model",
+        ),
+    ];
+    for (transition, wanted) in cases {
+        let show = format!(
+            r##"{{ "name": "l", "size": [8, 8], "variables": {{ "p": 0 }},
+                   "layers": [{{ "name": "b", "type": "shape",
+                     "shape": {{ "rect": [0, 0, 8, 8] }}, "fill": "#FFFFFF",
+                     "bindings": [{{ "property": "opacity", "variable": "p",
+                                     "transition": {{ {transition} }} }}] }}] }}"##
+        );
+        let err = Engine::new().load_show(&show).unwrap_err().to_string();
+        assert!(err.contains(wanted), "{transition}: {err}");
+    }
+}

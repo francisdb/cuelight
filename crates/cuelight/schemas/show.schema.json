@@ -1197,6 +1197,16 @@
         "name"
       ]
     },
+    "Model": {
+      "description": "A physical model a transition follows instead of an ease.\n\nA lamp is not a fade. Much of how a panel of lamps looks is how they\nswitch, and a lamp switching is its filament's temperature chasing the\npower put into it: full brightness in a few tens of milliseconds, most\nof the light gone as fast when the power goes, then a dim red glow for\nmuch longer. A filament re-lit while still warm comes up quicker than\na cold one, which no duration and ease can say.",
+      "oneOf": [
+        {
+          "description": "A glowing filament. The binding's value is the power put into it,\n0 to 1; a numeric property gets the light that comes out and a\n`tint` gets the filament's colour, which reddens as it cools.\n\nShaped by `kelvin`, `heating` and `cooling`, so it is any lamp\nwith a filament rather than one make of bulb.",
+          "type": "string",
+          "const": "incandescent"
+        }
+      ]
+    },
     "NumberFormat": {
       "description": "Number to text conversion for text bindings.",
       "oneOf": [
@@ -1887,6 +1897,14 @@
       "description": "How a bound property moves when its binding's value changes: from the\nvalue it has now to the new one over `duration` seconds.\n\nWhat is eased is the binding's output (after `map`, `scale` and\n`offset`), so it has to be a number: on a `text` binding numbers count\nup or down before they are formatted (whole numbers stay whole on the\nway), any other text jumps. A change while a transition runs starts a\nnew one from the value reached so far. When a show loads or a scene is\nentered, properties start at their value; nothing eases in.\n\nWith `wrap` the value lives on a ring of that size (360 for an angle,\n10 for a sheet with a frame per digit) and `direction` picks the way\nround.\n\nA transition is a small timeline played on every change. `duration`\nand `ease` say how a move progresses; `offset` adds keyed motion on top,\nin the value's own units, so it is the same size however far the move\ngoes (a reel settling against its stop); `step` plays a large change as\nseveral moves in a row.",
       "type": "object",
       "properties": {
+        "cooling": {
+          "description": "The same going the other way, and always the slower of the two: a\nfilament loses heat more slowly than the power puts it in. 0.06 by\ndefault.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
         "direction": {
           "description": "Which way round a wrapped value goes; needs `wrap`.",
           "anyOf": [
@@ -1899,13 +1917,41 @@
           ]
         },
         "duration": {
-          "description": "Seconds a change takes; above 0.",
+          "description": "Seconds a change takes; above 0. Not used, and not needed, with a\n`model`, which decides its own timing.",
           "type": "number",
-          "format": "double"
+          "format": "double",
+          "default": 0.0
         },
         "ease": {
           "$ref": "#/$defs/Easing",
           "default": "linear"
+        },
+        "heating": {
+          "description": "How quickly the filament heats, in seconds: the time it takes to\nclose about two thirds of the gap to where it is heading. Full\nbrightness takes roughly five times this. 0.007 by default.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "kelvin": {
+          "description": "Temperature of the filament at full power, in kelvin, which is\nalso the colour it glows there. 2700 by default, a warm white; a\nbigger lamp runs hotter and whiter, a small one cooler and redder.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "model": {
+          "description": "Follow a physical model instead of easing over a duration.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Model"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "offset": {
           "description": "Motion added on top of a move, along its direction of travel: keys\nlike a timeline track's, `t` in seconds from the start of the move,\n`v` in the value's units. Has to start and end at 0. A move lasts as\nlong as the longer of `duration` and these keys.",
@@ -1930,10 +1976,7 @@
           ],
           "format": "double"
         }
-      },
-      "required": [
-        "duration"
-      ]
+      }
     },
     "Triggers": {
       "description": "A trigger name, or a list of names; firing any of them has the same effect.",

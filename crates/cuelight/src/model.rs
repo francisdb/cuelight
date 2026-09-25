@@ -999,6 +999,10 @@ impl Reel {
     pub fn roll(&self) -> Transition {
         Transition {
             duration: self.duration,
+            model: None,
+            kelvin: None,
+            heating: None,
+            cooling: None,
             ease: self.ease,
             wrap: None,
             direction: None,
@@ -1688,8 +1692,28 @@ pub struct Binding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Transition {
-    /// Seconds a change takes; above 0.
+    /// Seconds a change takes; above 0. Not used, and not needed, with a
+    /// `model`, which decides its own timing.
+    #[serde(default)]
     pub duration: f64,
+    /// Follow a physical model instead of easing over a duration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<Model>,
+    /// Temperature of the filament at full power, in kelvin, which is
+    /// also the colour it glows there. 2700 by default, a warm white; a
+    /// bigger lamp runs hotter and whiter, a small one cooler and redder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kelvin: Option<f64>,
+    /// How quickly the filament heats, in seconds: the time it takes to
+    /// close about two thirds of the gap to where it is heading. Full
+    /// brightness takes roughly five times this. 0.007 by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heating: Option<f64>,
+    /// The same going the other way, and always the slower of the two: a
+    /// filament loses heat more slowly than the power puts it in. 0.06 by
+    /// default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooling: Option<f64>,
     #[serde(default)]
     pub ease: Easing,
     /// Size of the ring the value lives on; above 0.
@@ -1914,6 +1938,27 @@ pub struct Timeline {
 pub struct Track {
     pub property: Property,
     pub keys: Vec<Key>,
+}
+
+/// A physical model a transition follows instead of an ease.
+///
+/// A lamp is not a fade. Much of how a panel of lamps looks is how they
+/// switch, and a lamp switching is its filament's temperature chasing the
+/// power put into it: full brightness in a few tens of milliseconds, most
+/// of the light gone as fast when the power goes, then a dim red glow for
+/// much longer. A filament re-lit while still warm comes up quicker than
+/// a cold one, which no duration and ease can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum Model {
+    /// A glowing filament. The binding's value is the power put into it,
+    /// 0 to 1; a numeric property gets the light that comes out and a
+    /// `tint` gets the filament's colour, which reddens as it cools.
+    ///
+    /// Shaped by `kelvin`, `heating` and `cooling`, so it is any lamp
+    /// with a filament rather than one make of bulb.
+    Incandescent,
 }
 
 /// A keyframe: at time `t` (seconds) the property reaches value `v`,
