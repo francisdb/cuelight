@@ -425,6 +425,38 @@ pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 }
 
 /// The files directly in `dir`, in name order.
+/// Every file under `dir`, at any depth, as paths relative to it and
+/// `/`-separated, sorted.
+///
+/// A show's assets are walked rather than listed folder by folder, so a
+/// file a folder deeper is seen: a clip grouped in a subfolder is
+/// opened, and anything nothing can use is reported rather than dropped.
+pub(crate) fn files_under(dir: &Path, prefix: &str) -> Result<Vec<String>, LoadError> {
+    let entries = std::fs::read_dir(dir).map_err(|source| LoadError::Io {
+        path: dir.to_owned(),
+        source,
+    })?;
+    let mut out = Vec::new();
+    let mut folders = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let here = format!("{prefix}/{name}");
+        if path.is_dir() {
+            folders.push((path, here));
+        } else if path.is_file() {
+            out.push(here);
+        }
+    }
+    for (path, here) in folders {
+        out.extend(files_under(&path, &here)?);
+    }
+    out.sort();
+    Ok(out)
+}
+
 pub(crate) fn files_in(dir: &Path) -> Result<Vec<PathBuf>, LoadError> {
     let entries = std::fs::read_dir(dir).map_err(|source| LoadError::Io {
         path: dir.to_owned(),

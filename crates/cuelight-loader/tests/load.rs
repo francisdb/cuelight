@@ -641,7 +641,10 @@ fn a_file_the_show_names_by_path_is_not_reported() {
 }
 
 #[test]
-fn clips_are_not_reported_since_the_host_opens_them() {
+fn clips_are_not_reported_since_they_are_collected_as_paths() {
+    // A clip is the caller's to open, so it is never reported here; from
+    // a folder it is collected as a path, which
+    // `a_clip_in_a_subfolder_reaches_the_host` covers.
     let show = r##"{ "name": "clips", "size": [8, 8], "layers": [] }"##;
     let files = in_memory(
         show,
@@ -650,4 +653,73 @@ fn clips_are_not_reported_since_the_host_opens_them() {
     let mut engine = Engine::new();
     let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
     assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+}
+
+/// A show folder on disk, removed when the test ends.
+struct Folder(PathBuf);
+
+impl Folder {
+    fn new(name: &str, show: &str, files: &[(&str, &[u8])]) -> Folder {
+        let dir = std::env::temp_dir().join(format!("cuelight-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("show.json"), show).unwrap();
+        for (path, bytes) in files {
+            let file = dir.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, bytes).unwrap();
+        }
+        Folder(dir)
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_folder_reports_a_file_it_does_not_walk_to() {
+    // The same case as the in-memory test, but loaded from disk, which
+    // is what the player and the render tool do.
+    let folder = Folder::new(
+        "deep",
+        r##"{ "name": "deep", "size": [8, 8], "layers": [] }"##,
+        &[("assets/art/logo.png", b"not really a png")],
+    );
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &folder.0).unwrap();
+    assert_eq!(loaded.skipped, ["assets/art/logo.png"]);
+}
+
+#[test]
+fn a_clip_in_a_subfolder_reaches_the_host() {
+    // Clips grouped in folders is the natural layout for a collection,
+    // so a nested one is collected, not reported.
+    let folder = Folder::new(
+        "clips",
+        r##"{ "name": "clips", "size": [8, 8], "layers": [] }"##,
+        &[("assets/videos/intro/clip.mp4", b"not really an mp4")],
+    );
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &folder.0).unwrap();
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+    assert_eq!(
+        loaded.videos,
+        [folder.0.join("assets/videos/intro/clip.mp4")]
+    );
+}
+
+#[test]
+fn a_folder_named_like_the_clips_folder_is_not_the_clips_folder() {
+    let folder = Folder::new(
+        "lookalike",
+        r##"{ "name": "lookalike", "size": [8, 8], "layers": [] }"##,
+        &[("assets/videos-old/clip.mp4", b"not really an mp4")],
+    );
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &folder.0).unwrap();
+    assert!(loaded.videos.is_empty(), "{:?}", loaded.videos);
+    assert_eq!(loaded.skipped, ["assets/videos-old/clip.mp4"]);
 }
