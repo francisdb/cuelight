@@ -196,12 +196,19 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     // the file's header through ffprobe, no frames decoded. A machine
     // without ffmpeg says so once per file and carries on, since a show
     // that never ends a clip still renders.
+    //
+    // Bounded by the canvas, as the player bounds it, so a layer showing
+    // a clip far bigger than the show lays out the same in both.
+    let how = cuelight_video::Decode {
+        size: engine.show().map(|show| show.size),
+        ..cuelight_video::Decode::default()
+    };
     for path in &loaded.videos {
         let name = path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
-        match cuelight_video::Clip::open(path, None) {
+        match cuelight_video::Clip::open(path, Some(how)) {
             Ok(clip) => {
                 let details = clip.details();
                 engine

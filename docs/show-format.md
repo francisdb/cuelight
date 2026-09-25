@@ -1118,10 +1118,13 @@ make dots out of.
 Sound lengths are read from the file's header, so a sound ends and its
 `on_end` fires and a show chained through one runs to the end. Nothing is
 decoded unless the header does not say (a constant-bitrate MP3 without a
-Xing header), no sound device is opened and nothing is played. Video lengths come from the file's header too, through `ffprobe`, so a
-show chained through a video's `on_end` runs to the end as well. Nothing
-is decoded. A show with no videos never looks for ffmpeg; one that has
-them says so per file and carries on if ffmpeg is not installed.
+Xing header), no sound device is opened and nothing is played.
+
+Video lengths come from the file's header too, through `ffprobe`, so a
+show chained through a video's `on_end` runs to the end as well, and a
+clip is measured bounded by the canvas exactly as the player measures it.
+Nothing is decoded. A show with no videos never looks for ffmpeg; one
+that has them says so per file and carries on if ffmpeg is not installed.
 
 Determinism: within one run the engine and the renderer are exact, so a
 strip is internally consistent. Across runs the GPU can differ by one
