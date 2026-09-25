@@ -498,6 +498,14 @@ pub struct Playing {
     pub layer: String,
     /// The video, as registered with [`Engine::set_video`].
     pub video: String,
+    /// The name to hand this play's picture over under, with
+    /// [`Engine::set_image`], and the one the layer draws from.
+    ///
+    /// One per video layer, not per clip: two layers playing one clip at
+    /// different positions each show their own frame, where a name they
+    /// shared would leave both drawing whichever was written last. The
+    /// engine makes it; a host only passes it back.
+    pub frame: String,
     /// Seconds into the video, wrapped for loops and repeats.
     pub position: f64,
     /// Whether it plays on from its end.
@@ -1042,6 +1050,7 @@ impl Engine {
                             id: play.id,
                             layer: layer.name.clone(),
                             video: video.clone(),
+                            frame: frame_key(root, path),
                             position,
                             looping: media.looping,
                         });
@@ -2757,7 +2766,7 @@ impl Engine {
                 let video = &self.showing(root, path);
                 let info = self.videos.get(video);
                 let natural = info.map(|info| [info.width, info.height]).or_else(|| {
-                    let frame = self.images.get(video)?;
+                    let frame = self.images.get(&frame_key(root, path))?;
                     Some([f64::from(frame.width), f64::from(frame.height)])
                 })?;
                 let [w, h] = size.unwrap_or(natural);
@@ -3402,7 +3411,8 @@ impl Engine {
                             .iter()
                             .find(|play| play.root == root && play.layer_path == *path);
                         let video = &playing.map(|play| play.playing.clone()).unwrap_or_default();
-                        if let Some(frame) = self.images.get(video) {
+                        let key = playing.map(|_| frame_key(root, path)).unwrap_or_default();
+                        if let Some(frame) = self.images.get(&key) {
                             let natural = self.videos.get(video).map_or(
                                 [f64::from(frame.width), f64::from(frame.height)],
                                 |info| [info.width, info.height],
@@ -3413,7 +3423,7 @@ impl Engine {
                                 overflow,
                                 name: layer.name.clone(),
                                 shape: ResolvedShape::Image {
-                                    image: video.to_owned(),
+                                    image: key,
                                     tile: None,
                                     source: None,
                                     x,
@@ -3783,6 +3793,23 @@ fn offset_problem(offset: &[crate::model::Key]) -> Option<&'static str> {
         return Some("needs an offset that starts and ends at 0");
     }
     None
+}
+
+/// The name one video layer's picture is registered under.
+///
+/// A layer, not a clip: a clip playing on two layers is at two positions
+/// at once, and under one name the two would share a frame. Not a name
+/// a host would give an asset, since nothing else is registered with a
+/// space in it.
+fn frame_key(root: Root, path: &[usize]) -> String {
+    let mut key = match root {
+        Root::Show => "video show".to_owned(),
+        Root::Scene(i) => format!("video scene {i}"),
+    };
+    for step in path {
+        key.push_str(&format!("/{step}"));
+    }
+    key
 }
 
 /// A binding's number after `threshold`, `scale` and `offset`.

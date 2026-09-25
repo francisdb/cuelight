@@ -14,10 +14,28 @@ fn engine(layers: &str) -> Engine {
     engine
 }
 
-/// A frame of flat colour, as a host would hand over after decoding.
-fn frame(engine: &mut Engine, name: &str, [width, height]: [u32; 2]) {
+/// A frame of flat colour handed over for whatever is playing, the way a
+/// host does it: under the key `videos()` gives for that play, which is
+/// the layer's rather than the clip's.
+fn frame(engine: &mut Engine, [width, height]: [u32; 2]) {
+    let keys: Vec<String> = engine
+        .videos()
+        .unwrap()
+        .into_iter()
+        .map(|playing| playing.frame)
+        .collect();
+    assert!(!keys.is_empty(), "nothing is playing to hand a frame to");
     let pixels = vec![255; (width * height * 4) as usize];
-    engine.set_image(name, width, height, pixels).unwrap();
+    for key in keys {
+        engine
+            .set_image(&key, width, height, pixels.clone())
+            .unwrap();
+    }
+}
+
+/// The key the one playing video reports.
+fn key(engine: &Engine) -> String {
+    engine.videos().unwrap()[0].frame.clone()
 }
 
 const INTRO: &str = r#"{ "name": "intro", "type": "video", "video": "intro",
@@ -57,7 +75,8 @@ fn the_engine_decodes_nothing_and_draws_what_the_host_hands_over() {
     assert!(engine.resolved_layers().unwrap().is_empty());
     assert_eq!(engine.videos().unwrap().len(), 1);
 
-    frame(&mut engine, "intro", [16, 8]);
+    frame(&mut engine, [16, 8]);
+    let drawn = key(&engine);
     let layers = engine.resolved_layers().unwrap();
     assert_eq!(layers.len(), 1);
     match &layers[0].shape {
@@ -67,7 +86,7 @@ fn the_engine_decodes_nothing_and_draws_what_the_host_hands_over() {
             height,
             ..
         } => {
-            assert_eq!(image, "intro");
+            assert_eq!(*image, drawn, "the key the play reported");
             // The registered size, not the frame's, so a host may hand
             // over a frame of any size.
             assert_eq!((*width, *height), (16.0, 8.0));
@@ -82,7 +101,7 @@ fn size_scales_the_picture_like_an_image() {
         r#"{ "name": "intro", "type": "video", "video": "intro", "autoplay": true,
              "size": [32, 16], "x": 4, "y": 2 }"#,
     );
-    frame(&mut engine, "intro", [16, 8]);
+    frame(&mut engine, [16, 8]);
     let ResolvedShape::Image {
         x,
         y,
@@ -156,11 +175,10 @@ fn a_video_registered_late_is_shown_from_where_it_would_be() {
 
 #[test]
 fn an_invisible_video_is_not_shown() {
-    let mut engine = engine(
+    let engine = engine(
         r#"{ "name": "intro", "type": "video", "video": "intro", "autoplay": true,
              "visible": false }"#,
     );
-    frame(&mut engine, "intro", [16, 8]);
     assert!(engine.videos().unwrap().is_empty());
     assert!(engine.resolved_layers().unwrap().is_empty());
 }
@@ -228,8 +246,7 @@ fn a_layer_draws_and_measures_the_clip_it_is_pointed_at() {
                                "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
         )
         .unwrap();
-    frame(&mut engine, "intro", [16, 8]);
-    frame(&mut engine, "bonus", [32, 16]);
+    frame(&mut engine, [16, 8]);
     let drawn = |e: &Engine| match &e.resolved_layers().unwrap()[0].shape {
         ResolvedShape::Image {
             image,
@@ -239,11 +256,63 @@ fn a_layer_draws_and_measures_the_clip_it_is_pointed_at() {
         } => (image.clone(), *width, *height),
         other => panic!("{other:?}"),
     };
-    assert_eq!(drawn(&engine), ("intro".to_owned(), 16.0, 8.0));
+    let one = key(&engine);
+    assert_eq!(drawn(&engine), (one.clone(), 16.0, 8.0));
     engine.set_variable("clip", "bonus");
     engine.advance_frame(0.0);
-    // The other clip, at its own size.
-    assert_eq!(drawn(&engine), ("bonus".to_owned(), 32.0, 16.0));
+    // The other clip, at its own size, through the same key: the key
+    // belongs to the layer, so a host that follows `videos()` hands the
+    // new clip's frames over without knowing anything changed.
+    frame(&mut engine, [32, 16]);
+    assert_eq!(drawn(&engine), (one, 32.0, 16.0));
+}
+
+#[test]
+fn two_layers_of_one_clip_each_draw_their_own_frame() {
+    // The same clip on two layers, a second apart: each is at its own
+    // position, so each gets its own picture. Under one name for the
+    // clip they would share an image and both draw whichever frame the
+    // host wrote last.
+    let mut engine = Engine::new();
+    engine.set_video("sweep", 4.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "twice", "size": [64, 32], "layers": [
+                 { "name": "left", "type": "video", "video": "sweep", "autoplay": true },
+                 { "name": "right", "type": "video", "video": "sweep", "autoplay": true,
+                   "delay": 1.0, "x": 8 } ] }"#,
+        )
+        .unwrap();
+    engine.advance_to(1.5);
+    let playing = engine.videos().unwrap();
+    assert_eq!(playing.len(), 2);
+    let at = |layer: &str| {
+        playing
+            .iter()
+            .find(|p| p.layer == layer)
+            .unwrap_or_else(|| panic!("{layer} is not playing"))
+    };
+    assert!((at("left").position - 1.5).abs() < 1e-9);
+    assert!((at("right").position - 0.5).abs() < 1e-9);
+    assert_ne!(at("left").frame, at("right").frame, "one key each");
+
+    // A frame apiece, told apart by their size.
+    let (left, right) = (at("left").frame.clone(), at("right").frame.clone());
+    engine.set_image(&left, 2, 2, vec![255; 16]).unwrap();
+    engine.set_image(&right, 4, 4, vec![128; 64]).unwrap();
+    let drawn: Vec<(String, String)> = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .map(|l| match l.shape {
+            ResolvedShape::Image { image, .. } => (l.name, image),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        drawn,
+        [("left".to_owned(), left), ("right".to_owned(), right)]
+    );
 }
 
 #[test]
@@ -278,7 +347,7 @@ fn a_layer_ends_on_the_clip_it_is_playing() {
 fn a_video_that_has_ended_shows_nothing() {
     let mut engine = engine(INTRO);
     engine.trigger("play");
-    frame(&mut engine, "intro", [16, 8]);
+    frame(&mut engine, [16, 8]);
     assert_eq!(engine.resolved_layers().unwrap().len(), 1);
     // Past its end: the layer is done, so a background behind it shows
     // through rather than its last frame staying visible.

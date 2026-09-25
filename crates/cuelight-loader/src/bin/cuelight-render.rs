@@ -212,8 +212,11 @@ fn show_video_frames(
         };
         let details = clip.details();
         let frame = clip.still(playing.position).and_then(|frame| {
+            // Under the key the play reports, not the clip's name: two
+            // layers playing one clip are at two positions, and each
+            // draws its own picture.
             engine
-                .set_image(&playing.video, details.width, details.height, frame)
+                .set_image(&playing.frame, details.width, details.height, frame)
                 .map_err(|e| e.to_string())
         });
         if let Err(e) = frame {

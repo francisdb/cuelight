@@ -718,13 +718,21 @@ it comes through; a layer that should stay visible loops.
 loop, repeat and end a play, and the size, so the layer has a box before
 anything has been decoded. Each frame the host reads `Engine::videos()`,
 the picture twin of `voices()`: per playing video an id, the layer, the
-video's name, the position in seconds and whether it loops. The host
-decodes to that position and hands the picture back with
-`Engine::set_image` under the video's name, which the layer draws. A
-frame is then an image like any other, with the same upload path and
-caches, and a host that cannot decode video still loads the show: the
-layer shows nothing until a frame arrives, exactly as an image layer
-does.
+video's name, the position in seconds, whether it loops, and the `frame`
+name to hand the picture back under. The host decodes to that position
+and hands it back with `Engine::set_image` under that name, which the
+layer draws. A frame is then an image like any other, with the same
+upload path and caches, and a host that cannot decode video still loads
+the show: the layer shows nothing until a frame arrives, exactly as an
+image layer does.
+
+The `frame` name belongs to the layer, not to the clip, and the engine
+makes it: a host passes it back and never builds one. That is what lets
+the same clip play on two layers at different positions, each drawing
+its own picture; under one name for the clip both would draw whichever
+frame was written last. A layer shows one picture at a time, so one name
+per layer is all it takes, and it does not change when the layer is
+pointed at another clip.
 
 Decoding lives outside the engine, in the `cuelight-video` crate, behind
 cargo features, so a host pays for a decoder only if it wants one.
