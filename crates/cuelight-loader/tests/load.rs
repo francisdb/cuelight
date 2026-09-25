@@ -590,3 +590,64 @@ fn seeking_replays_the_driver_on_the_way() {
         Some(&cuelight::Value::Number(10.0))
     );
 }
+
+/// A show and its files, held in memory, for the cases where the layout
+/// matters more than the content.
+fn in_memory(show: &str, files: &[(&str, &[u8])]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut all: std::collections::BTreeMap<String, Vec<u8>> =
+        [("show.json".to_owned(), show.as_bytes().to_vec())]
+            .into_iter()
+            .collect();
+    for (path, bytes) in files {
+        all.insert((*path).to_owned(), bytes.to_vec());
+    }
+    all
+}
+
+#[test]
+fn a_file_the_loader_does_not_walk_is_reported_not_dropped() {
+    // assets/art/ is a folder the loader does not look in, so the file
+    // registers nothing. Saying so beats a missing-asset error later
+    // that points at the name rather than the file sitting right there.
+    let show = r##"{ "name": "deep", "size": [8, 8], "layers": [] }"##;
+    let files = in_memory(
+        show,
+        &[
+            ("assets/art/logo.png", b"not really a png"),
+            ("assets/sounds/deeper/beep.wav", b"not really a wav"),
+        ],
+    );
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert_eq!(
+        loaded.skipped,
+        ["assets/art/logo.png", "assets/sounds/deeper/beep.wav"]
+    );
+}
+
+#[cfg(feature = "png")]
+#[test]
+fn a_file_the_show_names_by_path_is_not_reported() {
+    // The same folder the loader does not walk, but this time the
+    // document asks for the file by path, so it is used, not skipped.
+    let show = r##"{ "name": "named", "size": [8, 8], "layers": [
+        { "name": "logo", "type": "image", "image": "art/logo.png" } ] }"##;
+    let png = std::fs::read(shows().join("beacon/assets/orb.png")).unwrap();
+    let files = in_memory(show, &[("art/logo.png", &png)]);
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+    assert_eq!(loaded.images, ["art/logo.png"]);
+}
+
+#[test]
+fn clips_are_not_reported_since_the_host_opens_them() {
+    let show = r##"{ "name": "clips", "size": [8, 8], "layers": [] }"##;
+    let files = in_memory(
+        show,
+        &[("assets/videos/intro/clip.mp4", b"not really an mp4")],
+    );
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+}

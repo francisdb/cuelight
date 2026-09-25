@@ -131,6 +131,7 @@ pub fn load_from_memory(
         skipped: Vec::new(),
     };
 
+    let mut unclaimed: Vec<String> = Vec::new();
     for (path, bytes) in files {
         // Directly in assets/ or assets/fonts/, nothing deeper.
         let Some((dir, file)) = path.rsplit_once('/') else {
@@ -191,11 +192,22 @@ pub fn load_from_memory(
                     bytes: bytes.clone(),
                 });
             }
+            // Under assets/ but not somewhere the loader looks: a
+            // folder deeper than it walks, or one it does not know.
+            // Collected rather than dropped, and reported below once the
+            // document has had its say, since it may name the file by
+            // path itself. Clips are the caller's to collect.
+            dir if dir.starts_with("assets/") && !dir.starts_with("assets/videos") => {
+                unclaimed.push(path.clone());
+            }
             _ => {}
         }
     }
 
-    register_named(engine, show, files, &mut loaded)?;
+    let named = register_named(engine, show, files, &mut loaded)?;
+    loaded
+        .skipped
+        .extend(unclaimed.into_iter().filter(|p| !named.contains(p)));
 
     engine.load_show(show).map_err(|source| LoadError::Engine {
         path: PathBuf::from("show.json"),
@@ -223,15 +235,18 @@ pub fn load_from_memory(
 /// and its siblings, so an unregistered stem stays no error at all. That
 /// is what keeps a streamed or generated asset working while a mistyped
 /// path does not ship.
+/// Register the files the document names by a path of its own, and say
+/// which paths those were, so a file the loader did not otherwise claim
+/// is only reported as skipped when nothing wanted it.
 fn register_named(
     engine: &mut Engine,
     show: &str,
     files: &BTreeMap<String, Vec<u8>>,
     loaded: &mut LoadedFiles,
-) -> Result<(), LoadError> {
+) -> Result<Vec<String>, LoadError> {
     let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
         // Not a show at all; loading it will say so properly in a moment.
-        return Ok(());
+        return Ok(Vec::new());
     };
     let asset_error = |path: &str, message: String| LoadError::Asset {
         path: PathBuf::from(path),
@@ -312,7 +327,7 @@ fn register_named(
             message: format!("{} file(s) the show names are not there", missing.len()),
         });
     }
-    Ok(())
+    Ok(done)
 }
 
 /// What kind of asset a name in a show document refers to.
