@@ -4076,9 +4076,6 @@ fn collect_timelines(
     }
 }
 
-/// Place a shape's local geometry: scaled uniformly around the layer's
-/// x/y origin, then translated to it. A stroked rect or circle resolves
-/// as a path, the one shape that carries a stroke.
 /// The outline of a rect, with rounded corners when it has a radius.
 ///
 /// Quarter circles as cubics, the same approximation SVG arcs get, so a
@@ -4113,6 +4110,9 @@ fn rect_path(rect: [f64; 4], radius: Option<f64>) -> Vec<PathElement> {
     ]
 }
 
+/// Place a shape's local geometry: scaled uniformly around the layer's
+/// x/y origin, then translated to it. A stroked rect or circle resolves
+/// as a path, the one shape that carries a stroke.
 fn resolve_shape(
     shape: &Shape,
     x: f64,

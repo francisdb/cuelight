@@ -1061,7 +1061,6 @@ pub enum SegmentStyle {
 /// Untagged, so a rect can carry a corner radius beside it
 /// (`{ "rect": [0, 0, 8, 4], "radius": 2 }`) rather than nesting it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 #[non_exhaustive]
 pub enum Shape {
@@ -1081,6 +1080,72 @@ pub enum Shape {
         /// SVG path data (`"M 0 0 L 10 0 L 5 8 Z"`): lines, curves and arcs.
         path: PathData,
     },
+}
+
+// Described by hand for the same reason it is read by hand: an untagged
+// enum generates `anyOf` with no `additionalProperties`, so an editor
+// would not flag a misspelt `raduis`, a `radius` on a circle, or a rect
+// and a circle in one object. `oneOf` with each form closed says what
+// the loader accepts.
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for Shape {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Shape".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::Shape").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let numbers = |n: usize, description: &str| {
+            serde_json::json!({
+                "description": description,
+                "type": "array",
+                "items": { "type": "number", "format": "double" },
+                "minItems": n,
+                "maxItems": n
+            })
+        };
+        let closed = |name: &str, shape: serde_json::Value, extra: serde_json::Value| {
+            let mut properties = serde_json::Map::new();
+            properties.insert(name.to_owned(), shape);
+            if let serde_json::Value::Object(more) = extra {
+                properties.extend(more);
+            }
+            serde_json::json!({
+                "type": "object",
+                "properties": properties,
+                "required": [name],
+                "additionalProperties": false
+            })
+        };
+        let radius = serde_json::json!({
+            "radius": {
+                "description": "Corner radius, clamped to half the shorter side, so a \
+                                large one gives a pill. All four corners; absent is square.",
+                "type": ["number", "null"],
+                "format": "double"
+            }
+        });
+        let none = serde_json::Value::Null;
+        schemars::Schema::try_from(serde_json::json!({
+            "description": "Vector shapes, in the layer's local coordinate space.\n\n\
+                            One of rect, circle or path; a rect may carry a corner \
+                            radius beside it.",
+            "oneOf": [
+                closed("rect", numbers(4, "`[x, y, width, height]`"), radius),
+                closed("circle", numbers(3, "`[cx, cy, radius]`"), none.clone()),
+                closed(
+                    "path",
+                    serde_json::to_value(generator.subschema_for::<PathData>())
+                        .unwrap_or(serde_json::Value::Bool(true)),
+                    none,
+                ),
+            ]
+        }))
+        .expect("a schema built from an object literal")
+    }
 }
 
 // Read by hand rather than as an untagged enum: serde answers a bad
