@@ -841,7 +841,7 @@
           ]
         },
         {
-          "description": "A host-provided raster image, registered under `image` via\n[`Engine::set_image`](crate::Engine::set_image). Drawn with its\ntop-left corner at the layer's x/y unless the layer has an\n`anchor`; not yet registered images are skipped.",
+          "description": "Artwork the host registered under `image`: pixels through\n[`Engine::set_image`](crate::Engine::set_image), or vector artwork\nthrough [`Engine::set_vector`](crate::Engine::set_vector), which\nthe loader does for every `assets/*.svg`. Drawn with its top-left\ncorner at the layer's x/y unless the layer has an `anchor`; what\nis not registered yet is skipped.\n\nOne layer kind for both, since the asset says how to draw itself\nand everything else about a layer of artwork is the same. `type`\nand the name may still be written as `vector`, which older shows\ndo; `sheet` and `frame` are for pixels, and say so at load on\nvector artwork.",
           "type": "object",
           "properties": {
             "frame": {
@@ -854,7 +854,7 @@
               "type": "string"
             },
             "repeat": {
-              "description": "Tile the image across `size` instead of stretching to it.",
+              "description": "Tile the artwork across `size` instead of stretching to it.",
               "anyOf": [
                 {
                   "$ref": "#/$defs/Tile"
@@ -865,7 +865,7 @@
               ]
             },
             "sheet": {
-              "description": "Treat the image as a grid of equally sized cells and draw one:\nthe one the `frame` property selects.",
+              "description": "Treat the image as a grid of equally sized cells and draw one:\nthe one the `frame` property selects. Pixels only.",
               "anyOf": [
                 {
                   "$ref": "#/$defs/Sheet"
@@ -891,7 +891,7 @@
               "minItems": 2
             },
             "tint": {
-              "description": "Color the image is multiplied by, `#RRGGBB` or `#RRGGBBAA`:\nwhite leaves it alone, a color stains it (a lamp behind white\nart, a worn look, one sprite in several colors).",
+              "description": "Color the artwork is multiplied by, `#RRGGBB` or `#RRGGBBAA`:\nwhite leaves it alone, a color stains it (a lamp behind white\nart, a worn look, one sprite or icon in several colors).",
               "type": [
                 "string",
                 "null"
@@ -943,37 +943,6 @@
             "type",
             "text",
             "font"
-          ]
-        },
-        {
-          "description": "Vector artwork the host registered under `vector`\n([`Engine::set_vector`](crate::Engine::set_vector), the loader does\nit for `assets/*.svg`), drawn like an image: its top-left corner at\nthe layer's x/y (or by `anchor`), at its natural size or scaled\ninto `size`. Skipped while not registered.",
-          "type": "object",
-          "properties": {
-            "size": {
-              "description": "Destination size `[width, height]`; the artwork's own size\nwhen omitted.",
-              "type": [
-                "array",
-                "null"
-              ],
-              "default": null,
-              "items": {
-                "type": "number",
-                "format": "double"
-              },
-              "maxItems": 2,
-              "minItems": 2
-            },
-            "type": {
-              "type": "string",
-              "const": "vector"
-            },
-            "vector": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "type",
-            "vector"
           ]
         },
         {

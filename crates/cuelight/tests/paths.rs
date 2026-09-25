@@ -210,6 +210,158 @@ fn a_vector_layer_draws_its_paths_scaled_into_size() {
 }
 
 #[test]
+fn artwork_is_one_layer_kind_whichever_the_asset_is() {
+    // The same layer draws pixels or paths, and an older show writing
+    // the kind and the name as `vector` still loads.
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "name": "logo", "type": "image", "image": "logo", "x": 4, "y": 2 }"#,
+        ))
+        .unwrap();
+    assert_eq!(resolved(&engine).len(), 2, "the artwork's two paths");
+    assert!(engine.load_warnings().is_empty());
+
+    engine
+        .load_show(&show(
+            r#"{ "name": "logo", "type": "vector", "vector": "logo", "x": 4, "y": 2 }"#,
+        ))
+        .unwrap();
+    assert_eq!(resolved(&engine).len(), 2, "the old spelling of the same");
+}
+
+#[test]
+fn a_layer_after_artwork_keeps_its_timelines() {
+    // Every layer is found by its path in the tree, and a layer that
+    // takes a shortcut through the walk leaves that path a step too
+    // long: everything after it then looks its timelines up somewhere
+    // that does not exist, and quietly stops moving.
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r##"{ "name": "art", "type": "image", "image": "logo" },
+                { "name": "mover", "type": "shape", "x": 0,
+                  "shape": { "rect": [0, 0, 4, 4] }, "fill": "#FFFFFF",
+                  "timelines": [{ "name": "slide", "autoplay": true,
+                    "tracks": [{ "property": "x",
+                                 "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 20 }] }] }] }"##,
+        ))
+        .unwrap();
+    engine.advance_to(0.5);
+    let moved = resolved(&engine)
+        .into_iter()
+        .find(|l| l.name == "mover")
+        .map(|l| match l.shape {
+            ResolvedShape::Rect { x, .. } => x,
+            other => panic!("{other:?}"),
+        });
+    assert_eq!(moved, Some(10.0), "the timeline after the artwork ran");
+}
+
+#[test]
+fn the_older_spelling_of_an_artwork_layer_is_not_a_field_nobody_read() {
+    // A show writing `vector` is read, so it should not be told the
+    // field was dropped: the model keeps it under the name it shares
+    // with pixels.
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "name": "art", "type": "vector", "vector": "logo" }"#,
+        ))
+        .unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    // A field nothing reads is still reported.
+    engine
+        .load_show(&show(
+            r#"{ "name": "art", "type": "vector", "vector": "logo", "vectors": "logo" }"#,
+        ))
+        .unwrap();
+    assert_eq!(
+        engine.load_warnings().len(),
+        1,
+        "{:?}",
+        engine.load_warnings()
+    );
+}
+
+#[test]
+fn a_tint_stains_vector_artwork_as_it_does_pixels() {
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r##"{ "name": "logo", "type": "image", "image": "logo", "tint": "#808000" }"##,
+        ))
+        .unwrap();
+    let layers = resolved(&engine);
+    // Blue through a tint with no blue in it: gone. The stroke is
+    // stained the same way.
+    assert_eq!(layers[0].color, [0, 0, 0, 255]);
+    let ResolvedShape::Path { stroke, .. } = &layers[1].shape else {
+        panic!()
+    };
+    assert_eq!(stroke, &Some(([128, 0, 0, 255], 1.0)));
+}
+
+#[test]
+fn vector_artwork_tiles_across_its_box_and_stops_at_it() {
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "name": "wall", "type": "image", "image": "logo", "x": 0, "y": 0,
+                 "size": [30, 10], "repeat": { "size": [10, 5] } }"#,
+        ))
+        .unwrap();
+    let layers = resolved(&engine);
+    // Three across and two down, each the artwork's two paths, inside a
+    // clip of the layer's box.
+    assert!(
+        matches!(&layers[0].shape, ResolvedShape::ClipBegin { shape }
+            if matches!(**shape, ResolvedShape::Rect { width: 30.0, height: 10.0, .. })),
+        "{:?}",
+        layers[0].shape
+    );
+    assert!(matches!(
+        layers[layers.len() - 1].shape,
+        ResolvedShape::ClipEnd
+    ));
+    assert_eq!(layers.len() - 2, 3 * 2 * 2);
+    // The second tile starts one tile across.
+    let corner = |layer: &cuelight::ResolvedLayer| match &layer.shape {
+        ResolvedShape::Path { elements, .. } => match elements[0] {
+            PathElement::MoveTo(at) => at,
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(corner(&layers[1]), [0.0, 0.0]);
+    assert_eq!(corner(&layers[3]), [10.0, 0.0]);
+    assert_eq!(corner(&layers[7]), [0.0, 5.0]);
+}
+
+#[test]
+fn a_sheet_on_vector_artwork_is_reported() {
+    let mut engine = Engine::new();
+    engine.set_vector("logo", logo()).unwrap();
+    engine
+        .load_show(&show(
+            r#"{ "name": "logo", "type": "image", "image": "logo",
+                 "sheet": { "cell": [4, 4], "columns": 2 } }"#,
+        ))
+        .unwrap();
+    let warnings = engine.load_warnings().join("\n");
+    assert!(warnings.contains("sheet of cells"), "{warnings}");
+}
+
+#[test]
 fn a_vector_layer_at_natural_size_with_an_anchor() {
     let mut engine = Engine::new();
     engine.set_vector("logo", logo()).unwrap();

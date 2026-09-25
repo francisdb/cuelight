@@ -106,9 +106,13 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
     let fonts = &engine.show().expect("show loaded").fonts;
     for layer in layers {
         match &layer.kind {
-            LayerKind::Image { image, .. } if engine.image(image).is_none() => {
+            // Artwork is pixels or vector paths, whichever is
+            // registered under the name.
+            LayerKind::Image { image, .. }
+                if engine.image(image).is_none() && engine.vector(image).is_none() =>
+            {
                 log::warn!(
-                    "image {image:?} (layer {:?}) is not registered; it will not render",
+                    "artwork {image:?} (layer {:?}) is not registered; it will not render",
                     layer.name
                 );
             }
@@ -120,12 +124,6 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
                         layer.name
                     );
                 }
-            }
-            LayerKind::Vector { vector, .. } if engine.vector(vector).is_none() => {
-                log::warn!(
-                    "vector {vector:?} (layer {:?}) is not registered; it will not render",
-                    layer.name
-                );
             }
             LayerKind::Audio { sound, .. } => {
                 for sound in sound.iter().filter(|s| engine.sound_duration(s).is_none()) {
