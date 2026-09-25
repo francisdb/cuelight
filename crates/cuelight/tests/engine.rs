@@ -722,14 +722,22 @@ fn only_lit_segments_glow() {
             layers.iter().filter(|l| l.color == [32, 0, 0, 255]).count(),
             CELLS - lit
         );
-        let halo: Vec<_> = layers
+        // The halo is what the display draws inside its own picture.
+        let opens =
+            |l: &&cuelight::ResolvedLayer| matches!(l.shape, ResolvedShape::BlendBegin { .. });
+        let from = layers.iter().position(|l| opens(&l)).expect("a halo");
+        let to = layers
             .iter()
-            .filter(|l| l.color[..3] == [255, 0, 0] && l.color[3] < 255)
-            .collect();
+            .position(|l| matches!(l.shape, ResolvedShape::BlendEnd))
+            .expect("a halo");
+        let halo: Vec<_> = layers[from + 1..to].iter().collect();
+        for pass in &halo {
+            assert_eq!(pass.color[..3], [255, 0, 0], "the lit colour");
+        }
         assert_eq!(
             layers.len() - halo.len(),
-            CELLS,
-            "one pass of lit and unlit segments under the halo"
+            CELLS + 2,
+            "one pass of lit and unlit segments, and the halo's own group"
         );
         // Every pass covers each lit segment once, so the halo is a whole
         // number of passes over the lit ones and nothing else.
@@ -741,6 +749,79 @@ fn only_lit_segments_glow() {
     assert!(passes > 1, "a halo of {passes} passes is a single outline");
     engine.set_variable("score", 38.0);
     assert_eq!(halo(&engine, 12), passes);
+}
+
+#[test]
+fn a_glow_is_light_that_adds_up_to_the_segments_own_brightness() {
+    // One cell, one lit segment, so the passes can be counted.
+    let show = r##"{ "name": "d", "size": [40, 40], "variables": { "score": 0 },
+      "layers": [
+        { "name": "d", "type": "digits", "digits": 1, "size": [40, 40], "text": "-",
+          "display": { "segments": { "style": "numeric7", "fill": "#FF8040",
+            "glow": { "size": 0.25, "strength": 0.8 } } } }
+      ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let bounds = |l: &cuelight::ResolvedLayer| match &l.shape {
+        ResolvedShape::Polygon { points } => points.iter().fold(
+            [f64::MAX, f64::MAX, f64::MIN, f64::MIN],
+            |[x0, y0, x1, y1], &[px, py]| [x0.min(px), y0.min(py), x1.max(px), y1.max(py)],
+        ),
+        other => panic!("{other:?}"),
+    };
+    let (segment, halo) = layers.split_last().expect("the segment is drawn last");
+    assert_eq!(segment.color, [255, 128, 64, 255]);
+
+    // The halo is one picture of its own: the passes add up inside it,
+    // so where two of them meet the light stops at the colour of the
+    // segment casting it instead of climbing past it into white, and
+    // that picture is light on the panel beneath.
+    let (open, rest) = halo.split_first().expect("a halo");
+    let (close, passes) = rest.split_last().expect("a halo");
+    assert!(
+        matches!(
+            open.shape,
+            ResolvedShape::BlendBegin {
+                blend: cuelight::Blend::Screen
+            }
+        ),
+        "{open:?}"
+    );
+    assert!(matches!(close.shape, ResolvedShape::BlendEnd), "{close:?}");
+    for pass in passes {
+        assert_eq!(pass.blend, cuelight::Blend::Normal, "{pass:?}");
+        assert_eq!(pass.color[..3], [255, 128, 64], "the segment's colour");
+    }
+    let halo = passes;
+    // Each pass lands on the ones outside it, so what they come to where
+    // the halo leaves the segment is the strength asked for: the
+    // innermost carries what is left of it.
+    let reached = halo.iter().fold(0.0, |so_far: f64, pass| {
+        let alpha = f64::from(pass.color[3]) / 255.0;
+        alpha + so_far * (1.0 - alpha)
+    });
+    assert!(
+        (reached - 0.8).abs() < 0.02,
+        "the halo reaches {reached} of the 0.8 asked for"
+    );
+    // Brightest nearest the segment: the passes are drawn widest first,
+    // so the last of them is the innermost.
+    assert!(halo[0].color[3] < halo[halo.len() - 1].color[3], "{halo:?}");
+
+    // The widest pass reaches a quarter of the cell beyond the segment,
+    // along the bar as well as across it: a halo follows its segment
+    // rather than swelling in the middle of it.
+    let [x0, y0, x1, y1] = bounds(segment);
+    let [hx0, hy0, hx1, hy1] = bounds(&halo[0]);
+    for (out, way) in [
+        (x0 - hx0, "left"),
+        (hx1 - x1, "right"),
+        (y0 - hy0, "up"),
+        (hy1 - y1, "down"),
+    ] {
+        assert!((out - 10.0).abs() < 0.5, "{way} by {out}, wanted 10");
+    }
 }
 
 #[test]

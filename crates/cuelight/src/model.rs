@@ -1070,18 +1070,23 @@ pub enum DigitDisplay {
 /// segment, and a panel recreated without it looks wrong however right
 /// the digits are.
 ///
-/// Drawn as the segment again, a few times, each wider and fainter than
+/// Drawn as the segment again, a few times, each grown and fainter than
 /// the last: a halo rather than a true blur, which nothing on the GPU can
 /// give us yet (see the note on text shadows). At the sizes a display is
 /// drawn it reads the same.
+///
+/// Drawn as one picture, so that where two segments' halos meet the
+/// brighter of them shows: a halo is never brighter than the segment
+/// casting it, however many of them overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Glow {
     /// How far it reaches beyond the segment, as a share of the cell's
-    /// width. About 0.05 is a rim and about 0.25 is as far as it carries,
-    /// where the halos of neighbouring digits join.
+    /// width. About 0.05 is a rim and about 0.25 a lit panel; past a
+    /// third of a cell it is a wash rather than a display.
     pub size: f64,
-    /// How strong it is where it leaves the segment, 0 to 1.
+    /// How bright it is where it leaves the segment, 0 to 1, where 1 is
+    /// as bright as the segment itself.
     #[serde(default = "default_glow_strength")]
     pub strength: f64,
 }

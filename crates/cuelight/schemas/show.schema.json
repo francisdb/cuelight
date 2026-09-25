@@ -536,16 +536,16 @@
       ]
     },
     "Glow": {
-      "description": "A halo around the lit segments of a display.\n\nGas-discharge and fluorescent displays spill light around every lit\nsegment, and a panel recreated without it looks wrong however right\nthe digits are.\n\nDrawn as the segment again, a few times, each wider and fainter than\nthe last: a halo rather than a true blur, which nothing on the GPU can\ngive us yet (see the note on text shadows). At the sizes a display is\ndrawn it reads the same.",
+      "description": "A halo around the lit segments of a display.\n\nGas-discharge and fluorescent displays spill light around every lit\nsegment, and a panel recreated without it looks wrong however right\nthe digits are.\n\nDrawn as the segment again, a few times, each grown and fainter than\nthe last: a halo rather than a true blur, which nothing on the GPU can\ngive us yet (see the note on text shadows). At the sizes a display is\ndrawn it reads the same.\n\nDrawn as one picture, so that where two segments' halos meet the\nbrighter of them shows: a halo is never brighter than the segment\ncasting it, however many of them overlap.",
       "type": "object",
       "properties": {
         "size": {
-          "description": "How far it reaches beyond the segment, as a share of the cell's\nwidth. About 0.05 is a rim and about 0.25 is as far as it carries,\nwhere the halos of neighbouring digits join.",
+          "description": "How far it reaches beyond the segment, as a share of the cell's\nwidth. About 0.05 is a rim and about 0.25 a lit panel; past a\nthird of a cell it is a wash rather than a display.",
           "type": "number",
           "format": "double"
         },
         "strength": {
-          "description": "How strong it is where it leaves the segment, 0 to 1.",
+          "description": "How bright it is where it leaves the segment, 0 to 1, where 1 is\nas bright as the segment itself.",
           "type": "number",
           "format": "double",
           "default": 0.5
