@@ -13,7 +13,7 @@
 //! let video = Video::open("intro.mp4", None)?;
 //! // engine.set_video("intro", video.duration(), video.size())?;
 //! // and per frame, for each playing video the engine reports:
-//! // engine.set_image("intro", w, h, video.frame_at(playing.position)?.to_vec())?;
+//! // engine.set_image(&playing.frame, w, h, clip.frame_at(playing.position, Some(engine.time()))?.to_vec())?;
 //! # Ok(())
 //! # }
 //! ```
@@ -30,6 +30,21 @@ mod stream;
 
 #[cfg(feature = "ffmpeg-process")]
 pub use stream::Stream;
+
+/// What keeping a clip on screen has cost, for a host that wants to say
+/// so: a stutter looks like a slow show, and only the counts tell them
+/// apart. Only a clip decoded as it plays has anything to report.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Kept {
+    /// Frames drawn with a picture older than the one that was due,
+    /// because the decoder had not got there yet.
+    pub late: u64,
+    /// Times the decoder was sent somewhere else and started again.
+    pub seeks: u64,
+    /// Times a decoder was started at all: once to begin with, and once
+    /// more for every seek and every end of a clip it had to read again.
+    pub starts: u64,
+}
 
 /// A clip's own soundtrack, as interleaved stereo samples at `rate`, or
 /// `None` when the file has no audio.
@@ -97,6 +112,9 @@ pub struct Clip {
     how: Decode,
     path: std::path::PathBuf,
     source: Source,
+    /// Whether the play loops, as the host last said; see
+    /// [`Clip::set_looping`].
+    looping: bool,
 }
 
 /// What a clip is reading frames out of, once something has asked.
@@ -111,9 +129,11 @@ enum Source {
     Decoding(std::thread::JoinHandle<Result<Video, String>>),
     /// Every frame, in memory.
     Whole(Video),
-    /// One frame at a time, as it plays.
+    /// One frame at a time, as it plays. Boxed: a stream carries a
+    /// decoder's worth of state, and a clip that holds its frames
+    /// should not pay for it.
     #[cfg(feature = "ffmpeg-process")]
-    Streamed(Stream),
+    Streamed(Box<Stream>),
 }
 
 impl Clip {
@@ -129,6 +149,7 @@ impl Clip {
                 how,
                 path: path.to_owned(),
                 source: Source::Idle,
+                looping: false,
             })
         }
         #[cfg(not(feature = "ffmpeg-process"))]
@@ -145,6 +166,7 @@ impl Clip {
             how: Decode::default(),
             path: std::path::PathBuf::new(),
             source: Source::Whole(video),
+            looping: false,
         }
     }
 
@@ -157,6 +179,22 @@ impl Clip {
         !matches!(self.source, Source::Idle)
     }
 
+    /// Say whether the play loops, which the host knows from the show
+    /// and the clip cannot.
+    ///
+    /// A clip decoded as it plays is then handed to one decoder that
+    /// runs it round and round, so going round costs no restart and
+    /// does not open the file again. Say it before the first frame is
+    /// asked for and the first decoder is already that one; said later,
+    /// it reaches the next decoder to start.
+    pub fn set_looping(&mut self, looping: bool) {
+        self.looping = looping;
+        #[cfg(feature = "ffmpeg-process")]
+        if let Source::Streamed(stream) = &self.source {
+            stream.set_looping(looping);
+        }
+    }
+
     /// Start decoding without waiting for a frame to be asked for: what a
     /// host calls when it knows what is about to play.
     pub fn warm(&mut self) {
@@ -167,7 +205,16 @@ impl Clip {
 
     /// The frame showing `position` seconds in. The first call starts the
     /// clip decoding, so it may take as long as a frame takes to arrive.
-    pub fn frame_at(&mut self, position: f64) -> Option<&[u8]> {
+    ///
+    /// `show` is the host's own clock, only so that a clip saying it
+    /// fell behind can say when in the show that was: a position in a
+    /// looping clip comes round again and does not place it. `None`
+    /// from a host that has no such clock.
+    pub fn frame_at(&mut self, position: f64, show: Option<f64>) -> Option<&[u8]> {
+        // Only a clip decoded as it plays has anything to say about
+        // falling behind, and that is the decoder this is built without.
+        #[cfg(not(feature = "ffmpeg-process"))]
+        let _ = show;
         self.warm();
         // Decoded by now? Take delivery; the frames are wanted right away.
         #[cfg(feature = "ffmpeg-process")]
@@ -194,7 +241,7 @@ impl Clip {
             #[cfg(feature = "ffmpeg-process")]
             Source::Decoding(_) => None,
             #[cfg(feature = "ffmpeg-process")]
-            Source::Streamed(stream) => stream.frame_at(position),
+            Source::Streamed(stream) => stream.frame_at(position, show),
         }
     }
 
@@ -255,6 +302,18 @@ impl Clip {
         soundtrack(&self.path, rate)
     }
 
+    /// What the clip has had to do to keep up: frames drawn older than
+    /// they should have been, and decoder restarts. Only a clip decoded
+    /// as it plays has anything to report; one held in memory is never
+    /// late.
+    pub fn kept(&self) -> Kept {
+        match &self.source {
+            #[cfg(feature = "ffmpeg-process")]
+            Source::Streamed(stream) => stream.kept(),
+            _ => Kept::default(),
+        }
+    }
+
     /// Whether the clip is still being decoded and has nothing to show.
     pub fn is_warming(&self) -> bool {
         #[cfg(feature = "ffmpeg-process")]
@@ -293,7 +352,11 @@ impl Clip {
                 "{:?}: {megabytes} MB of frames, decoding as it plays",
                 self.path
             );
-            Source::Streamed(Stream::open(&self.path, self.details, self.how))
+            let stream = Stream::open(&self.path, self.details, self.how);
+            // Told before its first frame, so the decoder it starts is
+            // already the one that runs the clip round and round.
+            stream.set_looping(self.looping);
+            Source::Streamed(Box::new(stream))
         }
         #[cfg(not(feature = "ffmpeg-process"))]
         {

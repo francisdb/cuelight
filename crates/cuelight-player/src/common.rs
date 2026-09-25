@@ -107,25 +107,39 @@ impl Fps {
         }
     }
 
-    /// Draw the counter in the top-left corner, in surface coordinates.
-    /// `scale` is the window's hidpi factor so the overlay keeps a constant
-    /// logical size.
-    pub fn draw(&self, scene: &mut vello::Scene, scale: f64) {
-        let fps = (self.value.round() as u32).min(9999);
-        let mut digits = Vec::new();
-        let mut rest = fps;
-        loop {
-            digits.push((rest % 10) as usize);
-            rest /= 10;
-            if rest == 0 {
-                break;
+    /// Draw the counter in the top-left corner, in surface coordinates,
+    /// with `counts` beside it in their own colours: what a frame rate
+    /// on its own hides, since an average absorbs a stall.
+    ///
+    /// `scale` is the window's hidpi factor so the overlay keeps a
+    /// constant logical size.
+    pub fn draw(&self, scene: &mut vello::Scene, scale: f64, counts: &[(u64, [u8; 3])]) {
+        let white = [255, 255, 255];
+        let mut groups = vec![((self.value.round() as u64).min(9999), white)];
+        groups.extend(counts.iter().map(|&(n, color)| (n.min(9999), color)));
+        let digits = |mut n: u64| {
+            let mut out = Vec::new();
+            loop {
+                out.push((n % 10) as usize);
+                n /= 10;
+                if n == 0 {
+                    break;
+                }
             }
-        }
-        digits.reverse();
+            out.reverse();
+            out
+        };
+        let groups: Vec<(Vec<usize>, [u8; 3])> = groups
+            .into_iter()
+            .map(|(n, color)| (digits(n), color))
+            .collect();
 
         let (dw, dh, t, gap) = (5.0 * scale, 9.0 * scale, 1.0 * scale, 2.0 * scale);
         let (margin, pad) = (2.0 * scale, 3.0 * scale);
-        let total_w = digits.len() as f64 * (dw + gap) - gap;
+        let between = 5.0 * scale;
+        let group_w = |digits: &Vec<usize>| digits.len() as f64 * (dw + gap) - gap;
+        let total_w: f64 = groups.iter().map(|(d, _)| group_w(d)).sum::<f64>()
+            + between * (groups.len() - 1) as f64;
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -139,10 +153,14 @@ impl Fps {
                 2.0 * scale,
             ),
         );
-        let color = Color::from_rgba8(255, 255, 255, 230);
-        for (i, &d) in digits.iter().enumerate() {
-            let x = margin + pad + i as f64 * (dw + gap);
-            draw_digit(scene, d, x, margin + pad, dw, dh, t, color);
+        let mut x = margin + pad;
+        for (digits, [r, g, b]) in &groups {
+            let color = Color::from_rgba8(*r, *g, *b, 230);
+            for (i, &d) in digits.iter().enumerate() {
+                let at = x + i as f64 * (dw + gap);
+                draw_digit(scene, d, at, margin + pad, dw, dh, t, color);
+            }
+            x += group_w(digits) + between;
         }
     }
 }
