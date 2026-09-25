@@ -663,3 +663,40 @@ fn ducking_under_a_delayed_clip() {
         &[0.2, 0.31, 0.36, 0.45, 0.55, 0.7, 1.2, 1.45, 1.5, 1.7, 2.0],
     );
 }
+
+#[test]
+fn a_filament_is_as_warm_at_an_instant_however_it_was_sampled() {
+    // A lamp switched at instants no frame rate here lands on, and
+    // re-lit while still warm, which is the case that carries heat over
+    // from one anchor to the next. Light and colour both, since they are
+    // the same model run twice.
+    //
+    // The harness replays from a fresh engine for every instant, which
+    // is what a seek does, so this covers scrubbing to these moments as
+    // well as playing to them.
+    let s = r##"{ "format": 1, "name": "lamp", "size": [32, 32],
+      "variables": { "power": 0 },
+      "layers": [{ "name": "bulb", "type": "image", "image": "none", "opacity": 0,
+        "bindings": [
+          { "property": "opacity", "variable": "power",
+            "transition": { "model": "incandescent" } },
+          { "property": "tint", "variable": "power",
+            "transition": { "model": "incandescent" } }
+        ] }] }"##;
+    let script = [
+        (0.13, Input::Set("power", 1.0)),
+        (0.4567, Input::Set("power", 0.0)),
+        // Re-lit while it still has heat in it.
+        (0.48, Input::Set("power", 1.0)),
+        (0.9, Input::Set("power", 0.0)),
+        (2.66, Input::Set("power", 0.5)),
+    ];
+    same_at_any_rate(
+        "filament",
+        s,
+        &script,
+        &[
+            0.13, 0.135, 0.2, 0.4567, 0.47, 0.48, 0.5, 0.95, 1.2, 2.7, 3.0,
+        ],
+    );
+}

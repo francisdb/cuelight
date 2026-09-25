@@ -233,6 +233,10 @@ fn numbers_in_text_count_up_in_whole_numbers() {
 #[test]
 fn wrapped_values_pick_their_way_round() {
     let t = |direction| Transition {
+        model: None,
+        kelvin: None,
+        heating: None,
+        cooling: None,
         duration: 1.0,
         ease: Easing::Linear,
         wrap: Some(360.0),
@@ -254,6 +258,10 @@ fn wrapped_values_pick_their_way_round() {
     );
     // A reel: 9 to 0 rolls on, and lands exactly.
     let reel = Transition {
+        model: None,
+        kelvin: None,
+        heating: None,
+        cooling: None,
         duration: 1.0,
         ease: Easing::Linear,
         wrap: Some(10.0),
@@ -286,6 +294,10 @@ fn kick() -> Transition {
         ease: Easing::Linear,
     };
     Transition {
+        model: None,
+        kelvin: None,
+        heating: None,
+        cooling: None,
         duration: 0.1,
         ease: Easing::Linear,
         wrap: None,

@@ -2333,7 +2333,9 @@ impl Engine {
             else {
                 continue;
             };
-            if binding.property == Property::Tint {
+            // A modelled transition holds a filament temperature whatever
+            // the property is, so it takes the numeric path.
+            if binding.property == Property::Tint && transition.model.is_none() {
                 let target = self
                     .binding_value(site, binding)
                     .and_then(|value| self.convert(binding, value))
@@ -2362,15 +2364,33 @@ impl Engine {
                 transitions.remove(site);
                 continue;
             };
+            let modelled = transition.model.is_some();
             let change = transitions.entry(site.clone()).or_insert(Change {
-                start: target,
+                // A show starts with its lamps cold, whatever they are
+                // being told: a bulb takes its time even on the first
+                // frame.
+                start: if modelled {
+                    crate::lamp::settled(crate::lamp::Filament::of(transition), 0.0)
+                } else {
+                    target
+                },
                 target,
                 started: self.time,
                 whole: target.fract() == 0.0,
             });
             if change.target != target {
-                let reached =
-                    transition.value_at(change.start, change.target, self.time - change.started);
+                let reached = if modelled {
+                    // Carry the heat over: a bulb re-lit while still warm
+                    // comes up from where it is.
+                    crate::lamp::temperature(
+                        crate::lamp::Filament::of(transition),
+                        change.start,
+                        change.target,
+                        self.time - change.started,
+                    )
+                } else {
+                    transition.value_at(change.start, change.target, self.time - change.started)
+                };
                 *change = Change {
                     // Both values the binding was given: the one it was
                     // heading for, and the one it is heading for now.
@@ -2395,12 +2415,30 @@ impl Engine {
         b: &Binding,
     ) -> Option<Value> {
         let transition = b.transition.as_ref()?;
-        if b.property == Property::Tint {
+        if b.property == Property::Tint && transition.model.is_none() {
             let change = self.color_transitions.get(&(root, path.to_vec(), index))?;
             let progress = transition.value_at(0.0, 1.0, self.time - change.started);
             return Some(Value::Text(color_text(change.value_at(progress))));
         }
         let change = self.transitions.get(&(root, path.to_vec(), index))?;
+        if let Some(crate::model::Model::Incandescent) = transition.model {
+            let lamp = crate::lamp::Filament::of(transition);
+            let hot = crate::lamp::temperature(
+                lamp,
+                change.start,
+                change.target,
+                self.time - change.started,
+            );
+            // The same filament, read two ways: how much light it gives,
+            // or what colour that light is.
+            return Some(match b.property {
+                Property::Tint => {
+                    let [r, g, bl] = crate::lamp::color(hot);
+                    Value::Text(color_text([r, g, bl, 255]))
+                }
+                _ => Value::Number(crate::lamp::shown(lamp, hot)),
+            });
+        }
         let mut n = transition.value_at(change.start, change.target, self.time - change.started);
         if b.property != Property::Text {
             return Some(Value::Number(n));
@@ -2488,7 +2526,11 @@ impl Engine {
     /// a number.
     fn binding_number(&self, site: &TransitionSite, b: &Binding) -> Option<f64> {
         let value = self.binding_value(site, b)?;
+        // A modelled tint is fed a power level, not a colour: the model
+        // decides what colour that is.
+        let lamp = b.transition.as_ref().is_some_and(|t| t.model.is_some());
         let n = match (b.property, &value) {
+            (Property::Tint, _) if lamp => value.as_number(),
             (Property::Font | Property::Tint, _) => return None,
             (Property::Text, Value::Number(n)) => *n,
             (Property::Text, _) => return None,
@@ -3808,12 +3850,34 @@ fn validate(show: &Show) -> Result<(), Error> {
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
                     let ring = transition.wrap.is_some() || transition.direction.is_some();
+                    let modelled = transition.model.is_some();
                     let problem = if matches!(binding.property, Property::Font | Property::Visible)
                     {
                         Some("is on a binding that cannot be eased")
                     } else if binding.property == Property::Tint && ring {
                         Some("sets wrap or direction, which a color has no use for")
-                    } else if !positive(transition.duration) {
+                    } else if modelled
+                        && (positive(transition.duration)
+                            || ring
+                            || transition.step.is_some()
+                            || !transition.offset.is_empty()
+                            || transition.ease != crate::easing::Easing::default())
+                    {
+                        Some("follows a model, which decides its own timing, shape and way round")
+                    } else if !modelled
+                        && (transition.kelvin.is_some()
+                            || transition.heating.is_some()
+                            || transition.cooling.is_some())
+                    {
+                        Some("shapes a filament without naming a model to follow")
+                    } else if modelled
+                        && [transition.kelvin, transition.heating, transition.cooling]
+                            .into_iter()
+                            .flatten()
+                            .any(|n| !positive(n))
+                    {
+                        Some("needs a kelvin, heating and cooling above 0")
+                    } else if !modelled && !positive(transition.duration) {
                         Some("needs a duration above 0")
                     } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {
                         Some("needs a wrap above 0")
@@ -3831,7 +3895,13 @@ fn validate(show: &Show) -> Result<(), Error> {
                         )));
                     }
                 }
-                if binding.property == Property::Tint {
+                // A modelled tint takes a power level, not a colour: the
+                // filament decides what colour that is.
+                let lamp = binding
+                    .transition
+                    .as_ref()
+                    .is_some_and(|t| t.model.is_some());
+                if binding.property == Property::Tint && !lamp {
                     let mapped = binding.map.iter().flat_map(|m| m.values());
                     for value in mapped.chain(&binding.default) {
                         let color = matches!(value, Value::Text(c) if c.is_empty()
@@ -3995,6 +4065,14 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                 // With a map it is the mapped values that reach the
                 // property, and those are checked at load.
                 if binding.map.is_some() {
+                    continue;
+                }
+                // A modelled tint reads a power level, not a colour.
+                if binding
+                    .transition
+                    .as_ref()
+                    .is_some_and(|t| t.model.is_some())
+                {
                     continue;
                 }
                 let text = value.to_text();

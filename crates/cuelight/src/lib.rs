@@ -27,6 +27,7 @@
 mod easing;
 mod engine;
 mod font;
+mod lamp;
 mod lru;
 mod model;
 #[cfg(feature = "outline-fonts")]
@@ -45,9 +46,9 @@ pub use engine::{
 pub use font::BitmapFont;
 pub use model::{
     Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, Duck, Fill, FontStyle,
-    Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind, NumberFormat, Output, OutputMode,
-    Pass, Property, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet,
-    Show, Stroke, Tile, Timeline, Track, Transition, Triggers, FORMAT, MAIN_BUS,
+    Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind, Model, NumberFormat, Output,
+    OutputMode, Pass, Property, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow,
+    Shape, Sheet, Show, Stroke, Tile, Timeline, Track, Transition, Triggers, FORMAT, MAIN_BUS,
 };
 pub use output::{OutputColor, LUMA_WEIGHTS};
 pub use path::{PathData, PathElement};
