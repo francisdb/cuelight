@@ -95,12 +95,13 @@ A show exists in three forms:
   about where it is. A named file that is not there is reported in
   `skipped` rather than failing the load.
 
-  A file under `assets/` that the loader does not walk to -- one in a
-  folder it does not know, or deeper than it looks -- is reported in
-  `skipped` too, unless the document names it by path. The decision to
-  ignore something belongs in the report, not in silence: otherwise the
-  layer using it fails later with a missing-asset error pointing at the
-  name rather than at the file sitting right there.
+  Everything under `assets/` is walked, at any depth. A clip in a
+  subfolder is opened like any other, which is the natural layout for a
+  large collection. A file in a folder the loader has no use for is
+  reported in `skipped`, unless the document names it by path: the
+  decision to ignore something belongs in the report, not in silence,
+  or the layer using it fails later with a missing-asset error pointing
+  at the name rather than at the file sitting right there.
 
   The document decides what is loaded, which is the other half of this:
   the conventional folders are read whether anything uses them or not,

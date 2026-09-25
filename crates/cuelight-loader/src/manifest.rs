@@ -42,16 +42,12 @@ impl Manifest {
         if dir.join("test-driver.json").is_file() {
             files.push("test-driver.json".to_owned());
         }
-        for sub in ["assets", "assets/fonts", "assets/sounds", "assets/videos"] {
-            let path = dir.join(sub);
-            if !path.is_dir() {
-                continue;
-            }
-            for file in crate::files_in(&path)? {
-                if let Some(name) = file.file_name().and_then(|n| n.to_str()) {
-                    files.push(format!("{sub}/{name}"));
-                }
-            }
+        // Everything under assets/, at any depth. The loader only reads
+        // the folders it knows, but a file it does not read still has to
+        // be seen: a clip grouped in a subfolder is opened, and anything
+        // nothing can use is reported rather than dropped.
+        if dir.join("assets").is_dir() {
+            files.extend(crate::files_under(&dir.join("assets"), "assets")?);
         }
         // Then whatever the document names by path, which may be anywhere
         // beside it. Without these a packed show would be missing exactly
@@ -197,7 +193,10 @@ pub fn load_from_memory(
             // Collected rather than dropped, and reported below once the
             // document has had its say, since it may name the file by
             // path itself. Clips are the caller's to collect.
-            dir if dir.starts_with("assets/") && !dir.starts_with("assets/videos") => {
+            dir if dir.starts_with("assets/")
+                && dir != "assets/videos"
+                && !dir.starts_with("assets/videos/") =>
+            {
                 unclaimed.push(path.clone());
             }
             _ => {}
@@ -235,9 +234,9 @@ pub fn load_from_memory(
 /// and its siblings, so an unregistered stem stays no error at all. That
 /// is what keeps a streamed or generated asset working while a mistyped
 /// path does not ship.
-/// Register the files the document names by a path of its own, and say
-/// which paths those were, so a file the loader did not otherwise claim
-/// is only reported as skipped when nothing wanted it.
+/// Register the files the document names by a path of its own, and
+/// return the paths it registered, so the caller only reports a file
+/// nothing wanted.
 fn register_named(
     engine: &mut Engine,
     show: &str,
