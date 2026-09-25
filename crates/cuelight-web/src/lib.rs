@@ -56,9 +56,11 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlCanvasElement;
 
-/// Longest step a single frame advances the show by, in seconds: a tab
-/// coming back from the background continues instead of jumping ahead.
-const MAX_FRAME_SECONDS: f64 = 0.1;
+/// A gap between frames past which the show is not caught up with, in
+/// seconds: longer than any hitch, and shorter than a tab left in the
+/// background. A tab coming back continues from where it stopped
+/// instead of playing through everything it missed.
+const A_STALL: f64 = 5.0;
 
 type FrameCallback = Closure<dyn FnMut(f64)>;
 /// An event name and the handler listening for it on the document.
@@ -155,7 +157,11 @@ struct Inner {
     surface: RenderSurface<'static>,
     renderer: vello::Renderer,
     presenter: Presenter,
-    last_ms: Option<f64>,
+    /// The page timestamp the show's time 0 was at, so the clock is read
+    /// from it rather than added up frame by frame. Moved deliberately:
+    /// paused, seeked, or after a gap long enough to be a background
+    /// tab.
+    anchor_ms: Option<f64>,
     on_event: Option<js_sys::Function>,
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
@@ -203,20 +209,32 @@ impl Inner {
     /// Advance the show to `now_ms` and draw it. Returns the show's events
     /// for the caller to deliver once the player is no longer borrowed.
     fn frame(&mut self, now_ms: f64) -> Result<Vec<Event>, String> {
-        let dt = self
-            .last_ms
-            .map_or(0.0, |last| (now_ms - last) / 1000.0)
-            .clamp(0.0, MAX_FRAME_SECONDS);
-        self.last_ms = Some(now_ms);
         // Paused stops the clock, not the painting: a resize, a seek or a
-        // variable set from the page still shows.
-        let dt = if self.paused { 0.0 } else { dt };
+        // variable set from the page still shows. The anchor rides along
+        // under the time the show is stopped at, so playing carries on
+        // from there.
+        let time = self.engine.time();
+        if self.paused || self.anchor_ms.is_none() {
+            self.anchor_ms = Some(now_ms - time * 1000.0);
+        }
+        let anchor = self.anchor_ms.unwrap_or(now_ms);
+        let mut target = (now_ms - anchor) / 1000.0;
+        let mut dt = (target - time).max(0.0);
+        // A frame that took a moment is caught up with, since sound
+        // plays on whatever the page is doing and a show that dropped
+        // that time would be out against its own soundtrack for good. A
+        // gap long enough to be a background tab is not a frame to catch
+        // up with: the show goes on from where it stopped.
+        if dt > A_STALL {
+            self.anchor_ms = Some(now_ms - time * 1000.0);
+            (target, dt) = (time, 0.0);
+        }
         if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
                 driver.advance(&mut self.engine, dt);
             }
         }
-        self.engine.advance_frame(dt);
+        self.engine.advance_to(target);
         let events = self.engine.drain_events();
         if let Some(audio) = &mut self.audio {
             if let Ok(voices) = self.engine.voices() {
@@ -380,7 +398,7 @@ impl CuelightPlayer {
             surface,
             renderer,
             presenter: Presenter::new(),
-            last_ms: None,
+            anchor_ms: None,
             on_event: None,
             pending_frame: None,
             audio,
@@ -577,6 +595,9 @@ impl CuelightPlayer {
         let Inner { engine, .. } = &mut *inner;
         let played = cuelight_loader::seek(engine, script, seconds.max(0.0), fps);
         inner.driver = played;
+        // The clock is read from the anchor, and the show is somewhere
+        // else now: the next frame works out where it starts from.
+        inner.anchor_ms = None;
     }
 
     /// Call `callback` with every event the show raises, as
