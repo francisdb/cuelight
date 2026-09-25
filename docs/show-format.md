@@ -1294,11 +1294,21 @@ Sound lengths are read from the file's header, so a sound ends and its
 decoded unless the header does not say (a constant-bitrate MP3 without a
 Xing header), no sound device is opened and nothing is played.
 
-Video lengths come from the file's header too, through `ffprobe`, so a
-show chained through a video's `on_end` runs to the end as well, and a
-clip is measured bounded by the canvas exactly as the player measures it.
-Nothing is decoded. A show with no videos never looks for ffmpeg; one
-that has them says so per file and carries on if ffmpeg is not installed.
+Video lengths come from the file's header, through `ffprobe`, so a show
+chained through a video's `on_end` runs to the end as well, and a clip is
+measured bounded by the canvas exactly as the player measures it.
+
+A video layer draws the frame it is playing: for each frame written, the
+engine says which clip is showing and how far in, and that one frame is
+decoded and handed back as an image. Only frames that are written cost
+anything, so a still of a show at twenty seconds decodes one frame of
+each clip rather than twenty seconds of video, and `--events` decodes
+nothing at all. A long strip is a decode per frame, though, so it is
+slower than the same strip of a show without video.
+
+A show with no videos never looks for ffmpeg; one that has them says so
+per file and carries on if ffmpeg is not installed, drawing the layer as
+nothing.
 
 Determinism: within one run the engine and the renderer are exact, so a
 strip is internally consistent. Across runs the GPU can differ by one
