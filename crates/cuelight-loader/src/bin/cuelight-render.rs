@@ -60,8 +60,13 @@ struct Cli {
     /// Render the frame as a host would show it, this many times the
     /// show's size: its `scaling`, output mode and passes applied. A dots
     /// pass needs about 3 to become dots at all.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "width")]
     scale: Option<u32>,
+    /// Render the frame as a host would show it, about this many pixels
+    /// wide: the nearest size that keeps whole pixels, up or down. For a
+    /// gallery of shows of different sizes.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    width: Option<u32>,
 }
 
 /// An input the command line asks for, at the time it asks for it.
@@ -107,6 +112,30 @@ fn inputs(cli: &Cli) -> Result<Vec<Input>, String> {
     }
     out.sort_by(|a, b| a.at.total_cmp(&b.at));
     Ok(out)
+}
+
+/// The frame size nearest `width` wide that keeps whole pixels.
+///
+/// A show narrower than `width` goes up by the largest whole factor that
+/// fits, so a pixel-perfect show gets no letterbox and no uneven pixels.
+/// A wider one comes down to `1/n` of its size, `n` the smallest that
+/// fits: it is presented at that size rather than shrunk afterwards, so a
+/// smooth show is drawn sharp there instead of being filtered.
+fn sized_to(show: [u32; 2], width: u32) -> Result<[u32; 2], Stop> {
+    let [w, h] = show;
+    if w <= width {
+        let factor = (width / w).max(1);
+        let both = w.checked_mul(factor).zip(h.checked_mul(factor));
+        let (w, h) = both.ok_or_else(|| {
+            Stop::Failed(format!(
+                "--width {width} is past what {w}x{h} can be scaled to"
+            ))
+        })?;
+        Ok([w, h])
+    } else {
+        let n = w.div_ceil(width);
+        Ok([(w / n).max(1), (h / n).max(1)])
+    }
 }
 
 /// Why a run stopped.
@@ -228,8 +257,15 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     if !cli.events && times.peek().is_none() {
         return Err("nothing to render: give --at or --every, or ask for --events".into());
     }
-    if cli.scale.is_some() && cli.events {
-        return Err("--scale renders frames, which --events does not: drop one of them".into());
+    if (cli.scale.is_some() || cli.width.is_some()) && cli.events {
+        let what = if cli.scale.is_some() {
+            "--scale"
+        } else {
+            "--width"
+        };
+        return Err(
+            format!("{what} renders frames, which --events does not: drop one of them").into(),
+        );
     }
     let last = cli
         .until
@@ -267,21 +303,25 @@ fn run(cli: &Cli) -> Result<(), Stop> {
             let at = times.next().expect("peeked");
             if let Some(renderer) = &mut renderer {
                 let file = cli.out.join(format!("t{at:08.3}.png"));
-                let frame = match cli.scale {
-                    None => renderer.render_to_rgba(&engine),
-                    Some(scale) => {
-                        let [w, h] = engine.show().ok_or("no show")?.size;
+                let size = engine.show().ok_or("no show")?.size;
+                let target = match (cli.scale, cli.width) {
+                    (None, None) => None,
+                    (Some(scale), _) => {
+                        let [w, h] = size;
                         // Checked: wrapping here would land on a size the
                         // renderer is happy with and quietly draw the
                         // wrong one.
-                        let target =
-                            w.checked_mul(scale)
-                                .zip(h.checked_mul(scale))
-                                .ok_or_else(|| {
-                                    format!("--scale {scale} is past what {w}x{h} can be scaled to")
-                                })?;
-                        renderer.present_to_rgba(&engine, [target.0, target.1])
+                        let both = w.checked_mul(scale).zip(h.checked_mul(scale));
+                        let (w, h) = both.ok_or_else(|| {
+                            format!("--scale {scale} is past what {w}x{h} can be scaled to")
+                        })?;
+                        Some([w, h])
                     }
+                    (None, Some(width)) => Some(sized_to(size, width)?),
+                };
+                let frame = match target {
+                    None => renderer.render_to_rgba(&engine),
+                    Some(target) => renderer.present_to_rgba(&engine, target),
                 };
                 frame
                     .map_err(|e| e.to_string())?
@@ -349,7 +389,29 @@ mod tests {
             triggers: Vec::new(),
             sets: Vec::new(),
             scale: None,
+            width: None,
         }
+    }
+
+    #[test]
+    fn a_width_picks_a_whole_factor_either_way() {
+        // Up by the largest whole factor that fits.
+        assert_eq!(sized_to([128, 32], 640).unwrap(), [640, 160]);
+        assert_eq!(sized_to([192, 64], 640).unwrap(), [576, 192]);
+        // Exactly the width already.
+        assert_eq!(sized_to([640, 360], 640).unwrap(), [640, 360]);
+        // Down to a whole fraction: 1920 wants three, 1280 two.
+        assert_eq!(sized_to([1920, 1080], 640).unwrap(), [640, 360]);
+        assert_eq!(sized_to([1280, 720], 640).unwrap(), [640, 360]);
+        // Wider than the target by a hair still comes down a whole step,
+        // so a width is a bound rather than a promise.
+        assert_eq!(sized_to([960, 540], 640).unwrap(), [480, 270]);
+    }
+
+    #[test]
+    fn a_width_never_gives_nothing_to_draw() {
+        // A show far wider than the target keeps at least one pixel.
+        assert_eq!(sized_to([4000, 3], 1).unwrap(), [1, 1]);
     }
 
     #[test]

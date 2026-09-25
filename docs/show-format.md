@@ -1115,6 +1115,22 @@ the show's `scaling` asks, with its output mode and passes applied. A
 `dots` pass needs about `--scale 3` before there are enough pixels to
 make dots out of.
 
+`--width W` picks the factor instead, for a gallery of shows that are not
+all the same size:
+
+```sh
+# 128x32 becomes 640x160, 192x64 becomes 576x192,
+# and 1920x1080 comes down to 640x360.
+cuelight-render dmd/ --at 2 --width 640 -o thumbs/
+```
+
+A show narrower than `W` goes up by the largest whole factor that fits,
+so a pixel-perfect show gets no letterbox and no uneven pixels. A wider
+one is presented at a whole fraction of its size, drawn sharp at that
+size rather than shrunk afterwards. Whole factors only, so `W` is a bound
+rather than a promise: a 960 wide show at `--width 640` comes out 480
+wide, the next whole step down.
+
 Sound lengths are read from the file's header, so a sound ends and its
 `on_end` fires and a show chained through one runs to the end. Nothing is
 decoded unless the header does not say (a constant-bitrate MP3 without a
