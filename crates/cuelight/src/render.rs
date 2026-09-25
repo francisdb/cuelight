@@ -398,7 +398,12 @@ fn build_scene(
                         Fill::NonZero,
                         placement,
                         brush.as_ref(),
-                        Some(transform * placement.inverse()),
+                        // The brush transform is read against the fill's
+                        // own, which is the placement, so what goes here
+                        // is the tile without it: the two are multiplied
+                        // back together, and placing the tile in canvas
+                        // space here would apply the placement twice.
+                        Some(placement.inverse() * transform),
                         &Rect::new(x, y, x + width, y + height),
                     ),
                     None => show.draw_image(brush.as_ref(), transform),

@@ -546,3 +546,44 @@ fn a_diagonal_segment_on_a_pixel_grid_is_as_crisp_as_a_straight_one() {
     assert_eq!(count, 3);
     assert_eq!(shades("XKMNRWYV", 10.0), Some(3), "leaning as well");
 }
+
+#[test]
+fn a_tiled_pattern_turns_with_its_layer() {
+    // A checkerboard of an odd number of squares maps onto itself a
+    // quarter turn at a time, so the turned board is the board again,
+    // pixel for pixel. It only holds while the pattern turns with the
+    // layer: a pattern whose origin goes somewhere else comes back
+    // shifted by a square, and every square has the other colour.
+    let checker = vec![
+        255, 255, 255, 255, 0, 0, 0, 255, // white, black
+        0, 0, 0, 255, 255, 255, 255, 255, // black, white
+    ];
+    let board = |rotation: u32| {
+        let mut engine = Engine::new();
+        engine.set_image("checker", 2, 2, checker.clone()).unwrap();
+        // 140 across in squares of 20: seven of them, an odd number. The
+        // tile is two squares wide, so it is drawn at twenty times the
+        // size of its pixels, which is where the placing went wrong.
+        engine
+            .load_show(&format!(
+                r##"{{ "name": "t", "size": [160, 160], "background": "#000000",
+      "layers": [
+        {{ "name": "board", "type": "image", "image": "checker", "x": 80, "y": 80,
+          "size": [140, 140], "anchor": "center", "repeat": {{ "size": [40, 40] }},
+          "rotation": {rotation} }}
+      ] }}"##
+            ))
+            .unwrap();
+        render(&engine)
+    };
+    let (Some(upright), Some(turned)) = (board(0), board(90)) else {
+        return;
+    };
+    let flipped = upright
+        .pixels
+        .chunks(4)
+        .zip(turned.pixels.chunks(4))
+        .filter(|(a, b)| a[0].abs_diff(b[0]) > 128)
+        .count();
+    assert_eq!(flipped, 0, "the pattern did not turn with the board");
+}
