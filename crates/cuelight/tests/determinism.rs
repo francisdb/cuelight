@@ -700,3 +700,30 @@ fn a_filament_is_as_warm_at_an_instant_however_it_was_sampled() {
         ],
     );
 }
+
+#[test]
+fn a_condition_starts_its_timeline_when_it_turned_true() {
+    // The edge is what starts it, so the timeline has to be timed from
+    // the instant the variable crossed, not from where a frame landed.
+    let s = show(
+        r##"{ "name": "box", "type": "shape", "shape": { "rect": [0,0,4,4] },
+              "fill": "#FFFFFF", "x": 0,
+              "timelines": [{ "name": "flash", "hold": true,
+                "when": { "variable": "lit", "threshold": 0.5 },
+                "tracks": [{ "property": "x",
+                             "keys": [{"t":0,"v":0},{"t":0.5,"v":40}] }] }] }"##,
+    );
+    let script = [
+        (0.13, Input::Set("lit", 1.0)),
+        // Still true: no second edge, so no restart.
+        (0.31, Input::Set("lit", 1.0)),
+        (0.4567, Input::Set("lit", 0.0)),
+        (0.77, Input::Set("lit", 1.0)),
+    ];
+    same_at_any_rate(
+        "when",
+        &s,
+        &script,
+        &[0.13, 0.2, 0.35, 0.5, 0.63, 0.77, 0.9, 1.1, 1.3],
+    );
+}
