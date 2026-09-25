@@ -19,6 +19,7 @@ use std::path::Path;
 
 /// A scripted command sequence.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Driver {
     /// Start over after the last step.
     #[serde(default, rename = "loop")]
@@ -38,6 +39,51 @@ pub enum Step {
     Trigger { trigger: String },
     /// Set variables.
     Set { set: BTreeMap<String, Value> },
+}
+
+// Described by hand: an untagged enum generates `anyOf` with nothing
+// closed, so an editor would not flag a misspelt `trigge`, nor a step
+// naming two of the three. A step is exactly one of them.
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for Step {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Step".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::Step").into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let closed = |name: &str, shape: serde_json::Value| {
+            serde_json::json!({
+                "type": "object",
+                "properties": { name: shape },
+                "required": [name],
+                "additionalProperties": false
+            })
+        };
+        schemars::Schema::try_from(serde_json::json!({
+            "description": "One driver step: exactly one of wait, trigger or set.",
+            "oneOf": [
+                closed("wait", serde_json::json!({
+                    "description": "Let this many seconds pass.",
+                    "type": "number",
+                    "format": "double"
+                })),
+                closed("trigger", serde_json::json!({
+                    "description": "Fire a trigger.",
+                    "type": "string"
+                })),
+                closed("set", serde_json::json!({
+                    "description": "Set variables.",
+                    "type": "object",
+                    "additionalProperties": true
+                })),
+            ]
+        }))
+        .expect("a schema built from an object literal")
+    }
 }
 
 impl Driver {

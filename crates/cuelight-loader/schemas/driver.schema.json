@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Driver",
+  "description": "A scripted command sequence.",
+  "type": "object",
+  "properties": {
+    "loop": {
+      "description": "Start over after the last step.",
+      "type": "boolean",
+      "default": false
+    },
+    "steps": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Step"
+      }
+    }
+  },
+  "$defs": {
+    "Step": {
+      "description": "One driver step: exactly one of wait, trigger or set.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "wait": {
+              "description": "Let this many seconds pass.",
+              "type": "number",
+              "format": "double"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "wait"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "trigger": {
+              "description": "Fire a trigger.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "trigger"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "set": {
+              "description": "Set variables.",
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "set"
+          ]
+        }
+      ]
+    }
+  }
+}
