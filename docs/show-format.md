@@ -249,7 +249,7 @@ the conversion alone, for hosts that want to do the rest themselves).
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `vector`, `image`, `text`, `digits`, `audio`
+- `type`: `group`, `shape`, `image`, `text`, `digits`, `audio`
   or `video` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
@@ -347,16 +347,31 @@ Layer kinds:
   blurring whenever one is scaled up. A host drawing the resolved list
   itself gets the gradient beside the layer's `color`, which is its first
   stop, so one that draws no gradients still draws something.
-- `vector`: `vector` names artwork the host registered with
-  `Engine::set_vector`; the loader does that for every `assets/*.svg`,
-  by stem. Drawn like an image: its top-left corner at the layer's x/y
-  (or by `anchor`), at its own size (the viewBox) or scaled into `size`
-  `[width, height]`. What an SVG keeps: paths, basic shapes and text (as
-  outlines), with solid fills and strokes, group transforms and
-  opacities. A gradient paints as its first stop's color; patterns,
-  raster images, clip paths, masks, filters, dashes and line joins are
-  dropped. Animation is not read: address moving parts as separate
-  vector layers and animate those.
+- `image`: artwork the host registered under that name, pixels or vector.
+  Pixels come from `Engine::set_image` (RGBA8, kept in memory); vector
+  artwork from `Engine::set_vector`, which the loader does for every
+  `assets/*.svg`, by stem. One layer kind draws both: the asset says how
+  to draw itself, and where it goes, how big it is, what stains it and
+  whether it tiles are the same question either way. Optional `size`
+  `[width, height]` scales the artwork into the canvas; omitted, it draws
+  at its natural size (an SVG's viewBox). Artwork is a host asset, not
+  show content: a layer whose artwork is not (yet) registered is skipped,
+  so hosts can stream assets in after `load_show`. Optional `tint`
+  (`#RRGGBB` or `#RRGGBBAA`) multiplies its colors, leaving transparency
+  alone: white changes nothing, a color stains the art (a coloured bulb
+  behind white artwork, one sprite or icon reused in several colors, a
+  worn look over a clean texture).
+
+  `sheet` and `frame` are for pixels, since a sheet is a grid of them;
+  on vector artwork they are reported at load and do nothing. Older
+  shows write `"type": "vector"` with the name in a `vector` field, and
+  still load: both spellings mean this layer.
+
+  What an SVG keeps: paths, basic shapes and text (as outlines), with
+  solid fills and strokes, group transforms and opacities. A gradient
+  paints as its first stop's color; patterns, raster images, clip paths,
+  masks, filters, dashes and line joins are dropped. Animation is not
+  read: address moving parts as separate layers and animate those.
 
   Text is drawn with the show's own fonts, the ones in `assets/fonts`,
   and never with the machine's: a show that took whatever happened to be
@@ -379,19 +394,9 @@ Layer kinds:
   `font-family="DM Mono" font-weight="500"`. The name some font menus
   show for it, `DM Mono Medium`, is not a family, and is reported as one
   the show does not ship.
-- `image`: `image` names pixels the host registers at runtime with
-  `Engine::set_image` (RGBA8, kept in memory). Optional `size`
-  `[width, height]` scales the image into the canvas; omitted, it draws at
-  its natural pixel size. Images are host assets, not show content: a
-  layer whose image is not (yet) registered is skipped, so hosts can
-  stream assets in after `load_show`. Optional `tint` (`#RRGGBB` or
-  `#RRGGBBAA`) multiplies the image's colors, leaving its transparency
-  alone: white changes nothing, a color stains the art (a coloured bulb
-  behind white artwork, one sprite reused in several colors, a worn look
-  over a clean texture).
 
-  `size` stretches the image to fill the box. `repeat` tiles it across the
-  box instead, which is what a pattern wants: a checkerboard, a grid, a
+  `size` stretches the artwork to fill the box. `repeat` tiles it across
+  the box instead, which is what a pattern wants: a checkerboard, a grid, a
   scanline overlay, a floor, any texture meant to cover whatever it is put
   behind. Written out, those are hundreds of rectangles that a reader
   cannot tell from hundreds of unrelated ones.
@@ -401,12 +406,18 @@ Layer kinds:
     "repeat": { "size": [64, 64], "offset": [0, 0] } }
   ```
 
-  A tile's `size` defaults to the image's own, which is what "repeat this
-  at its natural size" means. Tiling happens in the layer's own space, so
-  a rotating or scaled group carries the pattern with it rather than
-  sliding underneath it. `offset` says where the pattern starts, and it is
-  bindable and keyframable as `tile_x` and `tile_y`, so a scrolling
+  A tile's `size` defaults to the artwork's own, which is what "repeat
+  this at its natural size" means. Tiling happens in the layer's own
+  space, so a rotating or scaled group carries the pattern with it rather
+  than sliding underneath it. `offset` says where the pattern starts, and
+  it is bindable and keyframable as `tile_x` and `tile_y`, so a scrolling
   texture is a tiled image with an animated offset.
+
+  Vector artwork tiles the same way, and stays sharp at any size where a
+  raster tile has to choose one: a board of squares is one small SVG
+  repeated rather than a hundred rectangles written out. The copies are
+  drawn as paths and cut off at the box, and a tile so small that it
+  would fill the box more than 4096 times draws the first 4096.
 - `text`: `text` (use `\n` for line breaks) drawn in `font`, a style
   declared in the show's `fonts` (see [Fonts](#fonts)). Optional `size`
   `[width, height]` is a box whose top-left corner sits at the layer's

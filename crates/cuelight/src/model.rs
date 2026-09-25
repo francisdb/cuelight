@@ -596,29 +596,39 @@ pub enum LayerKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stroke: Option<Stroke>,
     },
-    /// A host-provided raster image, registered under `image` via
-    /// [`Engine::set_image`](crate::Engine::set_image). Drawn with its
-    /// top-left corner at the layer's x/y unless the layer has an
-    /// `anchor`; not yet registered images are skipped.
+    /// Artwork the host registered under `image`: pixels through
+    /// [`Engine::set_image`](crate::Engine::set_image), or vector artwork
+    /// through [`Engine::set_vector`](crate::Engine::set_vector), which
+    /// the loader does for every `assets/*.svg`. Drawn with its top-left
+    /// corner at the layer's x/y unless the layer has an `anchor`; what
+    /// is not registered yet is skipped.
+    ///
+    /// One layer kind for both, since the asset says how to draw itself
+    /// and everything else about a layer of artwork is the same. `type`
+    /// and the name may still be written as `vector`, which older shows
+    /// do; `sheet` and `frame` are for pixels, and say so at load on
+    /// vector artwork.
+    #[serde(alias = "vector")]
     Image {
+        #[serde(alias = "vector")]
         image: String,
         /// Destination size `[width, height]`; the image's natural size
         /// (one cell's size with a `sheet`) when omitted.
         #[serde(default)]
         size: Option<[f64; 2]>,
         /// Treat the image as a grid of equally sized cells and draw one:
-        /// the one the `frame` property selects.
+        /// the one the `frame` property selects. Pixels only.
         #[serde(default)]
         sheet: Option<Sheet>,
         /// Base cell index for sheets (row-major, 0 is the top-left cell).
         #[serde(default)]
         frame: f64,
-        /// Color the image is multiplied by, `#RRGGBB` or `#RRGGBBAA`:
+        /// Color the artwork is multiplied by, `#RRGGBB` or `#RRGGBBAA`:
         /// white leaves it alone, a color stains it (a lamp behind white
-        /// art, a worn look, one sprite in several colors).
+        /// art, a worn look, one sprite or icon in several colors).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tint: Option<String>,
-        /// Tile the image across `size` instead of stretching to it.
+        /// Tile the artwork across `size` instead of stretching to it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repeat: Option<Tile>,
     },
@@ -634,18 +644,6 @@ pub enum LayerKind {
         size: Option<[f64; 2]>,
         #[serde(default)]
         align: Align,
-    },
-    /// Vector artwork the host registered under `vector`
-    /// ([`Engine::set_vector`](crate::Engine::set_vector), the loader does
-    /// it for `assets/*.svg`), drawn like an image: its top-left corner at
-    /// the layer's x/y (or by `anchor`), at its natural size or scaled
-    /// into `size`. Skipped while not registered.
-    Vector {
-        vector: String,
-        /// Destination size `[width, height]`; the artwork's own size
-        /// when omitted.
-        #[serde(default)]
-        size: Option<[f64; 2]>,
     },
     /// A row of `digits` equal cells across `size` `[width, height]`
     /// (top-left at the layer's x/y) showing `text`, one character per

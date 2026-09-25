@@ -430,8 +430,20 @@ pub(crate) fn references(show: &cuelight::Show) -> Vec<(Asset, String)> {
     fn walk(layers: &[cuelight::Layer], out: &mut Vec<(Asset, String)>) {
         for layer in layers {
             match &layer.kind {
-                LayerKind::Image { image, .. } => out.push((Asset::Image, image.clone())),
-                LayerKind::Vector { vector, .. } => out.push((Asset::Vector, vector.clone())),
+                // One layer kind for artwork, and the file says which
+                // it is: a path ending in .svg is drawn as paths, and
+                // anything else as pixels. A name that is a stem is
+                // registered from the conventional folders either way.
+                LayerKind::Image { image, .. } => {
+                    let vector = std::path::Path::new(image)
+                        .extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case(crate::VECTOR_EXTENSION));
+                    let kind = match vector {
+                        true => Asset::Vector,
+                        false => Asset::Image,
+                    };
+                    out.push((kind, image.clone()));
+                }
                 LayerKind::Video { video, .. } => {
                     out.extend(video.iter().map(|n| (Asset::Video, n.to_owned())));
                 }

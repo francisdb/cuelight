@@ -724,6 +724,7 @@ impl Engine {
             ignored_fields(&raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, &mut self.load_warnings);
+        quiet_artwork(&show, &self.vectors, &mut self.load_warnings);
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
         self.show = Some(show);
@@ -2772,11 +2773,6 @@ impl Engine {
                 } => [cx - r, cy - r, 2.0 * r, 2.0 * r],
                 Shape::Path { path } => path::bounds(path.elements())?,
             },
-            LayerKind::Vector { vector, size } => {
-                let data = self.vectors.get(vector)?;
-                let [w, h] = size.unwrap_or([data.width, data.height]);
-                [0.0, 0.0, w, h]
-            }
             LayerKind::Video { size, .. } => {
                 // Its own size until a frame says otherwise, so a layer has
                 // a box before the host has decoded anything.
@@ -2792,10 +2788,17 @@ impl Engine {
             LayerKind::Image {
                 image, size, sheet, ..
             } => {
-                let data = self.images.get(image)?;
-                let natural = match sheet {
-                    Some(sheet) => sheet.cell.map(f64::from),
-                    None => [f64::from(data.width), f64::from(data.height)],
+                // Pixels or vector artwork, whichever is registered
+                // under the name.
+                let natural = match self.images.get(image) {
+                    Some(data) => match sheet {
+                        Some(sheet) => sheet.cell.map(f64::from),
+                        None => [f64::from(data.width), f64::from(data.height)],
+                    },
+                    None => {
+                        let art = self.vectors.get(image)?;
+                        [art.width, art.height]
+                    }
                 };
                 let [w, h] = size.unwrap_or(natural);
                 [0.0, 0.0, w, h]
@@ -3392,32 +3395,6 @@ impl Engine {
                             transform,
                         });
                     }
-                    LayerKind::Vector { vector, size } => {
-                        // Missing artwork is skipped like a missing image.
-                        if let Some(data) = self.vectors.get(vector) {
-                            let [w, h] = size.unwrap_or([data.width, data.height]);
-                            let (sx, sy) = (w / data.width * scale, h / data.height * scale);
-                            for item in &data.paths {
-                                out.push(ResolvedLayer {
-                                    gradient: None,
-                                    overflow,
-                                    name: layer.name.clone(),
-                                    shape: ResolvedShape::Path {
-                                        elements: item
-                                            .elements
-                                            .iter()
-                                            .map(|e| e.map(|[px, py]| [x + px * sx, y + py * sy]))
-                                            .collect(),
-                                        stroke: item.stroke.map(|(c, w)| (c, w * (sx + sy) / 2.0)),
-                                    },
-                                    color: item.fill.unwrap_or([0; 4]),
-                                    opacity,
-                                    blend: layer.blend,
-                                    transform,
-                                });
-                            }
-                        }
-                    }
                     LayerKind::Video { size, .. } => {
                         // The frame the host last handed over for whatever
                         // is playing. Nothing playing draws nothing, so
@@ -3462,9 +3439,48 @@ impl Engine {
                         repeat,
                         ..
                     } => {
+                        // Vector artwork under the same name, drawn as
+                        // the paths it is rather than as pixels; the
+                        // layer is the same either way.
+                        let art = match self.images.contains_key(image) {
+                            true => None,
+                            false => self.vectors.get(image),
+                        };
+                        if let Some(art) = art {
+                            let tint = self.text(root, layer, path, Property::Tint);
+                            let tint = parse_color(&tint).unwrap_or([255; 4]);
+                            let tile = repeat.map(|tile| {
+                                let [tw, th] = tile.size.unwrap_or([art.width, art.height]);
+                                Tiled {
+                                    width: tw * scale,
+                                    height: th * scale,
+                                    offset: [
+                                        self.number(root, layer, path, Property::TileX) * scale,
+                                        self.number(root, layer, path, Property::TileY) * scale,
+                                    ],
+                                }
+                            });
+                            let box_size = size.unwrap_or([art.width, art.height]);
+                            push_vector(
+                                out,
+                                art,
+                                &Placed {
+                                    overflow,
+                                    name: &layer.name,
+                                    origin: [x, y],
+                                    scale,
+                                    opacity,
+                                    blend: layer.blend,
+                                    transform,
+                                },
+                                box_size,
+                                tile,
+                                tint,
+                            );
+                        }
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
-                        if let Some(data) = self.images.get(image) {
+                        else if let Some(data) = self.images.get(image) {
                             let source = sheet.map(|sheet| {
                                 let frame = self.number(root, layer, path, Property::Frame);
                                 sheet_cell(sheet, data.width, data.height, frame)
@@ -3725,6 +3741,112 @@ impl Inherited {
         opacity: 1.0,
         overflow: false,
     };
+}
+
+/// The most copies of a tiled piece of artwork drawn in one layer.
+///
+/// A tile far smaller than the box it fills is a mistake rather than a
+/// picture, and each copy is every path of the artwork; this draws what
+/// fits in the cap and leaves the rest.
+const MAX_TILES: usize = 4096;
+
+/// Draw vector artwork into `box_size`, stretched to it or tiled across
+/// it, every colour multiplied by `tint`.
+fn push_vector(
+    out: &mut Vec<ResolvedLayer>,
+    art: &crate::Vector,
+    placed: &Placed,
+    box_size: [f64; 2],
+    tile: Option<Tiled>,
+    tint: [u8; 4],
+) {
+    let [x, y] = placed.origin;
+    let scale = placed.scale;
+    let stain = |color: [u8; 4]| {
+        let mix = |c: u8, t: u8| ((u32::from(c) * u32::from(t)) / 255) as u8;
+        [
+            mix(color[0], tint[0]),
+            mix(color[1], tint[1]),
+            mix(color[2], tint[2]),
+            mix(color[3], tint[3]),
+        ]
+    };
+    let paths = |at: [f64; 2], size: [f64; 2], out: &mut Vec<ResolvedLayer>| {
+        let (sx, sy) = (size[0] / art.width, size[1] / art.height);
+        for item in &art.paths {
+            out.push(ResolvedLayer {
+                gradient: None,
+                overflow: placed.overflow,
+                name: placed.name.to_owned(),
+                shape: ResolvedShape::Path {
+                    elements: item
+                        .elements
+                        .iter()
+                        .map(|e| e.map(|[px, py]| [at[0] + px * sx, at[1] + py * sy]))
+                        .collect(),
+                    stroke: item.stroke.map(|(c, w)| (stain(c), w * (sx + sy) / 2.0)),
+                },
+                color: stain(item.fill.unwrap_or([0; 4])),
+                opacity: placed.opacity,
+                blend: placed.blend,
+                transform: placed.transform,
+            });
+        }
+    };
+    let [width, height] = [box_size[0] * scale, box_size[1] * scale];
+    let Some(tile) = tile else {
+        paths([x, y], [width, height], out);
+        return;
+    };
+    if !(tile.width > 0.0 && tile.height > 0.0) {
+        return;
+    }
+    // Copies of one tile across the box, from wherever the pattern
+    // starts, and nothing outside the box: the same picture a tiled
+    // image gives, drawn as paths.
+    let first = |offset: f64, span: f64| (-offset / span).floor();
+    let count = |offset: f64, span: f64, across: f64| {
+        (((across - offset) / span).ceil() - first(offset, span)).max(0.0)
+    };
+    let (cols, rows) = (
+        count(tile.offset[0], tile.width, width),
+        count(tile.offset[1], tile.height, height),
+    );
+    let clip = ResolvedShape::Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    let marker = |shape: ResolvedShape| ResolvedLayer {
+        gradient: None,
+        overflow: placed.overflow,
+        name: placed.name.to_owned(),
+        shape,
+        color: [0; 4],
+        opacity: placed.opacity,
+        blend: Blend::Normal,
+        transform: placed.transform,
+    };
+    out.push(marker(ResolvedShape::ClipBegin {
+        shape: Box::new(clip),
+    }));
+    let mut drawn = 0;
+    for row in 0..rows as i64 {
+        for col in 0..cols as i64 {
+            drawn += 1;
+            if drawn > MAX_TILES {
+                break;
+            }
+            let at = [
+                x + tile.offset[0] + (first(tile.offset[0], tile.width) + col as f64) * tile.width,
+                y + tile.offset[1]
+                    + (first(tile.offset[1], tile.height) + row as f64) * tile.height,
+            ];
+            paths(at, [tile.width, tile.height], out);
+        }
+    }
+    out.push(marker(ResolvedShape::ClipEnd));
 }
 
 /// Where a piece of a layer lands, shared by everything the walk adds.
@@ -4340,6 +4462,39 @@ fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> 
 /// mistyped variable or a color that is not one looks exactly like a
 /// feature that does not work.
 ///
+/// Artwork asking for something its kind does not have.
+///
+/// A sheet is a grid of pixels, and vector artwork has none: a `sheet`
+/// or a `frame` on a layer drawn from paths would quietly do nothing.
+/// Only artwork already registered can be told apart, which is the
+/// common case at load; one registered later simply ignores them.
+fn quiet_artwork(show: &Show, vectors: &BTreeMap<String, crate::Vector>, out: &mut Vec<String>) {
+    fn walk(layers: &[Layer], vectors: &BTreeMap<String, crate::Vector>, out: &mut Vec<String>) {
+        for layer in layers {
+            if let LayerKind::Image {
+                image,
+                sheet,
+                frame,
+                ..
+            } = &layer.kind
+            {
+                if (sheet.is_some() || *frame != 0.0) && vectors.contains_key(image) {
+                    out.push(format!(
+                        "layer {:?} draws vector artwork {image:?} as a sheet of cells, \
+                         which only pixels have",
+                        layer.name
+                    ));
+                }
+            }
+            walk(layer.children(), vectors, out);
+        }
+    }
+    walk(&show.layers, vectors, out);
+    for scene in &show.scenes {
+        walk(&scene.layers, vectors, out);
+    }
+}
+
 /// What a show does state up front is which variables it declares and
 /// what they start at, so that is what is checked. Values written in the
 /// show itself, like the colors and styles a `map` lists, are errors at
@@ -4441,6 +4596,19 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
     }
 }
 
+/// The field a name the model still accepts is written back as, so an
+/// older spelling is not reported as a field nothing read.
+///
+/// A document is checked against itself after a round trip through the
+/// model, and an alias comes back as the name the model keeps: `vector`
+/// returns as `image`, since one artwork layer draws both.
+fn also(key: &str) -> Option<&'static str> {
+    match key {
+        "vector" => Some("image"),
+        _ => None,
+    }
+}
+
 /// Collect the paths of object keys present in `given` but absent from
 /// `understood` (the same document after a round trip through the model),
 /// which are the fields deserialization silently dropped.
@@ -4459,7 +4627,7 @@ fn ignored_fields(
                 } else {
                     format!("{path}.{key}")
                 };
-                match understood.get(key) {
+                match understood.get(key).or_else(|| understood.get(also(key)?)) {
                     Some(kept) => ignored_fields(value, kept, &here, out),
                     None if key.starts_with('$') => {}
                     // An explicit null carries no value to lose, and a
