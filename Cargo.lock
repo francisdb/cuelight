@@ -574,6 +574,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "cuelight",
+ "cuelight-audio",
  "png",
  "serde",
  "serde_json",

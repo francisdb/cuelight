@@ -571,6 +571,9 @@ pub struct Renderer {
     queue: wgpu::Queue,
     renderer: vello::Renderer,
     images: ImageCache,
+    /// Built on demand, for frames rendered the way a host would show
+    /// them; it holds the canvas texture and the dots grille.
+    presenter: Presenter,
 }
 
 impl Renderer {
@@ -602,6 +605,7 @@ impl Renderer {
             queue,
             renderer,
             images: ImageCache::new(),
+            presenter: Presenter::new(),
         })
     }
 
@@ -616,7 +620,46 @@ impl Renderer {
         let base_color = background_color(engine);
 
         let vello_scene = build_vello_scene(engine, &mut self.images)?;
+        let mut frame = self.read_back(&vello_scene, base_color, width, height)?;
+        engine.output().apply(&mut frame.pixels);
+        Ok(frame)
+    }
 
+    /// The frame as a host would show it, in a `target` sized surface:
+    /// fitted the way the show's `scaling` asks, with its output mode and
+    /// passes applied, read back as RGBA8.
+    ///
+    /// [`render_to_rgba`](Renderer::render_to_rgba) gives the canvas at
+    /// its own size with nothing over it; this is what ends up on screen,
+    /// which is what a thumbnail wants: a dots pass only becomes dots
+    /// once there are surface pixels to make them out of.
+    pub fn present_to_rgba(
+        &mut self,
+        engine: &Engine,
+        target: [u32; 2],
+    ) -> Result<RgbaFrame, RenderError> {
+        let [width, height] = target;
+        let presented = self.presenter.present(
+            engine,
+            &self.device,
+            &self.queue,
+            &mut self.renderer,
+            target,
+        )?;
+        // The output conversion already happened, on the way through the
+        // presenter, so it is not applied again here.
+        self.read_back(&presented.scene, presented.base_color, width, height)
+    }
+
+    /// Rasterise `scene` into an offscreen texture and read it back as
+    /// tightly-packed RGBA8 bytes.
+    fn read_back(
+        &mut self,
+        vello_scene: &vello::Scene,
+        base_color: Color,
+        width: u32,
+        height: u32,
+    ) -> Result<RgbaFrame, RenderError> {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cuelight-target"),
             size: wgpu::Extent3d {
@@ -637,7 +680,7 @@ impl Renderer {
             .render_to_texture(
                 &self.device,
                 &self.queue,
-                &vello_scene,
+                vello_scene,
                 &view,
                 &vello::RenderParams {
                     base_color,
@@ -704,7 +747,6 @@ impl Renderer {
         }
         drop(mapped);
         buffer.unmap();
-        engine.output().apply(&mut pixels);
 
         Ok(RgbaFrame {
             width,

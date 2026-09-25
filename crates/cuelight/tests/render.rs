@@ -39,6 +39,18 @@ fn render(engine: &Engine) -> Option<RgbaFrame> {
     Some(renderer.render_to_rgba(engine).unwrap())
 }
 
+/// The frame as a host would show it, at `target` pixels.
+fn present(engine: &Engine, target: [u32; 2]) -> Option<RgbaFrame> {
+    static RENDERER: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
+    let renderer = RENDERER.get_or_init(|| match Renderer::new() {
+        Ok(renderer) => Some(Mutex::new(renderer)),
+        Err(RenderError::NoAdapter) => None,
+        Err(e) => panic!("{e}"),
+    });
+    let mut renderer = renderer.as_ref()?.lock().unwrap_or_else(|e| e.into_inner());
+    Some(renderer.present_to_rgba(engine, target).unwrap())
+}
+
 fn pixel(frame: &RgbaFrame, x: u32, y: u32) -> [u8; 4] {
     let i = ((y * frame.width + x) * 4) as usize;
     frame.pixels[i..i + 4].try_into().unwrap()
@@ -423,4 +435,40 @@ fn a_tiled_pattern_is_laid_out_in_the_layers_own_space() {
             "with {placing} the tiled pattern is somewhere else"
         );
     }
+}
+
+#[test]
+fn a_presented_frame_is_the_size_asked_for_and_wears_the_shows_passes() {
+    // The canvas on its own, and the same frame as a host would show it:
+    // four times the size, with the dots pass over it. Dots are gaps, so
+    // the presented frame is darker where the canvas is solid.
+    let show = r##"{ "name": "d", "size": [32, 16], "background": "#000000",
+      "output": { "scaling": "pixel_perfect", "passes": [{ "dots": {} }] },
+      "layers": [
+        { "name": "lit", "type": "shape", "shape": { "rect": [4, 4, 24, 8] },
+          "fill": "#FFFFFF" }
+      ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+
+    let Some(plain) = render(&engine) else { return };
+    assert_eq!((plain.width, plain.height), (32, 16));
+
+    let Some(presented) = present(&engine, [128, 64]) else {
+        return;
+    };
+    assert_eq!((presented.width, presented.height), (128, 64));
+
+    let lit = |f: &RgbaFrame| {
+        f.pixels.chunks(4).filter(|p| p[0] > 40).count() * 100 / (f.width * f.height) as usize
+    };
+    // A quarter of the canvas is the white bar; the grille takes a good
+    // part of it back.
+    assert!(lit(&plain) > 30, "the canvas is {}% lit", lit(&plain));
+    assert!(
+        lit(&presented) < lit(&plain),
+        "the dots pass did not reach the presented frame: {}% against {}%",
+        lit(&presented),
+        lit(&plain)
+    );
 }

@@ -4,7 +4,12 @@
 //! cuelight-render eclipse/ --at 4.1,19.5,26 -o frames/
 //! cuelight-render eclipse/ --every 0.5 --until 52 -o frames/
 //! cuelight-render eclipse/ --until 52 --events
+//! cuelight-render dmd/ --at 2 --scale 4 -o frames/
 //! ```
+//!
+//! A frame is the canvas at the show's own size; `--scale` writes what a
+//! host would show instead. Sounds are decoded for their lengths, so a
+//! sound's `on_end` fires; no device is opened and nothing is played.
 //!
 //! Time is walked in fixed steps of `--fps`, from 0, so a run is
 //! repeatable: the same command writes the same bytes. That is also what
@@ -52,6 +57,11 @@ struct Cli {
     /// Set a variable at a time: `--set 0:score=1500`, repeatable.
     #[arg(long = "set", value_name = "TIME:VAR=VALUE")]
     sets: Vec<String>,
+    /// Render the frame as a host would show it, this many times the
+    /// show's size: its `scaling`, output mode and passes applied. A dots
+    /// pass needs about 3 to become dots at all.
+    #[arg(long)]
+    scale: Option<u32>,
 }
 
 /// An input the command line asks for, at the time it asks for it.
@@ -99,6 +109,19 @@ fn inputs(cli: &Cli) -> Result<Vec<Input>, String> {
     Ok(out)
 }
 
+/// Print a line, saying so if the other end of the pipe has gone.
+///
+/// `--events | head` closes the pipe as soon as it has what it wants, and
+/// the run should end there rather than panic on the way out.
+fn say(line: &str) -> Result<(), String> {
+    use std::io::Write;
+    match writeln!(std::io::stdout(), "{line}") {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Err(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// The times to render, in order.
 fn wanted(cli: &Cli) -> Result<Vec<f64>, String> {
     if let Some(every) = cli.every {
@@ -127,6 +150,17 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
     for warning in engine.load_warnings() {
         eprintln!("warning: {warning}");
+    }
+    // Lengths, so a sound ends and its `on_end` fires: a show chained
+    // through one stops at the first without this. Decoding opens no
+    // device.
+    for sound in &loaded.sounds {
+        match cuelight_audio::Sound::decode(&sound.extension, &sound.bytes) {
+            Ok(decoded) => engine
+                .set_sound(&sound.name, decoded.duration())
+                .map_err(|e| e.to_string())?,
+            Err(e) => eprintln!("warning: sound {:?}: {e}", sound.name),
+        }
     }
     let mut driver = loaded
         .driver
@@ -174,8 +208,14 @@ fn run(cli: &Cli) -> Result<(), String> {
             let at = times.next().expect("peeked");
             if let Some(renderer) = &mut renderer {
                 let file = cli.out.join(format!("t{at:08.3}.png"));
-                renderer
-                    .render_to_rgba(&engine)
+                let frame = match cli.scale {
+                    None => renderer.render_to_rgba(&engine),
+                    Some(scale) => {
+                        let [w, h] = engine.show().ok_or("no show")?.size;
+                        renderer.present_to_rgba(&engine, [w * scale, h * scale])
+                    }
+                };
+                frame
                     .map_err(|e| e.to_string())?
                     .write_png(&file)
                     .map_err(|e| format!("{}: {e}", file.display()))?;
@@ -186,7 +226,7 @@ fn run(cli: &Cli) -> Result<(), String> {
             for event in engine.drain_events() {
                 // The engine's own clock, not the frame clock: an event
                 // that landed part way through a frame says when.
-                println!("{:8.3}  {event:?}", engine.time());
+                say(&format!("{:8.3}  {event:?}", engine.time()))?;
             }
         }
         if time >= last {
@@ -195,7 +235,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         if let Some(driver) = &mut driver {
             for played in driver.advance(&mut engine, step) {
                 if cli.events {
-                    println!("{time:8.3}  driver {played:?}");
+                    say(&format!("{time:8.3}  driver {played:?}"))?;
                 }
             }
         }
@@ -208,7 +248,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         engine.advance_to(time);
     }
     if frames > 0 {
-        println!("{frames} frame(s) in {}", cli.out.display());
+        say(&format!("{frames} frame(s) in {}", cli.out.display()))?;
     }
     Ok(())
 }
@@ -217,6 +257,8 @@ fn main() -> std::process::ExitCode {
     let cli = <Cli as clap::Parser>::parse();
     match run(&cli) {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        // A closed pipe is how `| head` says it has enough.
+        Err(e) if e.is_empty() => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("cuelight-render: {e}");
             std::process::ExitCode::FAILURE
@@ -240,6 +282,7 @@ mod tests {
             no_driver: false,
             triggers: Vec::new(),
             sets: Vec::new(),
+            scale: None,
         }
     }
 
