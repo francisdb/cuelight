@@ -1623,6 +1623,12 @@ pub struct When {
     pub threshold: Option<f64>,
 }
 
+/// A condition a timeline runs under, rather than starts on.
+///
+/// Read exactly as a [`When`] is; the difference is what it does with the
+/// answer. See [`Timeline::whilst`].
+pub type While = When;
+
 /// A permanent wiring of a property to a variable, evaluated every frame.
 ///
 /// Numeric properties take `variable * scale + offset`. The `text`
@@ -1927,10 +1933,24 @@ pub struct Timeline {
     /// Trigger name, or list of names, that (re)starts this timeline.
     #[serde(default)]
     pub trigger: Triggers,
-    /// A variable condition that (re)starts it, for hosts that send
-    /// states rather than events.
+    /// A variable condition that (re)starts it on the rising edge, for
+    /// hosts that send states rather than events. The edge belongs to the
+    /// variable, not to the scene: leaving a scene and coming back does
+    /// not replay it unless the condition turned true while away.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<When>,
+    /// A variable condition it runs under: it plays while the condition
+    /// holds and stops when it stops holding.
+    ///
+    /// What `when` cannot say. A blink that means "this is lit" should
+    /// run for as long as it is lit, and a looping timeline started on an
+    /// edge would never stop. Unlike `when`, entering a scene starts it
+    /// again, since it describes a state the scene is in rather than
+    /// something that happened.
+    ///
+    /// Stopping is not finishing: it fires no `on_end`.
+    #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+    pub whilst: Option<While>,
     #[serde(default)]
     pub autoplay: bool,
     /// Repeat forever. Cannot be combined with `repeat`.

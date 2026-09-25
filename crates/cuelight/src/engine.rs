@@ -1444,9 +1444,6 @@ impl Engine {
 
     fn enter_scene(&mut self, scene: usize) {
         self.playing.retain(|p| p.owner.root() == Root::Show);
-        // The scene's conditions are forgotten with it, so one that is
-        // already true when it is entered starts its timeline again.
-        self.conditions.retain(|(root, ..), _| *root == Root::Show);
         // Leaving a scene stops its sounds.
         self.sounding.retain(|s| s.root == Root::Show);
         self.waiting.retain(|(root, ..)| *root == Root::Show);
@@ -2119,26 +2116,55 @@ impl Engine {
             .chain(self.active_scene.map(Root::Scene))
             .collect();
         let mut edges: Vec<(Root, Vec<usize>, usize)> = Vec::new();
+        let mut stops: Vec<(Owner, usize)> = Vec::new();
         let mut now: HashMap<(Root, Vec<usize>, usize), bool> = HashMap::new();
         for root in roots {
             let Some(layers) = root_layers(show, root) else {
                 continue;
             };
-            let mut found: Vec<(Vec<usize>, usize, bool)> = Vec::new();
+            /// A timeline with a condition: where it is, and what its
+            /// `when` and `while` read as now.
+            type Conditioned = (Vec<usize>, usize, Option<bool>, Option<bool>);
+            let mut found: Vec<Conditioned> = Vec::new();
             collect_timelines(layers, &mut Vec::new(), &mut |path, idx, tl| {
-                if let Some(when) = &tl.when {
-                    found.push((path.to_vec(), idx, self.holds(when)));
+                let when = tl.when.as_ref().map(|w| self.holds(w));
+                let whilst = tl.whilst.as_ref().map(|w| self.holds(w));
+                if when.is_some() || whilst.is_some() {
+                    found.push((path.to_vec(), idx, when, whilst));
                 }
             });
-            for (path, idx, holds) in found {
-                let key = (root, path, idx);
-                if holds && self.conditions.get(&key) != Some(&true) {
-                    edges.push(key.clone());
+            for (path, idx, when, whilst) in found {
+                let key = (root, path.clone(), idx);
+                if let Some(holds) = when {
+                    // The rising edge, and only that: a condition that
+                    // was already true stays quiet.
+                    if holds && self.conditions.get(&key) != Some(&true) {
+                        edges.push(key.clone());
+                    }
+                    now.insert(key, holds);
+                } else if let Some(holds) = whilst {
+                    // No edge: it runs while it holds. Entering a scene
+                    // empties the playheads, so this starts it again.
+                    let running = self
+                        .playing
+                        .iter()
+                        .any(|p| p.owner.is_layer(root, &path) && p.timeline == idx);
+                    match (holds, running) {
+                        (true, false) => edges.push((root, path, idx)),
+                        (false, true) => stops.push((Owner::Layer { root, path }, idx)),
+                        _ => {}
+                    }
                 }
-                now.insert(key, holds);
             }
         }
-        self.conditions = now;
+        // Merged, not replaced: a scene that is not showing keeps what
+        // its conditions last read, so coming back to it is not an edge
+        // unless the variable turned true while it was away.
+        self.conditions.extend(now);
+        for (owner, timeline) in stops {
+            self.playing
+                .retain(|p| !(p.owner == owner && p.timeline == timeline));
+        }
         for (root, path, timeline) in edges {
             self.start_timeline(root, path, timeline, self.time);
         }
@@ -3867,10 +3893,17 @@ fn validate(show: &Show) -> Result<(), Error> {
                         timeline.name, layer.name, track.property
                     )));
                 }
-                if let Some(when) = &timeline.when {
-                    let problem = if when.variable.is_empty() {
+                if timeline.when.is_some() && timeline.whilst.is_some() {
+                    return Err(Error::InvalidShow(format!(
+                        "timeline {:?} of layer {:?} sets both when and while, which \
+                         want different things of the same condition",
+                        timeline.name, layer.name
+                    )));
+                }
+                for condition in [&timeline.when, &timeline.whilst].into_iter().flatten() {
+                    let problem = if condition.variable.is_empty() {
                         Some("needs a variable in its condition")
-                    } else if when.threshold.is_some_and(|t| !t.is_finite()) {
+                    } else if condition.threshold.is_some_and(|t| !t.is_finite()) {
                         Some("needs a finite threshold in its condition")
                     } else {
                         None

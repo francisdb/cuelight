@@ -1870,7 +1870,18 @@
           "default": null
         },
         "when": {
-          "description": "A variable condition that (re)starts it, for hosts that send\nstates rather than events.",
+          "description": "A variable condition that (re)starts it on the rising edge, for\nhosts that send states rather than events. The edge belongs to the\nvariable, not to the scene: leaving a scene and coming back does\nnot replay it unless the condition turned true while away.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/When"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "while": {
+          "description": "A variable condition it runs under: it plays while the condition\nholds and stops when it stops holding.\n\nWhat `when` cannot say. A blink that means \"this is lit\" should\nrun for as long as it is lit, and a looping timeline started on an\nedge would never stop. Unlike `when`, entering a scene starts it\nagain, since it describes a state the scene is in rather than\nsomething that happened.\n\nStopping is not finishing: it fires no `on_end`.",
           "anyOf": [
             {
               "$ref": "#/$defs/When"
