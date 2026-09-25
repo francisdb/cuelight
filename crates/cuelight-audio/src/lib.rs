@@ -38,5 +38,5 @@ pub use cuelight::Voice;
 #[cfg(feature = "live")]
 pub use live::Output;
 pub use mixer::Mixer;
-pub use sound::{Sound, SOUND_EXTENSIONS};
+pub use sound::{length, Sound, SOUND_EXTENSIONS};
 pub use wav::write_wav;

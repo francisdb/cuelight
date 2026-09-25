@@ -114,3 +114,28 @@ impl Sound {
         self.frames() as f64 / f64::from(self.rate.max(1))
     }
 }
+
+/// How long a sound is, in seconds, without decoding it.
+///
+/// The length is in the container's header, so a host that only needs to
+/// register a length -- so that a sound ends and its `on_end` fires --
+/// need not turn the whole file into samples first. `None` when the
+/// header does not say, which a constant-bitrate MP3 without a Xing
+/// header does not: decode it with [`Sound::decode`] and ask the result.
+pub fn length(extension: &str, bytes: &[u8]) -> Option<f64> {
+    let source = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension(extension);
+    let reader = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            source,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .ok()?;
+    let track = reader.first_track_known_codec(TrackType::Audio)?;
+    let time_base = track.time_base?;
+    let time = time_base.calc_duration(track.duration?)?;
+    Some(time.as_secs_f64())
+}
