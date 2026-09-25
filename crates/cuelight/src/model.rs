@@ -1664,6 +1664,24 @@ pub struct Binding {
     /// How a number becomes text (text bindings only).
     #[serde(default)]
     pub format: NumberFormat,
+    /// Words in front of the value, and behind it (text bindings only).
+    ///
+    /// A readout is rarely a bare number: `40%`, `BALL 2`, `2.5 X`,
+    /// `LEVEL 12`. Putting them in a layer of their own beside the number
+    /// only holds while nothing is centred or right-aligned, since the
+    /// number's width changes and the words do not move with it.
+    ///
+    /// They apply last, to whatever text the binding produces, so a
+    /// counting `transition` counts the number and leaves the words
+    /// still, and a `map`'s text gets them as much as a number does. A
+    /// binding that does not apply (an unset variable, a `map` with
+    /// nothing to say and no `default`) leaves the property as it was,
+    /// words included.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prefix: String,
+    /// Words behind the value; see `prefix`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub suffix: String,
     /// Replace the variable's value by looking it up here.
     #[serde(default)]
     pub map: Option<BTreeMap<String, Value>>,

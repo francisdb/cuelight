@@ -161,6 +161,10 @@
           "format": "double",
           "default": 0.0
         },
+        "prefix": {
+          "description": "Words in front of the value, and behind it (text bindings only).\n\nA readout is rarely a bare number: `40%`, `BALL 2`, `2.5 X`,\n`LEVEL 12`. Putting them in a layer of their own beside the number\nonly holds while nothing is centred or right-aligned, since the\nnumber's width changes and the words do not move with it.\n\nThey apply last, to whatever text the binding produces, so a\ncounting `transition` counts the number and leaves the words\nstill, and a `map`'s text gets them as much as a number does. A\nbinding that does not apply (an unset variable, a `map` with\nnothing to say and no `default`) leaves the property as it was,\nwords included.",
+          "type": "string"
+        },
         "property": {
           "$ref": "#/$defs/Property"
         },
@@ -168,6 +172,10 @@
           "type": "number",
           "format": "double",
           "default": 1.0
+        },
+        "suffix": {
+          "description": "Words behind the value; see `prefix`.",
+          "type": "string"
         },
         "threshold": {
           "description": "A level: the value becomes 1 at or above it and 0 below, before\n`scale` and `offset` apply. A lamp that lights when a brightness\npasses a half, a `visible` that follows a level.",
