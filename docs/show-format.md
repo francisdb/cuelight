@@ -1100,6 +1100,7 @@ loads a show the way the player does and writes frames without a window:
 cuelight-render eclipse/ --at 4.1,19.5,26 -o frames/
 cuelight-render eclipse/ --every 0.5 --until 52 -o frames/
 cuelight-render eclipse/ --until 52 --events
+cuelight-render dmd/ --at 2 --scale 4 -o frames/
 ```
 
 Time is walked in fixed steps of `--fps` (60 by default) from 0, so a run
@@ -1107,6 +1108,18 @@ is repeatable and a frame at a given time is reached the same way however
 many were asked for. `--events` prints what the show fired and when, and
 needs no GPU. `--trigger 2.5:go` and `--set 0:score=1500` add inputs at a
 time, and `--no-driver` ignores the folder's driver script.
+
+By default a frame is the canvas at the show's own size. `--scale N`
+writes what a host would show instead, N times that size: fitted the way
+the show's `scaling` asks, with its output mode and passes applied. A
+`dots` pass needs about `--scale 3` before there are enough pixels to
+make dots out of.
+
+Sounds are decoded for their lengths, so a sound ends and its `on_end`
+fires and a show chained through one runs to the end. No sound device is
+opened and nothing is played. Videos are not decoded, so a show chained
+through a video's `on_end` still stops at the first: register their
+lengths from a host if you need that.
 
 Determinism: within one run the engine and the renderer are exact, so a
 strip is internally consistent. Across runs the GPU can differ by one
