@@ -218,6 +218,105 @@ fn memory_without_a_show_document_is_an_error() {
     assert!(matches!(err, LoadError::NoShowDocument(_)), "{err}");
 }
 
+/// The engine's test font, whose family is "Cuelight Test Sans".
+#[cfg(all(feature = "svg", feature = "outline-fonts"))]
+fn test_font() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cuelight/tests/fonts/cuelight_test_sans.ttf"
+    ))
+    .unwrap()
+}
+
+#[cfg(all(feature = "svg", feature = "outline-fonts"))]
+#[test]
+fn svg_text_is_drawn_with_the_shows_own_fonts() {
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20">
+        <text x="0" y="15" font-family="Cuelight Test Sans" font-size="15" fill="#ff0000">A</text>
+      </svg>"##;
+    // Without the font, nothing to draw it with and nothing drawn: the
+    // machine's own fonts are never reached for, so this is what every
+    // machine does, browsers included.
+    let mut engine = Engine::new();
+    let bare = cuelight_loader::convert_svg(svg, &cuelight_loader::SvgFonts::of(&engine)).unwrap();
+    assert!(bare.vector.paths.is_empty(), "{:?}", bare.vector.paths);
+    assert_eq!(bare.missing_fonts, ["Cuelight Test Sans"]);
+
+    // With it, the letter becomes paths.
+    engine.set_outline_font("sans", test_font()).unwrap();
+    let drawn = cuelight_loader::convert_svg(svg, &cuelight_loader::SvgFonts::of(&engine)).unwrap();
+    assert!(!drawn.vector.paths.is_empty(), "the text became paths");
+    assert!(drawn.missing_fonts.is_empty());
+    assert_eq!(drawn.vector.paths[0].fill, Some([255, 0, 0, 255]));
+
+    // The family is the one inside the file, not the name the show
+    // registered it under.
+    let other = svg.to_vec();
+    let other = String::from_utf8(other)
+        .unwrap()
+        .replace("Cuelight Test Sans", "sans");
+    let by_stem =
+        cuelight_loader::convert_svg(other.as_bytes(), &cuelight_loader::SvgFonts::of(&engine))
+            .unwrap();
+    assert_eq!(by_stem.missing_fonts, ["sans"]);
+}
+
+#[cfg(all(feature = "svg", feature = "outline-fonts"))]
+#[test]
+fn a_show_folder_draws_its_artwork_with_the_fonts_it_ships() {
+    // The folder is walked in name order, so the artwork is met before
+    // the font: it is converted once everything is registered, not where
+    // the listing happens to put it.
+    let files = std::collections::BTreeMap::from([
+        (
+            "show.json".to_owned(),
+            br##"{ "name": "s", "size": [100, 20], "layers": [
+                 { "name": "art", "type": "vector", "vector": "art" } ] }"##
+                .to_vec(),
+        ),
+        (
+            "assets/art.svg".to_owned(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20">
+                 <text x="0" y="15" font-family="Cuelight Test Sans" font-size="15">A</text>
+               </svg>"##
+                .to_vec(),
+        ),
+        ("assets/fonts/sans.ttf".to_owned(), test_font()),
+    ]);
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert_eq!(loaded.vectors, ["art"]);
+    assert!(
+        loaded.missing_fonts.is_empty(),
+        "{:?}",
+        loaded.missing_fonts
+    );
+    assert!(!engine.vector("art").unwrap().paths.is_empty());
+}
+
+#[cfg(all(feature = "svg", feature = "outline-fonts"))]
+#[test]
+fn a_font_a_show_does_not_ship_is_reported() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "show.json".to_owned(),
+            br##"{ "name": "s", "size": [100, 20], "layers": [
+                 { "name": "art", "type": "vector", "vector": "art" } ] }"##
+                .to_vec(),
+        ),
+        (
+            "assets/art.svg".to_owned(),
+            br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20">
+                 <text x="0" y="15" font-family="Nothing Here" font-size="15">A</text>
+               </svg>"##
+                .to_vec(),
+        ),
+        ("assets/fonts/sans.ttf".to_owned(), test_font()),
+    ]);
+    let loaded = cuelight_loader::load_from_memory(&mut Engine::new(), &files).unwrap();
+    assert_eq!(loaded.missing_fonts, ["Nothing Here"]);
+}
+
 #[cfg(feature = "svg")]
 #[test]
 fn converts_an_svg_into_vector_artwork() {
@@ -230,7 +329,8 @@ fn converts_an_svg_into_vector_artwork() {
         <rect x="0" y="0" width="1" height="1" fill="#00ff00" opacity="0.5"/>
       </svg>"##;
     let mut engine = Engine::new();
-    cuelight_loader::register_vector(&mut engine, "art", svg).unwrap();
+    let fonts = cuelight_loader::SvgFonts::of(&engine);
+    cuelight_loader::register_vector(&mut engine, "art", svg, &fonts).unwrap();
     let art = engine.vector("art").unwrap();
     assert_eq!((art.width, art.height), (20.0, 10.0));
     assert_eq!(art.paths.len(), 3);

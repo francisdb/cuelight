@@ -20,7 +20,9 @@ schemars = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-usvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"], optional = true }
+# Text becomes paths through the show's own fonts, so the feature that
+# reads the machine's is off.
+usvg = { version = "0.48", default-features = false, features = ["text"], optional = true }
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dev-dependencies]
@@ -30,7 +32,7 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2-zli
 [features]
 default = ["png", "outline-fonts", "svg", "pack"]
 # Convert .svg files under assets/ into vector artwork (paths with fills
-# and strokes; text becomes paths through the system's fonts).
+# and strokes; text becomes paths through the show's own fonts).
 svg = ["dep:usvg"]
 # Read and write packed shows (.cuelight, a zip of a show folder).
 pack = ["dep:zip"]

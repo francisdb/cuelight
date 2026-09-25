@@ -921,6 +921,18 @@ impl Engine {
         self.fonts.contains_key(name) || self.outline_fonts.contains_key(name)
     }
 
+    /// Every outline font registered, by name, in name order.
+    ///
+    /// The show's own fonts, for a host that has to hand them to
+    /// something else: a loader turning an SVG's text into paths draws
+    /// it with these rather than with whatever the machine has
+    /// installed, so a show reads the same wherever it plays.
+    pub fn outline_fonts(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.outline_fonts
+            .iter()
+            .map(|(name, font)| (name.as_str(), &*font.data))
+    }
+
     /// Register (or replace) a named sound by its `duration` in seconds,
     /// which is all the engine needs of it: to loop, repeat and end plays.
     /// The samples stay with the host's audio backend, which plays what

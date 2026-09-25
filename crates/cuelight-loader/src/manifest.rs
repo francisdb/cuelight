@@ -86,6 +86,10 @@ pub struct LoadedFiles {
     /// Asset files left alone because support for their format is not
     /// compiled in. A build problem, not a show problem.
     pub skipped: Vec<String>,
+    /// Font families the show's artwork asked for and the show does not
+    /// ship, whose text was not drawn. A show problem, and the same
+    /// wherever it plays.
+    pub missing_fonts: Vec<String>,
 }
 
 /// A sound file of a show, undecoded: the engine registers it by
@@ -125,7 +129,13 @@ pub fn load_from_memory(
         vectors: Vec::new(),
         sounds: Vec::new(),
         skipped: Vec::new(),
+        missing_fonts: Vec::new(),
     };
+    // Artwork is converted once every font is registered, whichever
+    // order the files came in: its text is drawn with the show's own
+    // fonts, and a folder listing does not put them first.
+    #[cfg(feature = "svg")]
+    let mut artwork: Vec<(String, Vec<u8>)> = Vec::new();
 
     let mut unclaimed: Vec<String> = Vec::new();
     // The pages a bitmap font read, which are its to use rather than
@@ -143,11 +153,7 @@ pub fn load_from_memory(
         match dir {
             "assets" if extension == VECTOR_EXTENSION => {
                 #[cfg(feature = "svg")]
-                {
-                    crate::register_vector(engine, stem, bytes)
-                        .map_err(|e| asset_error(path, e))?;
-                    loaded.vectors.push(stem.to_owned());
-                }
+                artwork.push((stem.to_owned(), bytes.clone()));
                 #[cfg(not(feature = "svg"))]
                 loaded.skipped.push(path.clone());
             }
@@ -211,12 +217,32 @@ pub fn load_from_memory(
         }
     }
 
+    #[cfg(feature = "svg")]
+    let named = register_named(engine, show, files, &mut loaded, &mut artwork)?;
+    #[cfg(not(feature = "svg"))]
     let named = register_named(engine, show, files, &mut loaded)?;
     loaded.skipped.extend(
         unclaimed
             .into_iter()
             .filter(|p| !named.contains(p) && !pages.contains(p)),
     );
+
+    // Now that every font is in, the artwork: its text is drawn with
+    // them.
+    #[cfg(feature = "svg")]
+    {
+        let fonts = crate::SvgFonts::of(engine);
+        for (name, bytes) in artwork {
+            let missing = crate::register_vector(engine, &name, &bytes, &fonts)
+                .map_err(|e| asset_error(&name, e))?;
+            for family in missing {
+                if !loaded.missing_fonts.contains(&family) {
+                    loaded.missing_fonts.push(family);
+                }
+            }
+            loaded.vectors.push(name);
+        }
+    }
 
     engine.load_show(show).map_err(|source| LoadError::Engine {
         path: PathBuf::from("show.json"),
@@ -252,6 +278,7 @@ fn register_named(
     show: &str,
     files: &BTreeMap<String, Vec<u8>>,
     loaded: &mut LoadedFiles,
+    #[cfg(feature = "svg")] artwork: &mut Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, LoadError> {
     let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
         // Not a show at all; loading it will say so properly in a moment.
@@ -287,11 +314,7 @@ fn register_named(
             }
             Asset::Vector => {
                 #[cfg(feature = "svg")]
-                {
-                    crate::register_vector(engine, &name, bytes)
-                        .map_err(|e| asset_error(&name, e))?;
-                    loaded.vectors.push(name);
-                }
+                artwork.push((name, bytes.clone()));
                 #[cfg(not(feature = "svg"))]
                 loaded.skipped.push(name);
             }

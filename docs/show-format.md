@@ -352,11 +352,33 @@ Layer kinds:
   by stem. Drawn like an image: its top-left corner at the layer's x/y
   (or by `anchor`), at its own size (the viewBox) or scaled into `size`
   `[width, height]`. What an SVG keeps: paths, basic shapes and text (as
-  outlines, through the system's fonts), with solid fills and strokes,
-  group transforms and opacities. A gradient paints as its first stop's
-  color; patterns, raster images, clip paths, masks, filters, dashes and
-  line joins are dropped. Animation is not read: address moving parts as
-  separate vector layers and animate those.
+  outlines), with solid fills and strokes, group transforms and
+  opacities. A gradient paints as its first stop's color; patterns,
+  raster images, clip paths, masks, filters, dashes and line joins are
+  dropped. Animation is not read: address moving parts as separate
+  vector layers and animate those.
+
+  Text is drawn with the show's own fonts, the ones in `assets/fonts`,
+  and never with the machine's: a show that took whatever happened to be
+  installed would draw its text on one machine and drop it on another,
+  and a browser has none to take. `font-family` names the family inside
+  the font file, not the name the file is registered under:
+
+  ```xml
+  <text font-family="DM Mono" font-size="18"><tspan fill="#9DB8FF">"fuel"</tspan>: 0.01</text>
+  ```
+
+  draws in `assets/fonts/DMMono-Regular.ttf` wherever the show plays, and
+  gives artwork several colours and weights in one line of text, which a
+  text layer cannot do. A family the show does not ship is reported at
+  load and its text is not drawn. Text that names no family at all gets
+  the first font the show registered.
+
+  A family's weights and styles are picked with `font-weight` and
+  `font-style` under the one family name: the medium cut is
+  `font-family="DM Mono" font-weight="500"`. The name some font menus
+  show for it, `DM Mono Medium`, is not a family, and is reported as one
+  the show does not ship.
 - `image`: `image` names pixels the host registers at runtime with
   `Engine::set_image` (RGBA8, kept in memory). Optional `size`
   `[width, height]` scales the image into the canvas; omitted, it draws at

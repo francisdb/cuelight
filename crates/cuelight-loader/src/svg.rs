@@ -1,38 +1,116 @@
 //! SVG documents as vector artwork: what usvg makes of a file, reduced to
 //! paths with solid fills and strokes.
 
-use cuelight::{PathElement, Vector, VectorPath};
-use std::sync::{Arc, OnceLock};
+use cuelight::{Engine, PathElement, Vector, VectorPath};
+use std::sync::{Arc, Mutex};
 use usvg::tiny_skia_path::PathSegment;
+
+/// Artwork converted from an SVG document, and what it asked for and did
+/// not get.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Artwork {
+    pub vector: Vector,
+    /// Font families the document named that the show does not ship:
+    /// their text is not drawn. A show problem, and the same on every
+    /// machine, which is the point of drawing with the show's fonts.
+    pub missing_fonts: Vec<String>,
+}
+
+/// The fonts an SVG's text is drawn with: a show's own, and no others.
+///
+/// Text in artwork becomes paths at load, and which paths depends on the
+/// font. Taking whatever the machine happens to have installed means a
+/// show that draws its text here drops it there, and a browser has
+/// nothing to take at all. A show carries its fonts, so those are the
+/// ones to draw with.
+pub struct SvgFonts {
+    fontdb: Arc<usvg::fontdb::Database>,
+    /// The family text gets when it names none: the first font the show
+    /// registered, so a show with one font need not say which.
+    default_family: Option<String>,
+}
+
+impl SvgFonts {
+    /// The outline fonts registered with `engine`, which are the show's
+    /// own: `assets/fonts` after a load, or whatever a host registered.
+    ///
+    /// Families are matched by the name inside the font file, as an
+    /// SVG's `font-family` names them, not by the name the show
+    /// registered the file under.
+    pub fn of(engine: &Engine) -> SvgFonts {
+        let mut fontdb = usvg::fontdb::Database::new();
+        for (_, bytes) in engine.outline_fonts() {
+            fontdb.load_font_source(usvg::fontdb::Source::Binary(Arc::new(bytes.to_vec())));
+        }
+        let default_family = fontdb
+            .faces()
+            .next()
+            .and_then(|face| face.families.first().map(|(name, _)| name.clone()));
+        SvgFonts {
+            fontdb: Arc::new(fontdb),
+            default_family,
+        }
+    }
+
+    /// Parsing options that draw text with these fonts, and a list that
+    /// fills with every family they could not answer for.
+    fn options(&self) -> (usvg::Options<'static>, Asked) {
+        let asked: Asked = Arc::new(Mutex::new(Vec::new()));
+        let noted = asked.clone();
+        let chosen = usvg::FontResolver::default_font_selector();
+        let mut options = usvg::Options {
+            fontdb: self.fontdb.clone(),
+            ..usvg::Options::default()
+        };
+        if let Some(family) = &self.default_family {
+            options.font_family = family.clone();
+        }
+        options.font_resolver.select_font = Box::new(move |font, fontdb| {
+            let found = chosen(font, fontdb);
+            if found.is_none() {
+                // What the document asked for, as it wrote it, so the
+                // show can be told which font it does not ship.
+                let mut noted = noted.lock().unwrap_or_else(|e| e.into_inner());
+                for family in font.families() {
+                    let name = match family {
+                        usvg::FontFamily::Named(name) => name.clone(),
+                        other => format!("{other:?}").to_lowercase(),
+                    };
+                    if !noted.contains(&name) {
+                        noted.push(name);
+                    }
+                }
+            }
+            found
+        });
+        (options, asked)
+    }
+}
+
+/// Families the document asked for and did not get, filled while it is
+/// parsed.
+type Asked = Arc<Mutex<Vec<String>>>;
 
 /// Convert an SVG document into vector artwork in its own units (the
 /// viewBox): every path, in paint order, with group transforms applied
 /// and group opacities folded into the colors. Kept: solid fills and
 /// strokes (a gradient paints as its first stop's color, a pattern is
 /// dropped), fill rule, stroke width. Text becomes paths through the
-/// system's fonts. Dropped: raster images, clip paths, masks, filters,
-/// stroke joins and dashes.
-pub fn convert_svg(bytes: &[u8]) -> Result<Vector, String> {
-    let tree = usvg::Tree::from_data(bytes, options()).map_err(|e| e.to_string())?;
+/// show's own fonts (see [`SvgFonts`]). Dropped: raster images, clip
+/// paths, masks, filters, stroke joins and dashes.
+pub fn convert_svg(bytes: &[u8], fonts: &SvgFonts) -> Result<Artwork, String> {
+    let (options, asked) = fonts.options();
+    let tree = usvg::Tree::from_data(bytes, &options).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
     group(tree.root(), 1.0, &mut paths);
-    Ok(Vector {
-        width: f64::from(tree.size().width()),
-        height: f64::from(tree.size().height()),
-        paths,
-    })
-}
-
-/// Parsing options, with the system's fonts loaded once for text.
-fn options() -> &'static usvg::Options<'static> {
-    static OPTIONS: OnceLock<usvg::Options<'static>> = OnceLock::new();
-    OPTIONS.get_or_init(|| {
-        let mut fontdb = usvg::fontdb::Database::new();
-        fontdb.load_system_fonts();
-        usvg::Options {
-            fontdb: Arc::new(fontdb),
-            ..usvg::Options::default()
-        }
+    let missing_fonts = std::mem::take(&mut *asked.lock().unwrap_or_else(|e| e.into_inner()));
+    Ok(Artwork {
+        vector: Vector {
+            width: f64::from(tree.size().width()),
+            height: f64::from(tree.size().height()),
+            paths,
+        },
+        missing_fonts,
     })
 }
 
