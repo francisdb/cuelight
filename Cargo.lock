@@ -575,6 +575,7 @@ dependencies = [
  "clap",
  "cuelight",
  "cuelight-audio",
+ "cuelight-video",
  "png",
  "serde",
  "serde_json",

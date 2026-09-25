@@ -192,6 +192,25 @@ fn run(cli: &Cli) -> Result<(), Stop> {
                 .map_err(|e| e.to_string())?;
         }
     }
+    // The same for videos, measured the way the player measures them:
+    // the file's header through ffprobe, no frames decoded. A machine
+    // without ffmpeg says so once per file and carries on, since a show
+    // that never ends a clip still renders.
+    for path in &loaded.videos {
+        let name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match cuelight_video::Clip::open(path, None) {
+            Ok(clip) => {
+                let details = clip.details();
+                engine
+                    .set_video(&name, details.duration, details.size())
+                    .map_err(|e| e.to_string())?;
+            }
+            Err(e) => eprintln!("warning: video {name:?}: {e}"),
+        }
+    }
     let mut driver = loaded
         .driver
         .filter(|_| !cli.no_driver)
