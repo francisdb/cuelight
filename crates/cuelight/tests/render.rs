@@ -508,3 +508,41 @@ fn a_leaning_display_on_a_pixel_grid_is_as_crisp_as_an_upright_one() {
     assert_eq!(shades(10.0), Some(upright), "a lean cost it its edges");
     assert_eq!(shades(-10.0), Some(upright), "the other way too");
 }
+
+#[test]
+fn a_diagonal_segment_on_a_pixel_grid_is_as_crisp_as_a_straight_one() {
+    // The letters of alpha14 that are drawn out of its diagonals, at the
+    // size a small display gives a character.
+    let show = |text: &str, slant: f64| {
+        format!(
+            r##"{{ "name": "seg", "size": [64, 16], "background": "#000000",
+      "output": {{ "scaling": "pixel_perfect" }},
+      "layers": [
+        {{ "name": "row", "type": "digits", "digits": 8, "size": [64, 14], "y": 1,
+          "text": "{text}",
+          "display": {{ "segments": {{ "style": "alpha14", "fill": "#FF5820",
+            "unlit": "#2A0E05", "slant": {slant} }} }} }}
+      ] }}"##
+        )
+    };
+    let shades = |text: &str, slant: f64| {
+        let mut engine = Engine::new();
+        engine.load_show(&show(text, slant)).unwrap();
+        let frame = render(&engine)?;
+        let mut colors: Vec<[u8; 4]> = frame
+            .pixels
+            .chunks(4)
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+        colors.sort_unstable();
+        colors.dedup();
+        Some(colors.len())
+    };
+    // Background, unlit and lit, as a dot display has: every diagonal
+    // stroke is drawn in whole dots.
+    let Some(count) = shades("XKMNRWYV", 0.0) else {
+        return;
+    };
+    assert_eq!(count, 3);
+    assert_eq!(shades("XKMNRWYV", 10.0), Some(3), "leaning as well");
+}

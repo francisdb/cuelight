@@ -161,11 +161,9 @@ pub const LEANEST: f64 = 45.0;
 /// edges lie on pixel boundaries. On a small canvas that decides how a
 /// display looks: a one pixel bar centered on a boundary (the middle bar of
 /// a cell with an even height) would otherwise be smeared over two rows at
-/// half brightness. A lean is cut into one strip per pixel row there, so
-/// a leaning bar is a staircase of crisp blocks with no diagonal edge
-/// left for the renderer to smooth. The diagonal segments of
-/// [`SegmentStyle::Alpha14`] are diagonals whatever the grid, and stay
-/// shaded.
+/// half brightness. Every segment is cut into one strip per pixel row
+/// there, so a leaning bar, and a diagonal one, come out a staircase of
+/// crisp blocks with no edge left for the renderer to smooth.
 pub fn polygons(
     style: SegmentStyle,
     mask: u16,
@@ -225,52 +223,46 @@ pub fn polygons(
             (6, [x0, ym], [x1, ym]),
         ],
     };
-    // Which bars are upright or level, and so a rectangle once snapped:
-    // the ones a lean can step in whole pixels.
-    let mut out: Vec<(Vec<[f64; 2]>, bool)> = lines
+    let mut out: Vec<Vec<[f64; 2]>> = lines
         .iter()
         .filter(|(bit, _, _)| mask & (1 << bit) != 0)
-        .map(|&(_, from, to)| {
-            let square = from[0] == to[0] || from[1] == to[1];
-            (bar(from, to, thickness, snap), square)
-        })
+        .map(|&(_, from, to)| bar(from, to, thickness, snap))
         .collect();
     if mask & DOT != 0 {
         // The dot sits in the bottom-right padding.
         let (cx, cy, r) = (on_grid(x + w - pad / 2.0), y1, thickness / 2.0);
-        out.push((
-            vec![
-                [cx - r, cy - r],
-                [cx + r, cy - r],
-                [cx + r, cy + r],
-                [cx - r, cy + r],
-            ],
-            true,
-        ));
+        out.push(vec![
+            [cx - r, cy - r],
+            [cx + r, cy - r],
+            [cx + r, cy + r],
+            [cx - r, cy + r],
+        ]);
     }
     // A lean is a shear about the cell's baseline, not a rotation: the
     // bars stay square to the row and the digits stay on the line.
     let lean = look.slant.clamp(-LEANEST, LEANEST).to_radians().tan();
-    if lean != 0.0 {
-        let baseline = y + h;
-        for (points, square) in &mut out {
-            // On a pixel grid a sheared bar is cut into one strip per
-            // pixel row instead, each shifted a whole number of columns.
-            // Moving the corners alone is not enough: the edge between
-            // two of them is still a diagonal, which the renderer smears
-            // across two columns, and a leaning display comes out shaded
-            // where an upright one is crisp.
-            if snap && *square {
-                *points = staircase(bounds(points), baseline, lean);
-                continue;
-            }
+    let baseline = y + h;
+    if snap {
+        // Every segment is cut into one strip per pixel row, the lean
+        // taken row by row with it: the upright and level bars because
+        // moving their corners alone would leave the sheared edge
+        // between them a diagonal, and the diagonal segments because
+        // they are diagonals to start with. Either way no edge is left
+        // for the renderer to smooth, so a cell holds the three colours
+        // a dot display has and not a spread of half-lit ones.
+        out = out
+            .iter()
+            .map(|points| staircase(points, baseline, lean))
+            .filter(|points| !points.is_empty())
+            .collect();
+    } else if lean != 0.0 {
+        for points in &mut out {
             for point in points.iter_mut() {
-                let shift = (point[1] - baseline) * lean;
-                point[0] -= if snap { shift.round() } else { shift };
+                point[0] -= (point[1] - baseline) * lean;
             }
         }
     }
-    out.into_iter().map(|(points, _)| points).collect()
+    out
 }
 
 /// The box a polygon fills, as `[x0, y0, x1, y1]`.
@@ -281,27 +273,63 @@ fn bounds(points: &[[f64; 2]]) -> [f64; 4] {
     )
 }
 
-/// A rectangle leaning on a pixel grid: one strip per pixel row, each
-/// shifted by whole columns, as one outline.
+/// A shape on a pixel grid: one strip per pixel row, as one outline.
+///
+/// A row is part of the shape when the shape covers the middle of that
+/// row, and takes the columns whose middles it covers there, which is
+/// the rule a renderer that did not smooth anything would follow. The
+/// lean shears it row by row at the same time, by whole columns.
 ///
 /// Down the left side and back up the right, so the strips are a single
-/// shape with no seam between them and every edge of it is level or
-/// upright. Which column a row lands in is read at the row's own middle.
-fn staircase([x0, y0, x1, y1]: [f64; 4], baseline: f64, lean: f64) -> Vec<[f64; 2]> {
-    let rows = ((y1 - y0).round() as usize).max(1);
+/// shape with no seam between them, and every edge of it is level or
+/// upright.
+fn staircase(points: &[[f64; 2]], baseline: f64, lean: f64) -> Vec<[f64; 2]> {
+    let [_, y0, _, y1] = bounds(points);
+    let rows = ((y1 - y0).ceil() as usize).max(1) + 1;
     let mut left = Vec::with_capacity(rows * 4);
     let mut right = Vec::with_capacity(rows * 2);
-    for row in 0..rows {
-        let top = y0 + row as f64;
+    for row in y0.floor() as i64..y1.ceil() as i64 {
+        let top = row as f64;
+        let Some((from, to)) = across(points, top + 0.5) else {
+            // Above or below what the shape covers: a segment's pointed
+            // ends can reach into a row without reaching its middle.
+            continue;
+        };
         let shift = ((top + 0.5 - baseline) * lean).round();
-        left.push([x0 - shift, top]);
-        left.push([x0 - shift, top + 1.0]);
-        right.push([x1 - shift, top]);
-        right.push([x1 - shift, top + 1.0]);
+        let from = (from - shift).round();
+        // A row the shape reaches at all is a row of dots, so the
+        // narrowest strip is one dot wide rather than none.
+        let to = (to - shift).round().max(from + 1.0);
+        left.push([from, top]);
+        left.push([from, top + 1.0]);
+        right.push([to, top]);
+        right.push([to, top + 1.0]);
     }
     right.reverse();
     left.append(&mut right);
     left
+}
+
+/// Where a convex outline starts and ends across the line `y`.
+fn across(points: &[[f64; 2]], y: f64) -> Option<(f64, f64)> {
+    let mut from = f64::MAX;
+    let mut to = f64::MIN;
+    for edge in 0..points.len() {
+        let ([ax, ay], [bx, by]) = (points[edge], points[(edge + 1) % points.len()]);
+        let (lo, hi) = (ay.min(by), ay.max(by));
+        if y < lo || y > hi {
+            continue;
+        }
+        // A level edge is crossed at both its ends; anything else at the
+        // one point where it meets the line.
+        let at = match ay == by {
+            true => [ax, bx],
+            false => [ax + (bx - ax) * (y - ay) / (by - ay); 2],
+        };
+        from = from.min(at[0]).min(at[1]);
+        to = to.max(at[0]).max(at[1]);
+    }
+    (from <= to).then_some((from, to))
 }
 
 /// A segment of `thickness` along `from`-`to`, ends shortened and pointed
@@ -374,21 +402,16 @@ mod tests {
                 true,
                 Look::default(),
             )[0];
-            // Points 1 and 5 are the two long edges at one end of the bar.
-            let axis = usize::from(horizontal);
-            let (one, other) = (bar[1][axis], bar[5][axis]);
-            assert!(
-                whole(one) && whole(other),
-                "segment {bit}: {one} and {other}"
-            );
-            assert_eq!((one - other).abs(), 1.0, "segment {bit}");
-            // Flat ends, on the grid as well.
-            let along = 1 - axis;
-            assert_eq!(bar[0][along], bar[1][along]);
-            assert!(
-                whole(bar[0][along]) && whole(bar[3][along]),
-                "segment {bit}"
-            );
+            for &[px, py] in bar {
+                assert!(whole(px) && whole(py), "segment {bit}: {px}, {py}");
+            }
+            // One pixel thick across, whichever way it runs.
+            let [x0, y0, x1, y1] = bounds(bar);
+            let thick = match horizontal {
+                true => y1 - y0,
+                false => x1 - x0,
+            };
+            assert_eq!(thick, 1.0, "segment {bit}");
         }
         let loose = &polygons(SegmentStyle::Numeric7, 1 << 6, cell, false, Look::default())[0];
         assert!(!whole(loose[1][1]));
@@ -548,6 +571,41 @@ mod tests {
         // Off the grid it shears by the exact amount instead.
         let loose = polygons(SegmentStyle::Numeric7, 1 << 0, cell, false, look);
         assert!(loose[0].iter().any(|[px, _]| px.fract() != 0.0));
+    }
+
+    #[test]
+    fn a_snapped_diagonal_segment_is_a_staircase_too() {
+        // X, which is nothing but diagonals, on a cell the size a small
+        // display gives a character.
+        let cell = [0.0, 0.0, 8.0, 14.0];
+        let bars = polygons(SegmentStyle::Alpha14, 0x5500, cell, true, Look::default());
+        assert_eq!(bars.len(), 4, "four strokes");
+        for bar in &bars {
+            for &[px, py] in bar {
+                assert_eq!((px.fract(), py.fract()), (0.0, 0.0), "{px}, {py}");
+            }
+            for edge in bar
+                .windows(2)
+                .chain(std::iter::once(&[*bar.last().unwrap(), bar[0]][..]))
+            {
+                let ([ax, ay], [bx, by]) = (edge[0], edge[1]);
+                assert!(
+                    ax == bx || ay == by,
+                    "{:?} to {:?} is a diagonal",
+                    edge[0],
+                    edge[1]
+                );
+            }
+            // It still goes where a diagonal goes: a stroke of a single
+            // column would be an upright bar, not a diagonal.
+            let [x0, y0, x1, y1] = bounds(bar);
+            assert!(x1 - x0 >= 2.0 && y1 - y0 >= 2.0, "{:?}", bounds(bar));
+        }
+        // Off the grid it keeps its true shape.
+        let loose = polygons(SegmentStyle::Alpha14, 0x5500, cell, false, Look::default());
+        assert!(loose[0]
+            .iter()
+            .any(|[px, py]| px.fract() != 0.0 || py.fract() != 0.0));
     }
 
     #[test]

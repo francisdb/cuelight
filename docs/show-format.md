@@ -410,10 +410,15 @@ Layer kinds:
   `style` is `alpha14` (14 segments plus dot: letters, digits,
   `- + * / \ = _ '`) or `numeric7` (7 segments plus dot: digits and `-`).
   A `.` or `,` lights the dot of the cell before it instead of taking a
-  cell, so `1,250` needs four cells. Characters the style cannot show stay dark. In shows
-  that are rendered on their own pixel grid (a gray `output.mode`, or
-  `pixel_perfect` scaling) the straight bars are a whole number of pixels
-  thick, lie on pixel boundaries and end flat, so small displays stay crisp.
+  cell, so `1,250` needs four cells. Characters the style cannot show stay dark.
+
+  In shows that are rendered on their own pixel grid (a gray
+  `output.mode`, or `pixel_perfect` scaling) segments are drawn in whole
+  dots: the straight bars are a whole number of pixels thick, lie on
+  pixel boundaries and end flat, and the diagonal strokes of `alpha14`
+  are a staircase of whole dots rather than a shaded line. A cell then
+  holds the three colours a dot display has, background, unlit and lit,
+  whatever it spells.
 
   Three more say how it looks rather than what it says, all fixed per
   display and none of them bindable. Real displays differ a lot here, and
@@ -425,8 +430,7 @@ Layer kinds:
     leans the tops to the right. On a pixel grid the bar is cut into one
     strip per pixel row, each shifted by whole pixels, so a leaning
     display is a staircase of crisp blocks and stays as sharp as an
-    upright one. The diagonal segments of `alpha14` are diagonals
-    whatever the grid, and stay shaded.
+    upright one.
   - `thickness`: bar width as a share of the cell's shorter side, 0.1 by
     default and 0.2 at most. The gaps follow it, so a fat display stays
     legible instead of running together, and past that cap the bars would
