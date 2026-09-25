@@ -128,7 +128,8 @@ pub struct Look {
     /// Degrees the cell leans; a shear, so the baseline stays level. At
     /// most [`LEANEST`].
     pub slant: f64,
-    /// Extra width in canvas units, for a glow pass.
+    /// How far the shapes are pushed out in every direction, in canvas
+    /// units: a glow pass is the same segments, grown.
     pub grow: f64,
 }
 
@@ -184,7 +185,7 @@ pub fn polygons(
     let unit = w.min(h);
     let share = look.thickness.clamp(0.01, THICKEST);
     let pad = unit * (share * 1.2);
-    let mut thickness = unit * share + look.grow;
+    let mut thickness = unit * share;
     if snap {
         thickness = thickness.round().max(1.0);
     }
@@ -226,11 +227,11 @@ pub fn polygons(
     let mut out: Vec<Vec<[f64; 2]>> = lines
         .iter()
         .filter(|(bit, _, _)| mask & (1 << bit) != 0)
-        .map(|&(_, from, to)| bar(from, to, thickness, snap))
+        .map(|&(_, from, to)| bar(from, to, thickness, look.grow, snap))
         .collect();
     if mask & DOT != 0 {
         // The dot sits in the bottom-right padding.
-        let (cx, cy, r) = (on_grid(x + w - pad / 2.0), y1, thickness / 2.0);
+        let (cx, cy, r) = (on_grid(x + w - pad / 2.0), y1, thickness / 2.0 + look.grow);
         out.push(vec![
             [cx - r, cy - r],
             [cx + r, cy - r],
@@ -336,16 +337,28 @@ fn across(points: &[[f64; 2]], y: f64) -> Option<(f64, f64)> {
 /// so touching segments stay visibly apart. With `snap`, straight bars end
 /// flat, half a thickness short of their centerline's ends: on the pixel
 /// grid too, leaving the corner where bars meet dark.
-fn bar(from: [f64; 2], to: [f64; 2], thickness: f64, snap: bool) -> Vec<[f64; 2]> {
+///
+/// `grow` pushes the outline out by that much in every direction, which
+/// is what a halo round the segment is. An offset, not a thickness: a
+/// bar that only fattened would pull its ends in as it grew, since the
+/// gap it leaves at each end is measured from its thickness, and the
+/// halo would swell in the middle of the bar instead of following it.
+fn bar(from: [f64; 2], to: [f64; 2], thickness: f64, grow: f64, snap: bool) -> Vec<[f64; 2]> {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
     let len = (dx * dx + dy * dy).sqrt().max(f64::EPSILON);
     let (ux, uy) = (dx / len, dy / len);
-    let (nx, ny) = (-uy * thickness / 2.0, ux * thickness / 2.0);
+    let half = thickness / 2.0 + grow;
+    let (nx, ny) = (-uy * half, ux * half);
     let flat = snap && (dx == 0.0 || dy == 0.0);
     let (gap, tip) = match flat {
         true => (thickness / 2.0, 0.0),
         false => (thickness * 0.6, thickness / 2.0),
     };
+    // The end of a pointed bar is `tip` past where the gap leaves it, so
+    // only the gap moves: growing both would push the point out twice.
+    // The point blunts as the bar grows, which is what a halo round it
+    // should do anyway.
+    let gap = gap - grow;
     let a = [from[0] + ux * gap, from[1] + uy * gap];
     let b = [to[0] - ux * gap, to[1] - uy * gap];
     vec![
@@ -633,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn growing_a_segment_only_makes_it_wider() {
+    fn growing_a_segment_pushes_it_out_all_round() {
         let cell = [0.0, 0.0, 20.0, 40.0];
         let plain = polygons(SegmentStyle::Numeric7, 1 << 0, cell, false, Look::default());
         let grown = polygons(
@@ -646,11 +659,17 @@ mod tests {
                 ..Look::default()
             },
         );
-        let height = |bar: &Vec<[f64; 2]>| {
-            let ys: Vec<f64> = bar.iter().map(|p| p[1]).collect();
-            ys.iter().cloned().fold(f64::MIN, f64::max)
-                - ys.iter().cloned().fold(f64::MAX, f64::min)
-        };
-        assert!((height(&grown[0]) - height(&plain[0]) - 4.0).abs() < 1e-9);
+        // Out by the grow on every side, and along the bar as well: a
+        // halo follows the segment instead of swelling in its middle.
+        let [x0, y0, x1, y1] = bounds(&plain[0]);
+        let [gx0, gy0, gx1, gy1] = bounds(&grown[0]);
+        for (grown, plain, way) in [
+            (x0 - gx0, 0.0, "left"),
+            (gx1 - x1, 0.0, "right"),
+            (y0 - gy0, 0.0, "up"),
+            (gy1 - y1, 0.0, "down"),
+        ] {
+            assert!((grown - plain - 4.0).abs() < 1e-9, "{way}: {grown}");
+        }
     }
 }

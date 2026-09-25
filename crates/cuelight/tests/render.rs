@@ -587,3 +587,42 @@ fn a_tiled_pattern_turns_with_its_layer() {
         .count();
     assert_eq!(flipped, 0, "the pattern did not turn with the board");
 }
+
+#[test]
+fn a_glow_lights_the_dark_around_a_segment() {
+    // A display of 8s, every segment lit, on a dark panel: the measure
+    // of a glow is whether the dark just outside the digits is lifted.
+    let show = |glow: &str| {
+        format!(
+            r##"{{ "name": "g", "size": [220, 50], "background": "#0E1116",
+      "layers": [
+        {{ "name": "row", "type": "digits", "digits": 8, "size": [200, 40], "x": 10, "y": 5,
+          "text": "88888888",
+          "display": {{ "segments": {{ "style": "numeric7", "fill": "#FF5820",
+            "unlit": "#2A0E05"{glow} }} }} }}
+      ] }}"##
+        )
+    };
+    let red = |glow: &str, x: u32, y: u32| {
+        let mut engine = Engine::new();
+        engine.load_show(&show(glow)).unwrap();
+        let frame = render(&engine)?;
+        Some(pixel(&frame, x, y)[0])
+    };
+    let plain = r"";
+    let lit = r#", "glow": { "size": 0.25, "strength": 1 }"#;
+    // Just above the top bar of the first cell, and a few pixels higher.
+    let Some(dark) = red(plain, 22, 5) else {
+        return;
+    };
+    assert_eq!(dark, 14, "the panel, unlit");
+    assert_eq!(red(plain, 22, 2), Some(14));
+
+    let close = red(lit, 22, 5).expect("an adapter, since the first read had one");
+    let further = red(lit, 22, 2).expect("an adapter");
+    assert!(close > 100, "the glow reads {close} against the panel's 14");
+    assert!(
+        (15..close).contains(&further),
+        "and falls off with distance: {further} at three pixels, {close} at one"
+    );
+}

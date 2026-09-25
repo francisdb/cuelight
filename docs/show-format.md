@@ -435,15 +435,25 @@ Layer kinds:
     default and 0.2 at most. The gaps follow it, so a fat display stays
     legible instead of running together, and past that cap the bars would
     meet.
-  - `glow`: a halo round the lit segments in their own colour, `size` a
-    share of the cell's width and `strength` from 0 to 1. Unlit segments
-    never glow. Useful sizes run from about 0.05, a rim, to about 0.25,
-    where the halos of neighbouring digits join; wider than that washes
-    the display out instead of lighting it. It is drawn as the segment
-    again a few times, each wider and fainter: a halo rather than a true
-    blur, which nothing on the GPU can give us yet, and at the size a
-    display is drawn it reads the same. On a small pixel grid there is no
-    room for it, and it is better left off there.
+  - `glow`: a halo round the lit segments in their own colour, `size` how
+    far it reaches as a share of the cell's width and `strength` from 0
+    to 1, where 1 is as bright as the segment itself where it leaves it.
+    Unlit segments never glow. It is light on the panel, and it falls off
+    as the square of the distance out, which keeps most of it within a
+    bar's width of the segment. Where two segments' halos meet, inside
+    the loop of an 8 for instance, the brighter of them shows: a halo is
+    never brighter than the segment casting it, however many of them
+    overlap, so a row of digits keeps its colour instead of burning to
+    white at the joins.
+
+    Useful sizes run from about 0.05, a rim, to about 0.25, a lit panel;
+    past a third of a cell it is a wash rather than a display. It is
+    drawn as the segment again a number of times, each grown and fainter,
+    as one picture: a halo rather than a true blur, which nothing on the
+    GPU can give us yet, and at the size a display is drawn it reads the
+    same. Being one picture is what keeps two halos that meet from
+    climbing past the colour of the segments casting them. On a small
+    pixel grid there is no room for it, and it is better left off there.
 
   ```json
   { "segments": { "style": "numeric7", "fill": "#FF5820", "unlit": "#2A0E05",
