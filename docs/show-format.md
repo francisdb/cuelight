@@ -1296,13 +1296,34 @@ geometry built. Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
-The clock moves with `advance_to(instant)` or `advance_frame(dt)`.
-A host that knows what time it is should say so: `advance_frame` can only
-add the delta to where the clock already is, and `previous + delta` is
-not the instant that was meant, so the same moment reached at two frame
-rates lands a rounding error apart. A host reading a real frame clock has
-only a delta and `advance_frame` is what it wants; one replaying a
-script, rendering chosen moments or seeking has the instant.
+The clock moves with `advance_to(instant)` or `advance_frame(dt)`. A host
+that can say what time it is should say so: `advance_frame` adds the
+delta to where the clock already is, and `previous + delta` is not the
+instant that was meant, so the same moment reached at two frame rates
+lands a rounding error apart. Worse, a host that calls it every frame
+keeps the show's time as a running total of its frame times, and whatever
+a frame does not account for, a hitch or a delta it clamped, is gone from
+the show for good while the sound plays on at the sound card's rate.
+
+Anchor once and derive:
+
+```rust
+let start = Instant::now();                        // once
+engine.advance_to(start.elapsed().as_secs_f64());  // every frame
+```
+
+A monotonic clock, never a wall clock: a show that jumps back an hour on
+a clock correction is worse than one that drifts. Anchored, a long stall
+makes the show catch up rather than run late, which is what keeps it
+against its own soundtrack. Pausing and seeking move the anchor
+deliberately (`start = Instant::now() - show_time`), and so does a gap
+too long to be a frame, a machine that slept or a tab in the background:
+a decision the host makes and can log, rather than time quietly
+vanishing. `cuelight-player` keeps five seconds as that mark.
+
+`advance_frame` is still the one for a host that genuinely has only a
+delta, and for a script or a render that has the instant, `advance_to`
+takes it directly.
 
 `dt` is how much time passed, not how much of the show to play in one
 piece. A frame is cut at every instant something inside it ends, so a

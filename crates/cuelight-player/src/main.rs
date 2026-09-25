@@ -232,13 +232,85 @@ struct App {
     /// When to draw the next frame while mailbox leaves that to us.
     redraw_at: Option<Instant>,
     occluded: bool,
-    last_frame: Instant,
+    /// The instant the show's time 0 was, so the clock is read from it
+    /// rather than added up frame by frame. `None` until the first
+    /// frame, so opening a window and a device is not show time. Moved
+    /// deliberately: paused, scrubbed, or after a stall long enough to
+    /// be a suspend.
+    anchor: Option<Instant>,
     /// Frames that took longer than a frame should, and video frames
     /// drawn older than they should have been: what a frame rate hides,
     /// shown beside it.
     long_frames: u64,
     fps: common::Fps,
     presenter: Presenter,
+}
+
+/// A gap between frames past which the show is not caught up with, in
+/// seconds: longer than any hitch, a resize or a moment behind another
+/// window, and shorter than a machine that went to sleep.
+const A_STALL: f64 = 5.0;
+
+/// Where the clock lands this frame.
+struct Tick {
+    /// The anchor to keep, moved when the show's time was moved for it.
+    anchor: Instant,
+    /// The instant on the show's clock to land on.
+    target: f64,
+    /// How much show time this frame covers, for the driver script.
+    dt: f64,
+    /// Whether the gap was too long to be a frame, so the show goes on
+    /// from where it stopped rather than playing through it. Said here
+    /// rather than guessed from the numbers, which a frame of no length
+    /// looks exactly like.
+    stalled: bool,
+}
+
+/// Where a show whose clock reads `time` should be at `now`.
+///
+/// Read from the anchor, never added up: a frame that took a moment is
+/// caught up with rather than dropped, since sound plays at the sound
+/// card's rate whatever the window is doing and time lost from the show
+/// is lost against its own soundtrack for the rest of the session.
+///
+/// The anchor moves only deliberately. Paused, it rides along under the
+/// show so playing carries on from where it stopped. After a gap too
+/// long to be a frame, a suspend or a lid, it moves the same way rather
+/// than making the show play through everything it missed.
+fn tick(anchor: Option<Instant>, now: Instant, time: f64, paused: bool) -> Tick {
+    let held = Tick {
+        anchor: anchor_for(now, time),
+        target: time,
+        dt: 0.0,
+        stalled: false,
+    };
+    // Paused, or not started yet: the show is where it is, and the
+    // anchor goes under it. A show anchored when the player was built
+    // would count window and device setup as show time and open part
+    // way in.
+    let (Some(anchor), false) = (anchor, paused) else {
+        return held;
+    };
+    let target = now.duration_since(anchor).as_secs_f64();
+    let dt = target - time;
+    match dt > A_STALL {
+        true => Tick {
+            stalled: true,
+            ..held
+        },
+        false => Tick {
+            anchor,
+            target,
+            dt: dt.max(0.0),
+            stalled: false,
+        },
+    }
+}
+
+/// The instant a show whose clock reads `time` started at.
+fn anchor_for(now: Instant, time: f64) -> Instant {
+    now.checked_sub(Duration::from_secs_f64(time.max(0.0)))
+        .unwrap_or(now)
 }
 
 impl App {
@@ -353,6 +425,10 @@ impl App {
         let to = (self.engine.time() + by).max(0.0);
         self.paused = true;
         self.driver = cuelight_loader::seek(&mut self.engine, self.script.clone(), to, 60.0);
+        // Here rather than at the next frame: the show has been moved,
+        // and the clock starting again before then would read it from
+        // an anchor that belongs to where it was.
+        self.anchor = Some(anchor_for(Instant::now(), self.engine.time()));
         log::info!("at {:.3}s", self.engine.time());
     }
 
@@ -440,18 +516,22 @@ impl App {
         if self.redraw_at.is_some_and(|at| now < at) {
             return;
         }
-        let elapsed = now.duration_since(self.last_frame).as_secs_f64();
-        if elapsed > 0.034 {
+        let Tick {
+            anchor,
+            target,
+            dt,
+            stalled,
+        } = tick(self.anchor, now, self.engine.time(), self.paused);
+        self.anchor = Some(anchor);
+        if dt > 0.034 {
             self.long_frames += 1;
-            log::debug!("long frame: {:.0} ms since the last one", elapsed * 1000.0);
+            log::debug!("long frame: {:.0} ms since the last one", dt * 1000.0);
         }
-        let dt = elapsed.min(0.1);
-        self.last_frame = now;
-        // Paused stops the clock, not the painting: a resize or a scrub
-        // still shows.
-        let dt = if self.paused { 0.0 } else { dt };
+        if stalled {
+            log::info!("a stall longer than {A_STALL:.0}s: the show goes on from where it stopped");
+        }
         self.advance_driver(dt);
-        self.engine.advance_frame(dt);
+        self.engine.advance_to(target);
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
         }
@@ -701,6 +781,10 @@ impl ApplicationHandler for App {
                     // back is replaying to there, not rewinding.
                     Key::Named(NamedKey::Space) => {
                         self.paused = !self.paused;
+                        // The clock starts again from where the show is,
+                        // whether or not a frame has been drawn since it
+                        // was put there.
+                        self.anchor = Some(anchor_for(Instant::now(), self.engine.time()));
                         log::info!(
                             "{} at {:.3}s",
                             if self.paused { "paused" } else { "playing" },
@@ -1093,7 +1177,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         resized_at: None,
         redraw_at: None,
         occluded: false,
-        last_frame: Instant::now(),
+        anchor: None,
         long_frames: 0,
         fps: common::Fps::new(),
         presenter: Presenter::new(),
@@ -1102,4 +1186,121 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run_app(&mut app)?;
     log::info!("event loop finished, exiting");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{anchor_for, tick, Duration, Instant, A_STALL};
+
+    /// Frames of the given lengths, from a show at 0, playing: where the
+    /// show's clock ends up, and where the wall clock does.
+    fn played(frames: &[f64]) -> (f64, f64) {
+        let start = Instant::now();
+        let mut anchor = start;
+        let (mut now, mut time) = (start, 0.0);
+        for frame in frames {
+            now += Duration::from_secs_f64(*frame);
+            let t = tick(Some(anchor), now, time, false);
+            (anchor, time) = (t.anchor, t.target);
+        }
+        (time, now.duration_since(start).as_secs_f64())
+    }
+
+    #[test]
+    fn a_frame_that_took_a_moment_is_caught_up_with() {
+        // A show run at 60 fps with four hitches in it, one of them a
+        // sixth of a second: it is still where the wall clock says, not
+        // a quarter of a second behind it for the rest of the session.
+        let mut frames = vec![1.0 / 60.0; 600];
+        for (at, long) in [(100, 0.162), (200, 0.120), (300, 0.104), (400, 0.135)] {
+            frames[at] = long;
+        }
+        let (played, wall) = played(&frames);
+        assert!((played - wall).abs() < 1e-9, "{played} against {wall}");
+        // A clock that added the frames up, with anything past a tenth
+        // of a second dropped, would be an eighth of a second behind by
+        // now and stay there: 62 ms of it from the worst frame alone.
+        let added: f64 = frames.iter().map(|f| f.min(0.1)).sum();
+        assert!(wall - added > 0.12, "{added} against {wall}");
+    }
+
+    #[test]
+    fn a_thousand_frames_do_not_add_up_to_a_drift() {
+        // A frame length that does not divide the second: added up it
+        // drifts, read from an anchor it cannot.
+        let frames = vec![1.0 / 1024.0 + 1e-7; 1000];
+        let (played, wall) = played(&frames);
+        assert!((played - wall).abs() < 1e-9, "{played} against {wall}");
+    }
+
+    #[test]
+    fn paused_holds_the_clock_and_plays_on_from_there() {
+        let start = Instant::now();
+        let mut anchor = start;
+        let mut time = 2.0;
+        // Ten seconds of frames while paused: the show stays at 2.
+        for frame in 1..=10 {
+            let now = start + Duration::from_secs(frame);
+            let t = tick(Some(anchor), now, time, true);
+            (anchor, time) = (t.anchor, t.target);
+            assert_eq!(time, 2.0);
+        }
+        // And playing again carries on from there rather than jumping.
+        let now = start + Duration::from_secs_f64(10.5);
+        let t = tick(Some(anchor), now, time, false);
+        assert!((t.target - 2.5).abs() < 1e-9, "{}", t.target);
+        assert!((t.dt - 0.5).abs() < 1e-9, "{}", t.dt);
+    }
+
+    #[test]
+    fn the_show_starts_at_its_first_frame_not_when_the_player_was_built() {
+        // Opening a window and a device takes long enough to skip the
+        // opening of a show, so the clock starts where the show is.
+        let built = Instant::now();
+        let first = built + Duration::from_secs_f64(2.5);
+        let t = tick(None, first, 0.0, false);
+        assert_eq!((t.target, t.dt, t.stalled), (0.0, 0.0, false));
+        // And the frame after it is an ordinary frame.
+        let next = tick(
+            Some(t.anchor),
+            first + Duration::from_secs_f64(1.0 / 60.0),
+            t.target,
+            false,
+        );
+        assert!((next.dt - 1.0 / 60.0).abs() < 1e-9, "{}", next.dt);
+    }
+
+    #[test]
+    fn a_frame_of_no_length_is_not_a_stall() {
+        // Two frames landing on the same instant look exactly like a
+        // re-anchor from the outside, which is why the tick says which
+        // it was rather than leaving it to be guessed.
+        let now = Instant::now();
+        let t = tick(Some(anchor_for(now, 3.0)), now, 3.0, false);
+        assert_eq!((t.target, t.dt, t.stalled), (3.0, 0.0, false));
+    }
+
+    #[test]
+    fn a_stall_too_long_to_be_a_frame_starts_again_where_it_stopped() {
+        let start = Instant::now();
+        let time = 7.0;
+        let anchor = start - Duration::from_secs_f64(time);
+        let gap = A_STALL + 60.0;
+        let t = tick(
+            Some(anchor),
+            start + Duration::from_secs_f64(gap),
+            time,
+            false,
+        );
+        assert_eq!((t.target, t.dt), (7.0, 0.0), "the minute is not played");
+        assert!(t.stalled, "and it says so, rather than being inferred");
+        // And the anchor came with it, so the next frame is a frame.
+        let next = tick(
+            Some(t.anchor),
+            start + Duration::from_secs_f64(gap + 1.0 / 60.0),
+            t.target,
+            false,
+        );
+        assert!((next.dt - 1.0 / 60.0).abs() < 1e-9, "{}", next.dt);
+    }
 }
