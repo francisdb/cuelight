@@ -385,7 +385,10 @@ impl App {
             let (width, height) = (details.width, details.height);
             if let Some(frame) = clip.frame_at(playing.position) {
                 let frame = frame.to_vec();
-                if let Err(e) = self.engine.set_image(&playing.video, width, height, frame) {
+                // Under the key the play reports, not the clip's name:
+                // two layers playing one clip are at two positions, and
+                // each draws its own picture.
+                if let Err(e) = self.engine.set_image(&playing.frame, width, height, frame) {
                     log::warn!("video {:?}: {e}", playing.video);
                 }
             }
