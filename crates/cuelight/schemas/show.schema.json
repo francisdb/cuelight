@@ -1623,13 +1623,13 @@
       ]
     },
     "Shape": {
-      "description": "Vector shapes, in the layer's local coordinate space.\n\nUntagged, so a rect can carry a corner radius beside it\n(`{ \"rect\": [0, 0, 8, 4], \"radius\": 2 }`) rather than nesting it.",
-      "anyOf": [
+      "description": "Vector shapes, in the layer's local coordinate space.\n\nOne of rect, circle or path; a rect may carry a corner radius beside it.",
+      "oneOf": [
         {
           "type": "object",
           "properties": {
             "radius": {
-              "description": "Corner radius, clamped to half the shorter side, so a large\none gives a pill. All four corners; absent is square.",
+              "description": "Corner radius, clamped to half the shorter side, so a large one gives a pill. All four corners; absent is square.",
               "type": [
                 "number",
                 "null"
@@ -1647,6 +1647,7 @@
               "minItems": 4
             }
           },
+          "additionalProperties": false,
           "required": [
             "rect"
           ]
@@ -1665,6 +1666,7 @@
               "minItems": 3
             }
           },
+          "additionalProperties": false,
           "required": [
             "circle"
           ]
@@ -1673,10 +1675,10 @@
           "type": "object",
           "properties": {
             "path": {
-              "description": "SVG path data (`\"M 0 0 L 10 0 L 5 8 Z\"`): lines, curves and arcs.",
               "$ref": "#/$defs/PathData"
             }
           },
+          "additionalProperties": false,
           "required": [
             "path"
           ]
