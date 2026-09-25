@@ -12,42 +12,41 @@ mod gpu;
 /// One renderer shared by every test, used under a lock: the harness runs
 /// tests on parallel threads, and creating GPU devices concurrently (or
 /// tearing them down at thread exit) crashes some software adapters.
-fn render(engine: &Engine) -> Option<RgbaFrame> {
+fn shared() -> Option<&'static Mutex<Renderer>> {
     static RENDERER: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
-    let renderer = RENDERER.get_or_init(|| {
-        // Nothing initialises a logger in a test binary, so wgpu's account
-        // of which adapter and backend it picked goes nowhere. Without
-        // RUST_LOG set this prints nothing and costs nothing; with it, a
-        // run that dies says what it was talking to (see issue #23).
-        let _ = env_logger::builder().is_test(false).try_init();
-        match Renderer::new() {
-            Ok(renderer) => {
-                // Named before anything is drawn, so a run that dies
-                // during the first render still says what it was talking
-                // to (see issue #23).
-                eprintln!("render adapter: {:?}", renderer.adapter());
-                Some(Mutex::new(renderer))
+    RENDERER
+        .get_or_init(|| {
+            // Nothing initialises a logger in a test binary, so wgpu's account
+            // of which adapter and backend it picked goes nowhere. Without
+            // RUST_LOG set this prints nothing and costs nothing; with it, a
+            // run that dies says what it was talking to (see issue #23).
+            let _ = env_logger::builder().is_test(false).try_init();
+            match Renderer::new() {
+                Ok(renderer) => {
+                    // Named before anything is drawn, so a run that dies
+                    // during the first render still says what it was talking
+                    // to (see issue #23).
+                    eprintln!("render adapter: {:?}", renderer.adapter());
+                    Some(Mutex::new(renderer))
+                }
+                Err(RenderError::NoAdapter) => {
+                    gpu::no_adapter("the render tests");
+                    None
+                }
+                Err(e) => panic!("{e}"),
             }
-            Err(RenderError::NoAdapter) => {
-                gpu::no_adapter("the render tests");
-                None
-            }
-            Err(e) => panic!("{e}"),
-        }
-    });
-    let mut renderer = renderer.as_ref()?.lock().unwrap_or_else(|e| e.into_inner());
+        })
+        .as_ref()
+}
+
+fn render(engine: &Engine) -> Option<RgbaFrame> {
+    let mut renderer = shared()?.lock().unwrap_or_else(|e| e.into_inner());
     Some(renderer.render_to_rgba(engine).unwrap())
 }
 
 /// The frame as a host would show it, at `target` pixels.
 fn present(engine: &Engine, target: [u32; 2]) -> Option<RgbaFrame> {
-    static RENDERER: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
-    let renderer = RENDERER.get_or_init(|| match Renderer::new() {
-        Ok(renderer) => Some(Mutex::new(renderer)),
-        Err(RenderError::NoAdapter) => None,
-        Err(e) => panic!("{e}"),
-    });
-    let mut renderer = renderer.as_ref()?.lock().unwrap_or_else(|e| e.into_inner());
+    let mut renderer = shared()?.lock().unwrap_or_else(|e| e.into_inner());
     Some(renderer.present_to_rgba(engine, target).unwrap())
 }
 

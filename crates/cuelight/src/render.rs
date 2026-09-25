@@ -35,6 +35,9 @@ pub enum RenderError {
     Vello(String),
     #[error("texture readback failed: {0}")]
     Readback(String),
+    /// A frame was asked for at a size the adapter cannot render.
+    #[error("{0}")]
+    Unrenderable(String),
     #[error("png encode failed: {0}")]
     Png(String),
     #[error("io error: {0}")]
@@ -571,8 +574,14 @@ pub struct Renderer {
     queue: wgpu::Queue,
     renderer: vello::Renderer,
     images: ImageCache,
-    /// Built on demand, for frames rendered the way a host would show
-    /// them; it holds the canvas texture and the dots grille.
+    /// For frames rendered the way a host would show them; it holds the
+    /// canvas texture and the dots grille.
+    ///
+    /// It keeps an image cache of its own, so an image drawn through both
+    /// [`Renderer::render_to_rgba`] and
+    /// [`Renderer::present_to_rgba`] is uploaded twice. Sharing one cache
+    /// means passing it to [`Presenter::present`], which is a host's call
+    /// to make, so it is left alone until something needs both paths hot.
     presenter: Presenter,
 }
 
@@ -625,6 +634,15 @@ impl Renderer {
         Ok(frame)
     }
 
+    /// The largest frame this adapter can render, per side.
+    ///
+    /// A presented frame is as big as it is asked for, so a host scaling
+    /// a show up has to know where the limit is rather than find out as
+    /// a panic inside wgpu.
+    pub fn max_frame_side(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
     /// The frame as a host would show it, in a `target` sized surface:
     /// fitted the way the show's `scaling` asks, with its output mode and
     /// passes applied, read back as RGBA8.
@@ -639,6 +657,12 @@ impl Renderer {
         target: [u32; 2],
     ) -> Result<RgbaFrame, RenderError> {
         let [width, height] = target;
+        let most = self.max_frame_side();
+        if width == 0 || height == 0 || width > most || height > most {
+            return Err(RenderError::Unrenderable(format!(
+                "a {width}x{height} frame is not renderable; sides run from 1 to {most}"
+            )));
+        }
         let presented = self.presenter.present(
             engine,
             &self.device,

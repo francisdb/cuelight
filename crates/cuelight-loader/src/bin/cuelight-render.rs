@@ -60,7 +60,7 @@ struct Cli {
     /// Render the frame as a host would show it, this many times the
     /// show's size: its `scaling`, output mode and passes applied. A dots
     /// pass needs about 3 to become dots at all.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     scale: Option<u32>,
 }
 
@@ -109,16 +109,34 @@ fn inputs(cli: &Cli) -> Result<Vec<Input>, String> {
     Ok(out)
 }
 
+/// Why a run stopped.
+#[derive(Debug)]
+enum Stop {
+    /// Nobody is reading any more: `--events | head` has what it wants.
+    /// Not a failure, and nothing more to say.
+    PipeClosed,
+    Failed(String),
+}
+
+impl From<String> for Stop {
+    fn from(why: String) -> Self {
+        Stop::Failed(why)
+    }
+}
+
+impl From<&str> for Stop {
+    fn from(why: &str) -> Self {
+        Stop::Failed(why.to_owned())
+    }
+}
+
 /// Print a line, saying so if the other end of the pipe has gone.
-///
-/// `--events | head` closes the pipe as soon as it has what it wants, and
-/// the run should end there rather than panic on the way out.
-fn say(line: &str) -> Result<(), String> {
+fn say(line: &str) -> Result<(), Stop> {
     use std::io::Write;
     match writeln!(std::io::stdout(), "{line}") {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Err(String::new()),
-        Err(e) => Err(e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Err(Stop::PipeClosed),
+        Err(e) => Err(Stop::Failed(e.to_string())),
     }
 }
 
@@ -142,7 +160,7 @@ fn wanted(cli: &Cli) -> Result<Vec<f64>, String> {
     Ok(times)
 }
 
-fn run(cli: &Cli) -> Result<(), String> {
+fn run(cli: &Cli) -> Result<(), Stop> {
     let mut engine = Engine::new();
     let loaded = cuelight_loader::load(&mut engine, &cli.show).map_err(|e| e.to_string())?;
     for name in &loaded.skipped {
@@ -171,6 +189,9 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     if !cli.events && times.peek().is_none() {
         return Err("nothing to render: give --at or --every, or ask for --events".into());
+    }
+    if cli.scale.is_some() && cli.events {
+        return Err("--scale renders frames, which --events does not: drop one of them".into());
     }
     let last = cli
         .until
@@ -256,10 +277,8 @@ fn run(cli: &Cli) -> Result<(), String> {
 fn main() -> std::process::ExitCode {
     let cli = <Cli as clap::Parser>::parse();
     match run(&cli) {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        // A closed pipe is how `| head` says it has enough.
-        Err(e) if e.is_empty() => std::process::ExitCode::SUCCESS,
-        Err(e) => {
+        Ok(()) | Err(Stop::PipeClosed) => std::process::ExitCode::SUCCESS,
+        Err(Stop::Failed(e)) => {
             eprintln!("cuelight-render: {e}");
             std::process::ExitCode::FAILURE
         }
