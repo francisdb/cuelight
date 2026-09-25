@@ -50,7 +50,7 @@ pub use manifest::{load_from_memory, LoadedFiles, Manifest, SoundFile, MANIFEST_
 #[cfg(feature = "pack")]
 pub use pack::{pack, read_pack, unpack, PACK_EXTENSION};
 #[cfg(feature = "svg")]
-pub use svg::convert_svg;
+pub use svg::{convert_svg, Artwork, SvgFonts};
 
 use cuelight::{BitmapFont, Engine};
 use std::collections::BTreeMap;
@@ -108,6 +108,11 @@ pub struct Loaded {
     /// their format is not compiled in; hosts may want to log them. A
     /// build problem, not a show problem.
     pub skipped: Vec<String>,
+    /// Font families the show's artwork asked for and the show does not
+    /// ship, whose text was not drawn. A show problem, and the same
+    /// wherever it plays: artwork is drawn with the show's own fonts,
+    /// never the machine's.
+    pub missing_fonts: Vec<String>,
 }
 
 /// File extensions (lowercase) of the sound files a show folder may hold
@@ -192,6 +197,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         vectors: loaded.vectors,
         sounds: loaded.sounds,
         skipped: loaded.skipped,
+        missing_fonts: loaded.missing_fonts,
     })
 }
 
@@ -288,16 +294,27 @@ pub fn register_font_dir(
     Ok((names, skipped))
 }
 
+/// What registering a folder of artwork came to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Vectors {
+    /// The names registered, in name order.
+    pub names: Vec<String>,
+    /// Files left alone because the `svg` feature is off.
+    pub skipped: Vec<PathBuf>,
+    /// Font families the artwork asked for that the show does not ship,
+    /// whose text was not drawn.
+    pub missing_fonts: Vec<String>,
+}
+
 /// Register every `.svg` file directly in `dir` as vector artwork under
-/// its filename stem, in name order. Returns the names, and the files
-/// skipped because the `svg` feature is off.
-pub fn register_vector_dir(
-    engine: &mut Engine,
-    dir: &Path,
-) -> Result<(Vec<String>, Vec<PathBuf>), LoadError> {
-    let mut names = Vec::new();
-    #[cfg_attr(feature = "svg", allow(unused_mut))]
-    let mut skipped = Vec::new();
+/// its filename stem, in name order.
+///
+/// Text in the artwork is drawn with the show's own fonts, so register
+/// those first: [`register_font_dir`], or whatever the host does.
+pub fn register_vector_dir(engine: &mut Engine, dir: &Path) -> Result<Vectors, LoadError> {
+    let mut found = Vectors::default();
+    #[cfg(feature = "svg")]
+    let fonts = SvgFonts::of(engine);
     for path in files_in(dir)? {
         if extension(&path) != VECTOR_EXTENSION {
             continue;
@@ -305,30 +322,45 @@ pub fn register_vector_dir(
         #[cfg(feature = "svg")]
         {
             let name = stem(&path);
-            register_vector(engine, &name, &read(&path)?).map_err(|message| LoadError::Asset {
-                path: path.clone(),
-                message,
-            })?;
-            names.push(name);
+            let missing =
+                register_vector(engine, &name, &read(&path)?, &fonts).map_err(|message| {
+                    LoadError::Asset {
+                        path: path.clone(),
+                        message,
+                    }
+                })?;
+            found.missing_fonts.extend(missing);
+            found.names.push(name);
         }
         #[cfg(not(feature = "svg"))]
         {
-            let _ = (&mut *engine, &mut names);
-            skipped.push(path);
+            let _ = &mut *engine;
+            found.skipped.push(path);
         }
     }
-    Ok((names, skipped))
+    found.missing_fonts.dedup();
+    Ok(found)
 }
 
 /// The file extension (lowercase) of vector artwork in a show folder.
 pub const VECTOR_EXTENSION: &str = "svg";
 
 /// Convert an SVG document's `bytes` and register it as vector artwork
-/// `name`; see [`convert_svg`] for what is kept.
+/// `name`, drawing any text with `fonts`; see [`convert_svg`] for what is
+/// kept. Returns the font families the document asked for that the show
+/// does not ship, whose text was not drawn.
 #[cfg(feature = "svg")]
-pub fn register_vector(engine: &mut Engine, name: &str, bytes: &[u8]) -> Result<(), String> {
-    let vector = convert_svg(bytes)?;
-    engine.set_vector(name, vector).map_err(|e| e.to_string())
+pub fn register_vector(
+    engine: &mut Engine,
+    name: &str,
+    bytes: &[u8],
+    fonts: &SvgFonts,
+) -> Result<Vec<String>, String> {
+    let artwork = convert_svg(bytes, fonts)?;
+    engine
+        .set_vector(name, artwork.vector)
+        .map_err(|e| e.to_string())?;
+    Ok(artwork.missing_fonts)
 }
 
 /// Decode image `bytes` of the format `extension` names (`"png"`) and

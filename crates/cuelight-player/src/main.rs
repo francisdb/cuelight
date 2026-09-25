@@ -1010,6 +1010,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 loaded.fonts.len(),
                 loaded.sounds.len()
             );
+            for family in &loaded.missing_fonts {
+                log::warn!(
+                    "the artwork asks for font {family:?}, which the show does not ship: \
+                     its text is not drawn"
+                );
+            }
             for skipped in &loaded.skipped {
                 log::warn!("skipping asset {skipped:?}: no decoder for this format");
             }

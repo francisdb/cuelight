@@ -233,6 +233,9 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     for name in &loaded.skipped {
         eprintln!("skipped {name}");
     }
+    for family in &loaded.missing_fonts {
+        eprintln!("warning: the artwork asks for font {family:?}, which the show does not ship");
+    }
     for warning in engine.load_warnings() {
         eprintln!("warning: {warning}");
     }
