@@ -123,7 +123,7 @@ impl Sound {
 /// header does not say, which a constant-bitrate MP3 without a Xing
 /// header does not: decode it with [`Sound::decode`] and ask the result.
 pub fn length(extension: &str, bytes: &[u8]) -> Option<f64> {
-    let source = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), Default::default());
+    let source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
     let mut hint = Hint::new();
     hint.with_extension(extension);
     let reader = symphonia::default::get_probe()
