@@ -784,6 +784,22 @@ comma separators: `1,500`).
 { "property": "text", "variable": "score", "format": "thousands" }
 ```
 
+`decimals` rounds a number to that many places and always shows them, so
+a value a timeline is moving reads `1.5` rather than
+`1.4833333333333334`:
+
+```json
+{ "property": "text", "variable": "speed", "decimals": 1 }
+{ "property": "text", "variable": "total",
+  "format": "thousands", "decimals": 2 }
+```
+
+It applies after `scale` and `offset`, like the rest of formatting. A
+value that rounds to nothing prints without a sign, and a counting
+`transition` steps in the last place shown rather than flickering
+through digits that are rounded away.
+
+
 A text layer's `font` property can be bound to a variable naming a font
 style, typically through a map. An image layer's `tint` works the same
 way, bound to a variable naming a color: one sprite becomes a status

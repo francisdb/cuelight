@@ -35,7 +35,7 @@ impl Value {
     pub fn to_text(&self) -> String {
         match self {
             Value::Bool(b) => b.to_string(),
-            Value::Number(n) => crate::model::NumberFormat::Plain.format(*n),
+            Value::Number(n) => crate::model::NumberFormat::Plain.format(*n, None),
             Value::Text(t) => t.clone(),
         }
     }

@@ -1487,6 +1487,17 @@ pub struct Binding {
     pub scale: f64,
     #[serde(default)]
     pub offset: f64,
+    /// How many decimal places a number shows, when it becomes text.
+    ///
+    /// Without it a number prints as short as it can, so a value a
+    /// timeline is moving reads `1.4833333333333334` between its keys.
+    /// With it the number is rounded to that many places and always
+    /// shows them: `1.5` with two is `1.50`.
+    ///
+    /// Applies after `scale` and `offset`, as the rest of formatting
+    /// does, and alongside `format`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u32>,
     /// How a number becomes text (text bindings only).
     #[serde(default)]
     pub format: NumberFormat,
@@ -1655,7 +1666,48 @@ pub enum NumberFormat {
 }
 
 impl NumberFormat {
-    pub fn format(self, n: f64) -> String {
+    /// `n` as text, to `decimals` places when asked for.
+    pub fn format(self, n: f64, decimals: Option<u32>) -> String {
+        let Some(places) = decimals else {
+            return self.format_short(n);
+        };
+        let places = places as usize;
+        // Rounded to the last shown place first, so the grouping below
+        // sees the number that will be printed, and a value that rounds
+        // to zero does not keep a minus sign from the way it came.
+        let scale = 10f64.powi(places as i32);
+        let n = (n * scale).round() / scale;
+        let n = if n == 0.0 { 0.0 } else { n };
+        match self {
+            NumberFormat::Plain => format!("{n:.places$}"),
+            NumberFormat::Thousands => {
+                let whole = n.abs().trunc();
+                let grouped = Self::group(whole as u64);
+                let fraction = format!("{:.places$}", n.abs().fract());
+                let sign = if n < 0.0 { "-" } else { "" };
+                match places {
+                    0 => format!("{sign}{grouped}"),
+                    // `fraction` is "0.25": everything after its point.
+                    _ => format!("{sign}{grouped}{}", &fraction[1..]),
+                }
+            }
+        }
+    }
+
+    /// The comma-grouped digits of a whole number.
+    fn group(whole: u64) -> String {
+        let digits = whole.to_string();
+        let mut out = String::new();
+        for (i, d) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(d);
+        }
+        out
+    }
+
+    fn format_short(self, n: f64) -> String {
         match self {
             NumberFormat::Plain => {
                 if n.fract() == 0.0 && n.abs() < 1e15 {
