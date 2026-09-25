@@ -640,7 +640,9 @@ sound: a picture shows one thing at a time, so it cannot `overlap`. It does take
 and they are how a layer fed by a driver arbitrates: `restart` (default)
 cuts to whatever it is asked for last, `ignore` protects the clip that is
 running, `queue` plays each in turn. Pointing a layer somewhere new
-counts as asking it to play, so the same rule applies. `size` scales
+counts as asking it to play, so the same rule applies, and it counts
+once: a layer left pointed at a clip while another finishes takes one
+place in the queue, not one per frame. `size` scales
 the picture as it does on an image; without it the video's own size is
 used. `video` takes a list and a `pick` like a sound does.
 

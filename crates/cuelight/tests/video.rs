@@ -394,6 +394,40 @@ fn queue_lets_a_clip_finish_then_plays_the_next() {
 }
 
 #[test]
+fn a_queued_bound_video_queues_once_however_long_it_waits() {
+    let mut engine = Engine::new();
+    engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();
+    engine.set_video("two", 1.0, [8.0, 8.0]).unwrap();
+    engine
+        .load_show(
+            r#"{ "name": "playing", "size": [64, 32], "variables": { "clip": "" },
+                 "layers": [ { "name": "picture", "type": "video", "video": "one",
+                               "retrigger": "queue", "on_end": "done",
+                               "bindings": [ { "property": "video", "variable": "clip" } ] } ] }"#,
+        )
+        .unwrap();
+    let mut done = 0;
+    let run = |engine: &mut Engine, done: &mut usize, until: f64| {
+        while engine.time() < until {
+            engine.advance_frame(1.0 / 60.0);
+            *done += engine
+                .drain_events()
+                .iter()
+                .filter(|e| **e == Event::Trigger("done".into()))
+                .count();
+        }
+    };
+    engine.set_variable("clip", "one");
+    run(&mut engine, &mut done, 0.4);
+    // Pointed somewhere new while the first plays: one place in the
+    // queue, however many frames it stays pointed there.
+    engine.set_variable("clip", "two");
+    run(&mut engine, &mut done, 3.0);
+    assert_eq!(done, 2, "one clip, then the one that waited");
+    assert!(engine.videos().unwrap().is_empty());
+}
+
+#[test]
 fn ignore_drops_a_trigger_that_arrives_mid_clip() {
     let mut engine = Engine::new();
     engine.set_video("one", 1.0, [8.0, 8.0]).unwrap();

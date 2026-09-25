@@ -498,6 +498,72 @@ fn a_bound_sound_plays_what_it_is_pointed_at() {
     assert_eq!(engine.voices().unwrap()[0].sound, "quiet");
 }
 
+/// A layer pointed at one of three clips, each 1.2 s, ending on `ended`.
+fn pointed(retrigger: &str) -> Engine {
+    let show = format!(
+        r#"{{
+      "name": "bound", "size": [8, 8],
+      "variables": {{ "t": "" }},
+      "layers": [
+        {{ "name": "tune", "type": "audio", "sound": "up", "on_end": "ended",
+          "retrigger": "{retrigger}",
+          "bindings": [{{ "property": "sound", "variable": "t",
+                         "map": {{ "UP": "up", "DOWN": "down", "BELLS": "bells" }} }}] }}
+      ]
+    }}"#
+    );
+    let mut engine = Engine::new();
+    for name in ["up", "down", "bells"] {
+        engine.set_sound(name, 1.2).unwrap();
+    }
+    engine.load_show(&show).unwrap();
+    engine
+}
+
+/// How many times the layer said it had ended, playing on to `until`.
+fn ends(engine: &mut Engine, until: f64) -> usize {
+    let mut ends = 0;
+    while engine.time() < until {
+        engine.advance_frame(1.0 / 60.0);
+        ends += engine
+            .drain_events()
+            .iter()
+            .filter(|e| **e == Event::Trigger("ended".into()))
+            .count();
+    }
+    ends
+}
+
+#[test]
+fn a_bound_sound_switched_mid_play_does_not_play_again_at_the_end() {
+    let mut engine = pointed("restart");
+    engine.set_variable("t", "UP");
+    ends(&mut engine, 0.5);
+    engine.set_variable("t", "DOWN");
+    ends(&mut engine, 1.0);
+    engine.set_variable("t", "BELLS");
+    // BELLS starts at 1.0 and ends at 2.2, once: the switch is a play of
+    // that clip, not a name still waiting to be played.
+    assert_eq!(ends(&mut engine, 2.1), 0);
+    assert_eq!(ends(&mut engine, 2.3), 1);
+    assert_eq!(ends(&mut engine, 4.0), 0);
+    assert!(engine.voices().unwrap().is_empty());
+}
+
+#[test]
+fn a_queued_bound_sound_queues_once_however_long_it_waits() {
+    let mut engine = pointed("queue");
+    engine.set_variable("t", "UP");
+    ends(&mut engine, 0.5);
+    engine.set_variable("t", "DOWN");
+    ends(&mut engine, 0.8);
+    engine.set_variable("t", "BELLS");
+    // Asking once queues once, however many frames the layer stays
+    // pointed there: UP, DOWN, BELLS and then silence.
+    assert_eq!(ends(&mut engine, 5.0), 3);
+    assert!(engine.voices().unwrap().is_empty());
+}
+
 #[test]
 fn sound_is_not_a_property_of_other_layers() {
     let show = r#"{
