@@ -1182,6 +1182,16 @@ A timeline is a keyframed animation owned by its layer:
   again or its scene is left. It means nothing on a `loop`, which never
   finishes.
 
+  A held timeline of a single key at `t: 0` is the shortest way to write
+  "set this and keep it": it ends on the instant it starts and holds that
+  value, so a trigger can show a caption or hide a page until another
+  trigger takes it back.
+
+  ```json
+  { "name": "show", "trigger": "game_over", "hold": true,
+    "tracks": [{ "property": "opacity", "keys": [{ "t": 0, "v": 1 }] }] }
+  ```
+
 ## Values the show animates
 
 A timeline animates a property of its own layer. Two layers that must move
