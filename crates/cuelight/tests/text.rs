@@ -132,12 +132,15 @@ fn page_count_must_match() {
 
 #[test]
 fn number_formats() {
-    assert_eq!(NumberFormat::Plain.format(1500.0), "1500");
-    assert_eq!(NumberFormat::Plain.format(2.5), "2.5");
-    assert_eq!(NumberFormat::Thousands.format(0.0), "0");
-    assert_eq!(NumberFormat::Thousands.format(999.0), "999");
-    assert_eq!(NumberFormat::Thousands.format(412_345_000.0), "412,345,000");
-    assert_eq!(NumberFormat::Thousands.format(-1234.4), "-1,234");
+    assert_eq!(NumberFormat::Plain.format(1500.0, None), "1500");
+    assert_eq!(NumberFormat::Plain.format(2.5, None), "2.5");
+    assert_eq!(NumberFormat::Thousands.format(0.0, None), "0");
+    assert_eq!(NumberFormat::Thousands.format(999.0, None), "999");
+    assert_eq!(
+        NumberFormat::Thousands.format(412_345_000.0, None),
+        "412,345,000"
+    );
+    assert_eq!(NumberFormat::Thousands.format(-1234.4, None), "-1,234");
 }
 
 const MAPPED: &str = r##"{
@@ -262,4 +265,58 @@ fn a_bitmap_shadow_is_a_second_drawing_behind_the_text() {
     assert_eq!(&light[..4], [255, 255, 255, 255], "the text");
     assert_eq!(&dark[..4], [0, 0, 0, 255], "its shadow");
     assert_eq!(dark.len(), light.len());
+}
+
+#[test]
+fn decimals_round_and_always_show() {
+    assert_eq!(NumberFormat::Plain.format(1.4833333, Some(1)), "1.5");
+    assert_eq!(NumberFormat::Plain.format(1.5, Some(2)), "1.50");
+    assert_eq!(NumberFormat::Plain.format(1.5, Some(0)), "2");
+    // A value that rounds to nothing keeps no sign from where it came.
+    assert_eq!(NumberFormat::Plain.format(-0.04, Some(1)), "0.0");
+    assert_eq!(NumberFormat::Plain.format(-1.26, Some(1)), "-1.3");
+}
+
+#[test]
+fn decimals_go_with_thousands() {
+    assert_eq!(NumberFormat::Thousands.format(1500.0, Some(2)), "1,500.00");
+    assert_eq!(
+        NumberFormat::Thousands.format(-1234.567, Some(1)),
+        "-1,234.6"
+    );
+    assert_eq!(NumberFormat::Thousands.format(999.95, Some(1)), "1,000.0");
+    assert_eq!(
+        NumberFormat::Thousands.format(412_345_000.0, Some(0)),
+        "412,345,000"
+    );
+}
+
+#[test]
+fn a_bound_number_shows_the_decimals_it_asks_for() {
+    let show = r##"{ "name": "d", "size": [64, 32],
+      "fonts": { "plain": { "file": "none" } },
+      "variables": { "speed": 0 },
+      "layers": [{ "name": "readout", "type": "text", "text": "0", "font": "plain",
+        "bindings": [{ "property": "text", "variable": "speed", "decimals": 1 }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.set_variable("speed", 1.4833333333333334);
+    engine.advance_to(0.0);
+    let shown = engine
+        .values()
+        .unwrap()
+        .into_iter()
+        .find(|(name, prop, _)| name == "readout" && *prop == cuelight::Property::Text)
+        .map(|(_, _, v)| v.to_text());
+    assert_eq!(shown.as_deref(), Some("1.5"));
+}
+
+#[test]
+fn too_many_decimals_is_refused() {
+    let show = r##"{ "name": "d", "size": [64, 32],
+      "fonts": { "plain": { "file": "none" } },
+      "variables": { "speed": 0 },
+      "layers": [{ "name": "readout", "type": "text", "text": "0", "font": "plain",
+        "bindings": [{ "property": "text", "variable": "speed", "decimals": 40 }] }] }"##;
+    assert!(Engine::new().load_show(show).is_err());
 }

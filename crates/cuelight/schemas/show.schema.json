@@ -119,6 +119,15 @@
           ],
           "format": "double"
         },
+        "decimals": {
+          "description": "How many decimal places a number shows, when it becomes text.\n\nWithout it a number prints as short as it can, so a value a\ntimeline is moving reads `1.4833333333333334` between its keys.\nWith it the number is rounded to that many places and always\nshows them: `1.5` with two is `1.50`.\n\nApplies after `scale` and `offset`, as the rest of formatting\ndoes, and alongside `format`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "default": {
           "description": "Value for variable values `map` does not list.",
           "anyOf": [

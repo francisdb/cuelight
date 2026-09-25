@@ -2405,11 +2405,14 @@ impl Engine {
         if b.property != Property::Text {
             return Some(Value::Number(n));
         }
-        // A counter between whole numbers shows whole numbers.
-        if change.whole {
+        // A counter between whole numbers shows whole numbers; with
+        // decimals the formatting already quantises it to the last place
+        // shown, so it does not flicker through digits that are rounded
+        // away.
+        if change.whole && b.decimals.is_none() {
             n = n.round();
         }
-        Some(Value::Text(b.format.format(n)))
+        Some(Value::Text(b.format.format(n, b.decimals)))
     }
 
     /// Resolve a layer property: its base value, overridden by bindings
@@ -2499,7 +2502,7 @@ impl Engine {
     fn convert(&self, b: &Binding, value: Value) -> Option<Value> {
         match b.property {
             Property::Text => Some(Value::Text(match value {
-                Value::Number(n) => b.format.format(scaled(b, n)),
+                Value::Number(n) => b.format.format(scaled(b, n), b.decimals),
                 other => other.to_text(),
             })),
             Property::Visible => Some(Value::Bool(scaled(b, value.as_number()) != 0.0)),
@@ -3762,6 +3765,12 @@ fn validate(show: &Show) -> Result<(), Error> {
                 if binding.threshold.is_some_and(|t| !t.is_finite()) {
                     return Err(Error::InvalidShow(format!(
                         "the {:?} binding of layer {:?} needs a finite threshold",
+                        binding.property, layer.name
+                    )));
+                }
+                if binding.decimals.is_some_and(|d| d > 15) {
+                    return Err(Error::InvalidShow(format!(
+                        "the {:?} binding of layer {:?} asks for more decimals than a number has",
                         binding.property, layer.name
                     )));
                 }
