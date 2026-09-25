@@ -1623,13 +1623,21 @@
       ]
     },
     "Shape": {
-      "description": "Vector shapes, in the layer's local coordinate space.",
-      "oneOf": [
+      "description": "Vector shapes, in the layer's local coordinate space.\n\nUntagged, so a rect can carry a corner radius beside it\n(`{ \"rect\": [0, 0, 8, 4], \"radius\": 2 }`) rather than nesting it.",
+      "anyOf": [
         {
-          "description": "`[x, y, width, height]`",
           "type": "object",
           "properties": {
+            "radius": {
+              "description": "Corner radius, clamped to half the shorter side, so a large\none gives a pill. All four corners; absent is square.",
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
             "rect": {
+              "description": "`[x, y, width, height]`",
               "type": "array",
               "items": {
                 "type": "number",
@@ -1639,16 +1647,15 @@
               "minItems": 4
             }
           },
-          "additionalProperties": false,
           "required": [
             "rect"
           ]
         },
         {
-          "description": "`[cx, cy, radius]`",
           "type": "object",
           "properties": {
             "circle": {
+              "description": "`[cx, cy, radius]`",
               "type": "array",
               "items": {
                 "type": "number",
@@ -1658,20 +1665,18 @@
               "minItems": 3
             }
           },
-          "additionalProperties": false,
           "required": [
             "circle"
           ]
         },
         {
-          "description": "SVG path data (`\"M 0 0 L 10 0 L 5 8 Z\"`): lines, curves and arcs.",
           "type": "object",
           "properties": {
             "path": {
+              "description": "SVG path data (`\"M 0 0 L 10 0 L 5 8 Z\"`): lines, curves and arcs.",
               "$ref": "#/$defs/PathData"
             }
           },
-          "additionalProperties": false,
           "required": [
             "path"
           ]

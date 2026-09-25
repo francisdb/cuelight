@@ -309,6 +309,15 @@ Layer kinds:
   `{ "color": "#RRGGBB", "width": 1 }` outlines the shape, centered on its
   edge, in the layer's units (so it scales with the layer).
 
+  A rect takes an optional `radius`, rounding all four corners:
+
+  ```json
+  { "rect": [0, 0, 600, 568], "radius": 14 }
+  ```
+
+  It is clamped to half the shorter side, so a large radius gives a pill.
+  A rounded rect strokes and clips like any other shape.
+
   `fill` is a color, or a gradient:
 
   ```json

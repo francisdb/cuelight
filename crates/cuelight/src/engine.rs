@@ -2542,9 +2542,11 @@ impl Engine {
         let [x, y, w, h] = match &layer.kind {
             LayerKind::Group { .. } | LayerKind::Audio { .. } => return None,
             LayerKind::Shape { shape, .. } => match shape {
-                Shape::Rect(rect) => *rect,
-                Shape::Circle([cx, cy, r]) => [cx - r, cy - r, 2.0 * r, 2.0 * r],
-                Shape::Path(data) => path::bounds(data.elements())?,
+                Shape::Rect { rect, .. } => *rect,
+                Shape::Circle {
+                    circle: [cx, cy, r],
+                } => [cx - r, cy - r, 2.0 * r, 2.0 * r],
+                Shape::Path { path } => path::bounds(path.elements())?,
             },
             LayerKind::Vector { vector, size } => {
                 let data = self.vectors.get(vector)?;
@@ -4077,6 +4079,40 @@ fn collect_timelines(
 /// Place a shape's local geometry: scaled uniformly around the layer's
 /// x/y origin, then translated to it. A stroked rect or circle resolves
 /// as a path, the one shape that carries a stroke.
+/// The outline of a rect, with rounded corners when it has a radius.
+///
+/// Quarter circles as cubics, the same approximation SVG arcs get, so a
+/// rounded rect strokes and clips like any other path.
+fn rect_path(rect: [f64; 4], radius: Option<f64>) -> Vec<PathElement> {
+    let [x, y, w, h] = rect;
+    let r = Shape::corner_radius(rect, radius);
+    if r <= 0.0 {
+        return vec![
+            PathElement::MoveTo([x, y]),
+            PathElement::LineTo([x + w, y]),
+            PathElement::LineTo([x + w, y + h]),
+            PathElement::LineTo([x, y + h]),
+            PathElement::Close,
+        ];
+    }
+    // How far a cubic's control point sits along the tangent to meet a
+    // quarter circle: the usual 4/3 * (sqrt(2) - 1).
+    let k = r * 0.552_284_749_830_793_4;
+    let (r1, b) = (x + w, y + h);
+    vec![
+        PathElement::MoveTo([x + r, y]),
+        PathElement::LineTo([r1 - r, y]),
+        PathElement::CubicTo([r1 - r + k, y], [r1, y + r - k], [r1, y + r]),
+        PathElement::LineTo([r1, b - r]),
+        PathElement::CubicTo([r1, b - r + k], [r1 - r + k, b], [r1 - r, b]),
+        PathElement::LineTo([x + r, b]),
+        PathElement::CubicTo([x + r - k, b], [x, b - r + k], [x, b - r]),
+        PathElement::LineTo([x, y + r]),
+        PathElement::CubicTo([x, y + r - k], [x + r - k, y], [x + r, y]),
+        PathElement::Close,
+    ]
+}
+
 fn resolve_shape(
     shape: &Shape,
     x: f64,
@@ -4086,31 +4122,47 @@ fn resolve_shape(
 ) -> ResolvedShape {
     let place = |[px, py]: [f64; 2]| [px * scale + x, py * scale + y];
     match (shape, stroke) {
-        (Shape::Rect([rx, ry, w, h]), None) => ResolvedShape::Rect {
+        (
+            Shape::Rect {
+                rect: [rx, ry, w, h],
+                radius,
+            },
+            None,
+        ) if Shape::corner_radius([*rx, *ry, *w, *h], *radius) <= 0.0 => ResolvedShape::Rect {
             x: rx * scale + x,
             y: ry * scale + y,
             width: w * scale,
             height: h * scale,
         },
-        (Shape::Circle([cx, cy, r]), None) => ResolvedShape::Circle {
+        (
+            Shape::Circle {
+                circle: [cx, cy, r],
+            },
+            None,
+        ) => ResolvedShape::Circle {
             cx: cx * scale + x,
             cy: cy * scale + y,
             radius: r * scale,
         },
-        (Shape::Rect([rx, ry, w, h]), stroke) => ResolvedShape::Path {
-            elements: [
-                PathElement::MoveTo([*rx, *ry]),
-                PathElement::LineTo([rx + w, *ry]),
-                PathElement::LineTo([rx + w, ry + h]),
-                PathElement::LineTo([*rx, ry + h]),
-                PathElement::Close,
-            ]
-            .into_iter()
-            .map(|e| e.map(place))
-            .collect(),
+        (
+            Shape::Rect {
+                rect: [rx, ry, w, h],
+                radius,
+            },
+            stroke,
+        ) => ResolvedShape::Path {
+            elements: rect_path([*rx, *ry, *w, *h], *radius)
+                .into_iter()
+                .map(|e| e.map(place))
+                .collect(),
             stroke,
         },
-        (Shape::Circle([cx, cy, r]), stroke) => {
+        (
+            Shape::Circle {
+                circle: [cx, cy, r],
+            },
+            stroke,
+        ) => {
             // Four cubic quarter arcs, the usual approximation.
             const K: f64 = 0.552_284_749_8;
             let (cx, cy, r) = (*cx, *cy, *r);
@@ -4128,7 +4180,7 @@ fn resolve_shape(
                 stroke,
             }
         }
-        (Shape::Path(data), stroke) => ResolvedShape::Path {
+        (Shape::Path { path: data }, stroke) => ResolvedShape::Path {
             elements: data.elements().iter().map(|e| e.map(place)).collect(),
             stroke,
         },
