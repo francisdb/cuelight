@@ -565,6 +565,52 @@ pub fn background_color(engine: &Engine) -> Color {
     Color::from_rgba8(bg[0], bg[1], bg[2], bg[3])
 }
 
+/// Where an offscreen frame is drawn and read back from.
+///
+/// Kept between frames, since a strip is all one size: building a
+/// texture and a mappable buffer per frame is most of what a small frame
+/// costs.
+struct Target {
+    size: [u32; 2],
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+}
+
+impl Target {
+    fn new(device: &wgpu::Device, [width, height]: [u32; 2], bytes_per_row: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cuelight-target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // Rows are padded to wgpu's 256-byte alignment, so the buffer is
+        // wider than the frame and the copy out skips the padding.
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cuelight-readback"),
+            size: u64::from(bytes_per_row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Target {
+            size: [width, height],
+            texture,
+            view,
+            buffer,
+        }
+    }
+}
+
 pub struct Renderer {
     /// Which adapter answered and through which backend. A headless
     /// renderer takes whatever it is given, and when one of them
@@ -574,6 +620,11 @@ pub struct Renderer {
     queue: wgpu::Queue,
     renderer: vello::Renderer,
     images: ImageCache,
+    /// The texture frames are drawn into, its view, and the buffer they
+    /// are read back through, kept for as long as the size holds. A
+    /// strip of frames is all one size, so this is made once rather than
+    /// once a frame.
+    target: Option<Target>,
     /// For frames rendered the way a host would show them; it holds the
     /// canvas texture and the dots grille.
     ///
@@ -614,6 +665,7 @@ impl Renderer {
             queue,
             renderer,
             images: ImageCache::new(),
+            target: None,
             presenter: Presenter::new(),
         })
     }
@@ -684,28 +736,19 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<RgbaFrame, RenderError> {
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("cuelight-target"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bytes_per_row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let target = match self.target.take() {
+            Some(target) if target.size == [width, height] => target,
+            _ => Target::new(&self.device, [width, height], bytes_per_row),
+        };
+        let (texture, view, buffer) = (&target.texture, &target.view, &target.buffer);
 
         self.renderer
             .render_to_texture(
                 &self.device,
                 &self.queue,
                 vello_scene,
-                &view,
+                view,
                 &vello::RenderParams {
                     base_color,
                     width,
@@ -715,14 +758,6 @@ impl Renderer {
             )
             .map_err(|e| RenderError::Vello(e.to_string()))?;
 
-        // Read the texture back, honoring wgpu's 256-byte row alignment.
-        let bytes_per_row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("cuelight-readback"),
-            size: u64::from(bytes_per_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -730,13 +765,13 @@ impl Renderer {
             });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &texture,
+                texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
+                buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(bytes_per_row),
@@ -771,6 +806,8 @@ impl Renderer {
         }
         drop(mapped);
         buffer.unmap();
+        // Unmapped again, so the next frame of the same size reuses it.
+        self.target = Some(target);
 
         Ok(RgbaFrame {
             width,
