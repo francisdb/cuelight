@@ -16,6 +16,7 @@ cuelight-audio = { path = "../cuelight-audio", version = "0.0.1", default-featur
 # Measuring only, for video lengths: reads the header, decodes nothing.
 cuelight-video = { path = "../cuelight-video", version = "0.0.1", optional = true }
 png = { version = "0.18", optional = true }
+schemars = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -41,6 +42,8 @@ png = ["dep:png"]
 outline-fonts = ["cuelight/outline-fonts"]
 # The `cuelight-render` tool: frames at chosen times, and what a show
 # fired and when. Pulls in the renderer, and with it wgpu.
+# Generate the JSON Schema for driver files.
+schema = ["dep:schemars", "cuelight/schema"]
 render-cli = ["dep:clap", "png", "cuelight/render", "dep:cuelight-audio", "dep:cuelight-video"]
 
 [[bin]]

@@ -1139,3 +1139,16 @@ by CI, so it cannot drift. After changing the model:
 ```sh
 UPDATE_SCHEMA=1 cargo test --features schema --test schema
 ```
+
+Driver files have one too, generated the same way from
+`cuelight-loader`'s model and checked the same way:
+
+```sh
+UPDATE_SCHEMA=1 cargo test -p cuelight-loader --features schema --test schema
+```
+
+Point a driver file at it as a show points at its own:
+
+```json
+{ "$schema": "../../schemas/driver.schema.json", "loop": true, "steps": [] }
+```
