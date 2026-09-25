@@ -969,6 +969,63 @@ fn a_held_timeline_keeps_its_last_value() {
 }
 
 #[test]
+fn a_held_timeline_of_one_key_sets_its_value_and_keeps_it() {
+    // "Set this and keep it", from a trigger: the shortest way to write
+    // a state change, and it has no duration at all.
+    let show = r##"{
+      "name": "zero", "size": [8, 8],
+      "layers": [{
+        "name": "caption", "type": "shape", "opacity": 0,
+        "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+        "timelines": [
+          { "name": "on", "trigger": "show", "hold": true, "on_end": "shown",
+            "tracks": [{ "property": "opacity", "keys": [{ "t": 0, "v": 1 }] }] },
+          { "name": "off", "trigger": "hide", "hold": true,
+            "tracks": [{ "property": "opacity", "keys": [{ "t": 0, "v": 0 }] }] }
+        ]
+      }]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.advance_to(0.5);
+    engine.trigger("show");
+    engine.advance_to(1.0);
+    assert_eq!(opacity(&engine), 1.0, "applied");
+    engine.advance_to(2.0);
+    assert_eq!(opacity(&engine), 1.0, "and kept");
+    // It ends the instant it starts, and says so once like any other.
+    assert!(engine
+        .drain_events()
+        .iter()
+        .any(|e| matches!(e, Event::Trigger(t) if t == "shown")));
+    engine.advance_to(3.0);
+    assert!(engine.drain_events().is_empty(), "once, not every frame");
+    // And another of the same shape takes it back.
+    engine.trigger("hide");
+    engine.advance_to(3.5);
+    assert_eq!(opacity(&engine), 0.0);
+}
+
+#[test]
+fn a_timeline_of_one_key_without_hold_gives_the_property_back() {
+    let show = r##"{
+      "name": "zero", "size": [8, 8],
+      "layers": [{
+        "name": "caption", "type": "shape", "opacity": 0.25,
+        "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+        "timelines": [{ "name": "on", "trigger": "show",
+                        "tracks": [{ "property": "opacity",
+                                     "keys": [{ "t": 0, "v": 1 }] }] }]
+      }]
+    }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("show");
+    engine.advance_to(1.0);
+    assert_eq!(opacity(&engine), 0.25, "nothing to hold it");
+}
+
+#[test]
 fn a_running_timeline_outranks_a_held_one_and_hands_back() {
     let mut engine = fading(true);
     engine.trigger("enter");

@@ -1679,8 +1679,11 @@ impl Engine {
                 let ends = if tl.duration <= 0.0 { now } else { p.ends(tl) };
                 on_end.extend(tl.on_end.map(|name| (name.to_owned(), ends)));
                 // Holding is not playing: it ends, fires its `on_end` once
-                // like any other, and then keeps its last values.
-                if tl.hold && !tl.looping && tl.duration > 0.0 {
+                // like any other, and then keeps its last values. A
+                // timeline of a single key has no duration and ends on
+                // the instant it starts, which is the shortest way to
+                // write "set this and keep it": it holds like the rest.
+                if tl.hold && !tl.looping {
                     p.held = true;
                 } else {
                     finished.push(i);
