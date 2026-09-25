@@ -1115,9 +1115,10 @@ the show's `scaling` asks, with its output mode and passes applied. A
 `dots` pass needs about `--scale 3` before there are enough pixels to
 make dots out of.
 
-Sounds are decoded for their lengths, so a sound ends and its `on_end`
-fires and a show chained through one runs to the end. No sound device is
-opened and nothing is played. Videos are not decoded, so a show chained
+Sound lengths are read from the file's header, so a sound ends and its
+`on_end` fires and a show chained through one runs to the end. Nothing is
+decoded unless the header does not say (a constant-bitrate MP3 without a
+Xing header), no sound device is opened and nothing is played. Videos are not decoded, so a show chained
 through a video's `on_end` still stops at the first: register their
 lengths from a host if you need that.
 

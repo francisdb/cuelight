@@ -8,8 +8,8 @@
 //! ```
 //!
 //! A frame is the canvas at the show's own size; `--scale` writes what a
-//! host would show instead. Sounds are decoded for their lengths, so a
-//! sound's `on_end` fires; no device is opened and nothing is played.
+//! host would show instead. Sound lengths come from the file's header, so
+//! a sound's `on_end` fires; no device is opened and nothing is played.
 //!
 //! Time is walked in fixed steps of `--fps`, from 0, so a run is
 //! repeatable: the same command writes the same bytes. That is also what
@@ -173,11 +173,23 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     // through one stops at the first without this. Decoding opens no
     // device.
     for sound in &loaded.sounds {
-        match cuelight_audio::Sound::decode(&sound.extension, &sound.bytes) {
-            Ok(decoded) => engine
-                .set_sound(&sound.name, decoded.duration())
-                .map_err(|e| e.to_string())?,
-            Err(e) => eprintln!("warning: sound {:?}: {e}", sound.name),
+        // The header usually says, and reading it beats turning the whole
+        // file into samples for one number. A constant-bitrate MP3 with no
+        // Xing header does not say, and is decoded.
+        let length = match cuelight_audio::length(&sound.extension, &sound.bytes) {
+            Some(length) => Some(length),
+            None => match cuelight_audio::Sound::decode(&sound.extension, &sound.bytes) {
+                Ok(decoded) => Some(decoded.duration()),
+                Err(e) => {
+                    eprintln!("warning: sound {:?}: {e}", sound.name);
+                    None
+                }
+            },
+        };
+        if let Some(length) = length {
+            engine
+                .set_sound(&sound.name, length)
+                .map_err(|e| e.to_string())?;
         }
     }
     let mut driver = loaded
