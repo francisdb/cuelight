@@ -1601,13 +1601,19 @@ impl Engine {
             match self.retrigger_of(root, &path) {
                 Retrigger::Ignore => continue,
                 Retrigger::Queue => {
-                    let waiting = self
+                    // Pointing a layer somewhere is one ask, however many
+                    // frames it stays pointed there, so it takes one place
+                    // in the queue: the name is already last in line.
+                    let mine: Vec<_> = self
                         .waiting
                         .iter()
                         .filter(|(r, p, _)| *r == root && *p == path)
-                        .count();
-                    let voices = self.voices_of(root, &path);
-                    if waiting < voices {
+                        .collect();
+                    let asked = mine
+                        .last()
+                        .is_some_and(|(.., name)| name.as_deref() == Some(now.as_str()));
+                    let waiting = mine.len();
+                    if !asked && waiting < self.voices_of(root, &path) {
                         self.waiting.push((root, path, Some(now)));
                     }
                 }
