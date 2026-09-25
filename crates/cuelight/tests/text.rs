@@ -69,6 +69,17 @@ fn bitmap(engine: &Engine, name: &str) -> (f64, f64, f64, f64, [u8; 4]) {
     }
 }
 
+/// The text a layer resolves to, without drawing it.
+fn shown(engine: &Engine, name: &str) -> String {
+    engine
+        .values()
+        .unwrap()
+        .into_iter()
+        .find(|(layer, prop, _)| layer == name && *prop == cuelight::Property::Text)
+        .map(|(_, _, v)| v.to_text())
+        .unwrap_or_else(|| panic!("no text on layer {name:?}"))
+}
+
 #[test]
 fn text_rasterizes_tinted_at_layer_position() {
     let engine = engine();
@@ -302,13 +313,7 @@ fn a_bound_number_shows_the_decimals_it_asks_for() {
     engine.load_show(show).unwrap();
     engine.set_variable("speed", 1.4833333333333334);
     engine.advance_to(0.0);
-    let shown = engine
-        .values()
-        .unwrap()
-        .into_iter()
-        .find(|(name, prop, _)| name == "readout" && *prop == cuelight::Property::Text)
-        .map(|(_, _, v)| v.to_text());
-    assert_eq!(shown.as_deref(), Some("1.5"));
+    assert_eq!(shown(&engine, "readout"), "1.5");
 }
 
 #[test]
@@ -319,4 +324,64 @@ fn too_many_decimals_is_refused() {
       "layers": [{ "name": "readout", "type": "text", "text": "0", "font": "plain",
         "bindings": [{ "property": "text", "variable": "speed", "decimals": 40 }] }] }"##;
     assert!(Engine::new().load_show(show).is_err());
+}
+
+const WORDED: &str = r##"{ "name": "d", "size": [64, 32],
+  "fonts": { "plain": { "file": "none" } },
+  "variables": { "progress": 40, "multiplier": 2.5, "ball": 2, "mode": "attract" },
+  "layers": [
+    { "name": "percent", "type": "text", "text": "", "font": "plain",
+      "bindings": [{ "property": "text", "variable": "progress", "suffix": "%" }] },
+    { "name": "times", "type": "text", "text": "", "font": "plain",
+      "bindings": [{ "property": "text", "variable": "multiplier", "decimals": 1,
+                     "suffix": " X" }] },
+    { "name": "ball", "type": "text", "text": "", "font": "plain",
+      "bindings": [{ "property": "text", "variable": "ball", "prefix": "BALL " }] },
+    { "name": "mode", "type": "text", "text": "READY", "font": "plain",
+      "bindings": [{ "property": "text", "variable": "mode", "map": { "play": "PLAY" },
+                     "prefix": "> ", "suffix": " <" }] }
+  ] }"##;
+
+#[test]
+fn words_go_round_a_bound_value() {
+    let mut engine = Engine::new();
+    engine.load_show(WORDED).unwrap();
+    assert_eq!(shown(&engine, "percent"), "40%");
+    assert_eq!(shown(&engine, "times"), "2.5 X");
+    assert_eq!(shown(&engine, "ball"), "BALL 2");
+    // A map with nothing to say does not apply, so the base text stays
+    // and takes no words.
+    assert_eq!(shown(&engine, "mode"), "READY");
+    // Mapped text gets them as much as a number does.
+    engine.set_variable("mode", "play");
+    assert_eq!(shown(&engine, "mode"), "> PLAY <");
+}
+
+#[test]
+fn a_counting_transition_leaves_the_words_still() {
+    let show = WORDED.replace(
+        r#""variable": "ball", "prefix": "BALL ""#,
+        r#""variable": "ball", "prefix": "BALL ", "transition": { "duration": 1 }"#,
+    );
+    let mut engine = Engine::new();
+    engine.load_show(&show).unwrap();
+    engine.advance_to(1.0);
+    assert_eq!(shown(&engine, "ball"), "BALL 2");
+    engine.set_variable("ball", 4.0);
+    engine.advance_to(1.5);
+    assert_eq!(shown(&engine, "ball"), "BALL 3");
+    engine.advance_to(2.0);
+    assert_eq!(shown(&engine, "ball"), "BALL 4");
+}
+
+#[test]
+fn words_on_a_property_that_is_not_text_are_reported() {
+    let show = WORDED.replace(
+        r#"{ "property": "text", "variable": "progress", "suffix": "%" }"#,
+        r#"{ "property": "x", "variable": "progress", "suffix": "%" }"#,
+    );
+    let mut engine = Engine::new();
+    engine.load_show(&show).unwrap();
+    let warnings = engine.load_warnings().join("\n");
+    assert!(warnings.contains("words round its value"), "{warnings}");
 }

@@ -2585,7 +2585,7 @@ impl Engine {
         if change.whole && b.decimals.is_none() {
             n = n.round();
         }
-        Some(Value::Text(b.format.format(n, b.decimals)))
+        Some(Value::Text(worded(b, b.format.format(n, b.decimals))))
     }
 
     /// Resolve a layer property: its base value, overridden by bindings
@@ -2678,10 +2678,13 @@ impl Engine {
     /// leaves the property as it was.
     fn convert(&self, b: &Binding, value: Value) -> Option<Value> {
         match b.property {
-            Property::Text => Some(Value::Text(match value {
-                Value::Number(n) => b.format.format(scaled(b, n), b.decimals),
-                other => other.to_text(),
-            })),
+            Property::Text => Some(Value::Text(worded(
+                b,
+                match value {
+                    Value::Number(n) => b.format.format(scaled(b, n), b.decimals),
+                    other => other.to_text(),
+                },
+            ))),
             Property::Visible => Some(Value::Bool(scaled(b, value.as_number()) != 0.0)),
             // Only real colors apply, as only declared styles do.
             Property::Tint => match value {
@@ -3744,6 +3747,14 @@ fn scaled(b: &Binding, n: f64) -> f64 {
     n * b.scale + b.offset
 }
 
+/// A text binding's value with its words round it.
+fn worded(b: &Binding, text: String) -> String {
+    match (b.prefix.is_empty(), b.suffix.is_empty()) {
+        (true, true) => text,
+        _ => format!("{}{text}{}", b.prefix, b.suffix),
+    }
+}
+
 /// Where the show's bindings with a transition are, and those with a
 /// debounce.
 fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<TransitionSite>) {
@@ -4187,6 +4198,17 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                     out.push(format!(
                         "the {:?} binding of layer {:?} has a curve, which only bends a number; \
                          this property never holds one",
+                        binding.property, layer.name
+                    ));
+                }
+                // Words only go round text; every other property holds
+                // a number or a name of its own.
+                if (!binding.prefix.is_empty() || !binding.suffix.is_empty())
+                    && binding.property != Property::Text
+                {
+                    out.push(format!(
+                        "the {:?} binding of layer {:?} has words round its value, which only a \
+                         text binding shows",
                         binding.property, layer.name
                     ));
                 }

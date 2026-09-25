@@ -816,6 +816,23 @@ value that rounds to nothing prints without a sign, and a counting
 `transition` steps in the last place shown rather than flickering
 through digits that are rounded away.
 
+`prefix` and `suffix` put words round the value, which most readouts
+have: `40%`, `2.5 X`, `BALL 2`, `LEVEL 12`, `$4.99`.
+
+```json
+{ "property": "text", "variable": "progress", "suffix": "%" }
+{ "property": "text", "variable": "multiplier", "decimals": 1, "suffix": " X" }
+{ "property": "text", "variable": "ball", "prefix": "BALL " }
+```
+
+They apply last, to whatever text the binding produces, so a counting
+`transition` counts the number and leaves the words still, and a `map`'s
+text gets them as much as a number does. A binding that does not apply
+(an unset variable, a `map` with nothing to say and no `default`) leaves
+the property at its base text, words included: the words belong to the
+value, not to the layer. Words on a property other than `text` are
+reported as a load warning and do nothing.
+
 
 A text layer's `font` property can be bound to a variable naming a font
 style, typically through a map. An image layer's `tint` works the same
