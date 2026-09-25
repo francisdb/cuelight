@@ -2112,8 +2112,13 @@ impl Engine {
     /// the same way a host firing a trigger at that moment would.
     fn follow_conditions(&mut self) {
         let Some(show) = &self.show else { return };
+        // Every tree, not only the showing one: a condition in a scene
+        // that is away still has to notice its variable falling, or an
+        // edge that happens while it is away is invisible on return.
+        let showing =
+            |root: Root| root == Root::Show || Some(root) == self.active_scene.map(Root::Scene);
         let roots: Vec<Root> = std::iter::once(Root::Show)
-            .chain(self.active_scene.map(Root::Scene))
+            .chain((0..show.scenes.len()).map(Root::Scene))
             .collect();
         let mut edges: Vec<(Root, Vec<usize>, usize)> = Vec::new();
         let mut stops: Vec<(Owner, usize)> = Vec::new();
@@ -2136,6 +2141,16 @@ impl Engine {
             for (path, idx, when, whilst) in found {
                 let key = (root, path.clone(), idx);
                 if let Some(holds) = when {
+                    if !showing(root) {
+                        // Away: only the fall is worth remembering. Not
+                        // recording the rise is what makes it an edge on
+                        // return, since the value it is compared against
+                        // is then the false it fell to.
+                        if !holds {
+                            now.insert(key, false);
+                        }
+                        continue;
+                    }
                     // The rising edge, and only that: a condition that
                     // was already true stays quiet.
                     if holds && self.conditions.get(&key) != Some(&true) {
@@ -2143,6 +2158,11 @@ impl Engine {
                     }
                     now.insert(key, holds);
                 } else if let Some(holds) = whilst {
+                    if !showing(root) {
+                        // A `while` is a state the scene is in, so it has
+                        // nothing to remember: entering starts it again.
+                        continue;
+                    }
                     // No edge: it runs while it holds. Entering a scene
                     // empties the playheads, so this starts it again.
                     let running = self

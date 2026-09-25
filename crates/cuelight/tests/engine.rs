@@ -1373,15 +1373,18 @@ fn an_edge_belongs_to_the_variable_not_to_the_scene() {
         "coming back is not the lamp coming on"
     );
 
-    // Away, the lamp turns on while the scene is gone, and back: it did.
-    engine.set_variable("lamp", 0.0);
-    engine.advance_to(1.6);
+    // Away with the lamp still on, off and on again while away, and
+    // back: it did come on, so the flash is owed. Turning it off before
+    // leaving would pass whatever the engine remembered, which is how
+    // this test first missed the case.
     engine.trigger("away");
     engine.advance_to(2.0);
-    engine.set_variable("lamp", 1.0);
+    engine.set_variable("lamp", 0.0);
     engine.advance_to(2.1);
+    engine.set_variable("lamp", 1.0);
+    engine.advance_to(2.2);
     engine.trigger("board");
-    engine.advance_to(2.5);
+    engine.advance_to(2.6);
     assert_eq!(
         flashes(&mut engine),
         1,
