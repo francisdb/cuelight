@@ -24,6 +24,16 @@
 //! Images, fonts and sounds a show references but nobody registered are
 //! logged as warnings at load and skipped. Sound plays through the default
 //! output device unless `--no-audio` is given.
+//!
+//! The overlay in the corner is the frame rate. Once anything has gone
+//! slowly it grows two more counts, which stay for the session: frames
+//! that took longer than a frame should, in red, and video frames drawn
+//! with an older picture than was due, in amber. An average frame rate
+//! absorbs a stall, and video that stutters otherwise looks exactly like
+//! a show that renders slowly. A stretch of late video frames is logged
+//! as well, saying where in the clip and when in the show it was: as a
+//! warning past a few frames, and at `debug` below that, since every
+//! clip is a frame or two late as its decoder starts.
 
 use std::io::BufRead;
 use std::sync::mpsc::{Receiver, Sender};
@@ -223,6 +233,10 @@ struct App {
     redraw_at: Option<Instant>,
     occluded: bool,
     last_frame: Instant,
+    /// Frames that took longer than a frame should, and video frames
+    /// drawn older than they should have been: what a frame rate hides,
+    /// shown beside it.
+    long_frames: u64,
     fps: common::Fps,
     presenter: Presenter,
 }
@@ -370,6 +384,9 @@ impl App {
     #[cfg(feature = "video")]
     fn show_video_frames(&mut self) {
         let playing = self.engine.videos().unwrap_or_default();
+        // The show's own clock, so a clip that falls behind can say when
+        // in the show it did: its position comes round again every loop.
+        let show = self.engine.time();
         // A clip nobody is watching stops decoding: a pack names hundreds
         // and plays a few, and a decoder left open costs a process.
         for (name, clip) in &mut self.videos {
@@ -383,7 +400,11 @@ impl App {
             };
             let details = clip.details();
             let (width, height) = (details.width, details.height);
-            if let Some(frame) = clip.frame_at(playing.position) {
+            // The show says whether the play loops; a clip decoded as it
+            // goes needs telling, so its decoder can run the clip round
+            // and round rather than being restarted at every wrap.
+            clip.set_looping(playing.looping);
+            if let Some(frame) = clip.frame_at(playing.position, Some(show)) {
                 let frame = frame.to_vec();
                 // Under the key the play reports, not the clip's name:
                 // two layers playing one clip are at two positions, and
@@ -398,6 +419,19 @@ impl App {
     #[cfg(not(feature = "video"))]
     fn show_video_frames(&mut self) {}
 
+    /// Video frames drawn with an older picture than was due, over every
+    /// clip that has played: a clip decoded as it goes says so rather
+    /// than leaving a stutter looking like a slow show.
+    #[cfg(feature = "video")]
+    fn late_video_frames(&self) -> u64 {
+        self.videos.values().map(|clip| clip.kept().late).sum()
+    }
+
+    #[cfg(not(feature = "video"))]
+    fn late_video_frames(&self) -> u64 {
+        0
+    }
+
     fn redraw(&mut self) {
         let now = Instant::now();
         // While we pace the frames ourselves (see the end of this function)
@@ -408,6 +442,7 @@ impl App {
         }
         let elapsed = now.duration_since(self.last_frame).as_secs_f64();
         if elapsed > 0.034 {
+            self.long_frames += 1;
             log::debug!("long frame: {:.0} ms since the last one", elapsed * 1000.0);
         }
         let dt = elapsed.min(0.1);
@@ -421,6 +456,7 @@ impl App {
             log::info!("show event: {event:?}");
         }
         self.show_video_frames();
+        let late = self.late_video_frames();
         let Some(state) = &mut self.state else { return };
         if let Some(audio) = &self.audio {
             match self.engine.voices() {
@@ -473,7 +509,15 @@ impl App {
             .expect("present show");
         let mut frame = presented.scene;
         self.fps.tick();
-        self.fps.draw(&mut frame, state.window.scale_factor());
+        // The rate, then what it hides: frames that took too long in
+        // red, and video frames drawn late in amber. Neither is shown
+        // until there is one.
+        let counts: Vec<(u64, [u8; 3])> = match (self.long_frames, late) {
+            (0, 0) => Vec::new(),
+            (long, late) => vec![(long, [255, 80, 80]), (late, [255, 190, 60])],
+        };
+        self.fps
+            .draw(&mut frame, state.window.scale_factor(), &counts);
         renderer
             .render_to_texture(
                 &device_handle.device,
@@ -1050,6 +1094,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         redraw_at: None,
         occluded: false,
         last_frame: Instant::now(),
+        long_frames: 0,
         fps: common::Fps::new(),
         presenter: Presenter::new(),
     };
