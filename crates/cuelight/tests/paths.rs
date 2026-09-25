@@ -233,3 +233,74 @@ fn a_vector_layer_at_natural_size_with_an_anchor() {
         )
         .is_err());
 }
+
+#[test]
+fn a_rect_can_have_rounded_corners() {
+    let mut engine = Engine::new();
+    engine
+        .load_show(&show(
+            r##"{ "name": "card", "type": "shape",
+                  "shape": { "rect": [0, 0, 40, 20], "radius": 5 },
+                  "fill": "#FF0000" }"##,
+        ))
+        .unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    // A radius turns the rect into a path: four lines and four corners.
+    let ResolvedShape::Path { elements, .. } = &layers[0].shape else {
+        panic!(
+            "a rounded rect should resolve to a path, got {:?}",
+            layers[0].shape
+        )
+    };
+    let cubics = elements
+        .iter()
+        .filter(|e| matches!(e, PathElement::CubicTo(..)))
+        .count();
+    assert_eq!(cubics, 4, "{elements:?}");
+}
+
+#[test]
+fn a_rect_without_a_radius_is_still_a_rect() {
+    let mut engine = Engine::new();
+    engine
+        .load_show(&show(
+            r##"{ "name": "plain", "type": "shape",
+                  "shape": { "rect": [0, 0, 40, 20] }, "fill": "#FF0000" }"##,
+        ))
+        .unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    assert!(
+        matches!(layers[0].shape, ResolvedShape::Rect { .. }),
+        "{:?}",
+        layers[0].shape
+    );
+}
+
+#[test]
+fn a_radius_is_clamped_to_half_the_shorter_side() {
+    // 500 on a 40x20 rect is a pill: the corners meet in the middle.
+    assert_eq!(
+        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(500.0)),
+        10.0
+    );
+    assert_eq!(
+        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(-3.0)),
+        0.0
+    );
+    assert_eq!(
+        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], None),
+        0.0
+    );
+}
+
+#[test]
+fn a_shape_that_names_nothing_says_so() {
+    let mut engine = Engine::new();
+    let err = engine
+        .load_show(&show(
+            r##"{ "name": "odd", "type": "shape", "shape": { "radius": 2 },
+                  "fill": "#FF0000" }"##,
+        ))
+        .unwrap_err();
+    assert!(err.to_string().contains("rect, circle or path"), "{err}");
+}

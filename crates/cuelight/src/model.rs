@@ -1057,17 +1057,77 @@ pub enum SegmentStyle {
 }
 
 /// Vector shapes, in the layer's local coordinate space.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// Untagged, so a rect can carry a corner radius beside it
+/// (`{ "rect": [0, 0, 8, 4], "radius": 2 }`) rather than nesting it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
 #[non_exhaustive]
 pub enum Shape {
-    /// `[x, y, width, height]`
-    Rect([f64; 4]),
-    /// `[cx, cy, radius]`
-    Circle([f64; 3]),
-    /// SVG path data (`"M 0 0 L 10 0 L 5 8 Z"`): lines, curves and arcs.
-    Path(PathData),
+    Rect {
+        /// `[x, y, width, height]`
+        rect: [f64; 4],
+        /// Corner radius, clamped to half the shorter side, so a large
+        /// one gives a pill. All four corners; absent is square.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
+    },
+    Circle {
+        /// `[cx, cy, radius]`
+        circle: [f64; 3],
+    },
+    Path {
+        /// SVG path data (`"M 0 0 L 10 0 L 5 8 Z"`): lines, curves and arcs.
+        path: PathData,
+    },
+}
+
+// Read by hand rather than as an untagged enum: serde answers a bad
+// shape with "data did not match any variant", which says nothing about
+// what is wrong with it. Naming the key first means a malformed path
+// still reports what the path parser found.
+impl<'de> Deserialize<'de> for Shape {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            rect: Option<[f64; 4]>,
+            #[serde(default)]
+            radius: Option<f64>,
+            #[serde(default)]
+            circle: Option<[f64; 3]>,
+            #[serde(default)]
+            path: Option<PathData>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        match (raw.rect, raw.circle, raw.path) {
+            (Some(rect), None, None) => Ok(Shape::Rect {
+                rect,
+                radius: raw.radius,
+            }),
+            (None, Some(circle), None) => Ok(Shape::Circle { circle }),
+            (None, None, Some(path)) => Ok(Shape::Path { path }),
+            (None, None, None) => Err(serde::de::Error::custom(
+                "a shape needs one of rect, circle or path",
+            )),
+            _ => Err(serde::de::Error::custom(
+                "a shape takes one of rect, circle or path, not several",
+            )),
+        }
+    }
+}
+
+impl Shape {
+    /// A rect's corner radius, clamped to what its size allows.
+    pub fn corner_radius(rect: [f64; 4], radius: Option<f64>) -> f64 {
+        let [_, _, w, h] = rect;
+        radius
+            .unwrap_or(0.0)
+            .max(0.0)
+            .min(w.abs() / 2.0)
+            .min(h.abs() / 2.0)
+    }
 }
 
 /// What a shape is filled with: one color, or a gradient.
