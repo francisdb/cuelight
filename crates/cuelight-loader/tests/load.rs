@@ -723,3 +723,30 @@ fn a_folder_named_like_the_clips_folder_is_not_the_clips_folder() {
     assert!(loaded.videos.is_empty(), "{:?}", loaded.videos);
     assert_eq!(loaded.skipped, ["assets/videos-old/clip.mp4"]);
 }
+
+#[cfg(feature = "png")]
+#[test]
+fn a_bitmap_fonts_page_is_the_fonts_not_left_over() {
+    // The page image beside a .fnt is read by the font, so it is used,
+    // not skipped; an image in the same folder that no font names still
+    // is.
+    let fnt = "info face=\"t\" size=8\n\
+               common lineHeight=8 base=7 scaleW=16 scaleH=16 pages=1\n\
+               page id=0 file=\"t-8.png\"\n\
+               chars count=1\n\
+               char id=65 x=0 y=0 width=4 height=4 xoffset=0 yoffset=0 xadvance=5 page=0 chnl=15\n";
+    let png = std::fs::read(shows().join("beacon/assets/orb.png")).unwrap();
+    let show = r##"{ "name": "font", "size": [8, 8], "layers": [] }"##;
+    let files = in_memory(
+        show,
+        &[
+            ("assets/fonts/t-8.fnt", fnt.as_bytes()),
+            ("assets/fonts/t-8.png", &png),
+            ("assets/fonts/stray.png", &png),
+        ],
+    );
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert_eq!(loaded.fonts, ["t-8"]);
+    assert_eq!(loaded.skipped, ["assets/fonts/stray.png"]);
+}

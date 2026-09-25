@@ -128,6 +128,9 @@ pub fn load_from_memory(
     };
 
     let mut unclaimed: Vec<String> = Vec::new();
+    // The pages a bitmap font read, which are its to use rather than
+    // left over, wherever the loop happened to meet them.
+    let mut pages: Vec<String> = Vec::new();
     for (path, bytes) in files {
         // Directly in assets/ or assets/fonts/, nothing deeper.
         let Some((dir, file)) = path.rsplit_once('/') else {
@@ -165,7 +168,12 @@ pub fn load_from_memory(
                     let fnt =
                         std::str::from_utf8(bytes).map_err(|e| asset_error(path, e.to_string()))?;
                     register_font(engine, stem, fnt, |page| {
-                        files.get(&format!("assets/fonts/{page}")).cloned()
+                        let path = format!("assets/fonts/{page}");
+                        let bytes = files.get(&path).cloned();
+                        if bytes.is_some() {
+                            pages.push(path);
+                        }
+                        bytes
                     })
                     .map_err(|e| asset_error(path, e))?;
                 } else {
@@ -204,9 +212,11 @@ pub fn load_from_memory(
     }
 
     let named = register_named(engine, show, files, &mut loaded)?;
-    loaded
-        .skipped
-        .extend(unclaimed.into_iter().filter(|p| !named.contains(p)));
+    loaded.skipped.extend(
+        unclaimed
+            .into_iter()
+            .filter(|p| !named.contains(p) && !pages.contains(p)),
+    );
 
     engine.load_show(show).map_err(|source| LoadError::Engine {
         path: PathBuf::from("show.json"),
